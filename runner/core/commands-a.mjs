@@ -391,7 +391,7 @@ export function cmdTeeth(projectRoot, opts) {
 
   // Tier A: breakPatch + 还原哈希校验 + 恢复后绿灯验证
   if (!ob.breakPatch || !ob.breakPatch.file || ob.breakPatch.from === undefined || ob.breakPatch.to === undefined) {
-    return { exitCode: 3, stderr: `判据 ${criterionId} 缺少 breakPatch { file, from, to }` };
+    return { exitCode: 3, stderr: `判据 ${criterionId} 缺少 breakPatch { file, from, to }（请先在 contract.json 补齐 breakPatch 并重新执行 contract freeze）` };
   }
   const targetFile = resolve(projectRoot, ob.breakPatch.file);
   if (!existsSync(targetFile)) return { exitCode: 3, stderr: 'breakPatch 目标文件不存在：' + ob.breakPatch.file };

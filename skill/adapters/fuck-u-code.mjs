@@ -44,7 +44,7 @@ let rawText;
 if (rawOverride) {
   try { rawText = readFileSync(resolve(rootDir, rawOverride), 'utf8'); } catch { fail(3, 'raw-report 不可读'); }
 } else {
-  const targetDir = arg('--target', 'runner');
+  const targetDir = arg('--target', '.');
   const r = runCmd(['analyze', targetDir, '-f', 'json']);
   if (r.status !== 0) fail(3, 'fuck-u-code analyze 失败：' + (r.stderr || r.stdout));
   rawText = r.stdout || '';

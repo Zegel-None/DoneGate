@@ -44,7 +44,7 @@ let rawText;
 if (rawOverride) {
   try { rawText = readFileSync(resolve(rootDir, rawOverride), 'utf8'); } catch { fail(3, 'raw-report 不可读'); }
 } else {
-  const targetDir = arg('--target', 'runner');
+  const targetDir = arg('--target', '.');
   const dcArgs = ['--output-type', 'json', '--no-config', targetDir];
   const r = runDc(dcArgs);
   if (r.error || (r.status !== 0 && r.status !== 1)) fail(3, 'depcruise 执行失败：' + (r.stderr || r.error?.message));

@@ -49,8 +49,10 @@ let rawText;
 if (rawOverride) {
   try { rawText = readFileSync(resolve(rootDir, rawOverride), 'utf8'); } catch { fail(3, 'raw-report 不可读'); }
 } else {
-  const r = spawnSync(binPath, ['status', '--root', rootDir], { cwd: rootDir, encoding: 'utf8', timeout: 30000 });
-  if (r.error || r.status !== 0) fail(3, 'srclight status 失败：' + (r.stderr || r.stdout));
+  const dbArg = arg('--db');
+  const slArgs = dbArg ? ['status', '--db', resolve(rootDir, dbArg)] : ['status'];
+  const r = spawnSync(binPath, slArgs, { cwd: rootDir, encoding: 'utf8', timeout: 30000 });
+  if (r.error || r.status !== 0) fail(3, 'srclight status 失败（请先在项目根运行 srclight index）：' + (r.stderr || r.stdout));
   rawText = r.stdout || '';
 }
 let parsed = null;

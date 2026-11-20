@@ -83,7 +83,7 @@ if (!rawCyclesPath && !rawImpactPath) {
   let stJson;
   try { stJson = JSON.parse(stR.stdout); } catch (e) { fail(3, 'codegraph status JSON 损坏：' + e.message); }
   if (!stJson || !stJson.initialized || !stJson.index || stJson.index.state !== 'complete') {
-    fail(3, 'codegraph 索引未初始化或未完成，请先运行 codegraph init');
+    fail(3, 'codegraph 索引未初始化或未完成，请先运行 codegraph init 并执行 codegraph sync');
   }
   const pc = stJson.pendingChanges || {};
   if ((pc.added || 0) + (pc.modified || 0) + (pc.removed || 0) > 0 || (stJson.index.filesNeedingReindex || 0) > 0) {

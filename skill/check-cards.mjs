@@ -181,11 +181,12 @@ if (landFail === 0) ok('9 条定论的字段名/读法都在对应卡上，且�
 console.log('\n七、frontmatter（两个 SKILL.md）');
 for (const f of ['donegate/SKILL.md', 'donegate-judge/SKILL.md']) {
   const t = readFileSync(join(ROOT, f), 'utf8');
-  if (!t.startsWith('---\n')) bad(f + ' 首行不是三连字符');
-  const fm = t.slice(4, t.indexOf('\n---\n'));
+  const fmMatch = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!fmMatch) { bad(f + ' 首行不是三连字符或缺少结束分隔线'); continue; }
+  const fm = fmMatch[1];
   for (const k of ['name:', 'description:']) if (!fm.includes(k)) bad(f + ' frontmatter 缺 ' + k);
   // plain scalar 的冒号风险：description 块若用 >- 或 | 就安全
-  const descLine = fm.split('\n').find((l) => l.startsWith('description:'));
+  const descLine = fm.split(/\r?\n/).find((l) => l.startsWith('description:'));
   if (descLine && !/^description:\s*(>-?|\|-?)/.test(descLine)) bad(f + ' description 不是块标量，冒号会让整条技能静默消失');
 }
 if (fails === 0) ok('两个 SKILL.md 的 frontmatter 合规');

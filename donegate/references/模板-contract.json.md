@@ -70,7 +70,7 @@
 }
 ```
 
-示例没写 `teeth`：没做过有牙实验就没有这一栏，做法见 [门3-有牙.md](./门3-有牙.md)；**有牙实验的改坏档是 §六 的 A / B / C（默认 A），不是 §九 的项目成熟档 T0 / T1 / T2**，别传错。
+示例没写 `teeth`：没做过有牙实验就没有这一栏，做法见 [门3-有牙.md](./门3-有牙.md)；**有牙实验的改坏档是 §六 的 A / B / C（默认 A），不是 §九 的项目成熟档 T0 / T1 / T2**，别传错。若使用 `runner` 的 `teeth`（档 A），需在冻结前于判据下填好 `breakPatch: { "file": "...", "from": "...", "to": "..." }`。
 
 | 字段 | 落笔动作 | 出处 |
 |---|---|---|
@@ -79,7 +79,7 @@
 | `scope` / `overlapsWith` | 拥有的路径；共享文件写进 `overlapsWith` | §2.3 |
 | `dependsOn` / `provisional` | 只写契约标识；新建填 `true` | §2.3 |
 | `kind` / `command` / `expect` | 两种 kind；单条命令；退出码加可选 stdout | §2.4 |
-| `frozenHash` / `signedBy` | 先重算再签，签过才算冻结 | §2.4、§15.1 2.2 |
+| `frozenHash` / `signedBy` | 若用 CLI `contract freeze` 会自动重算并填入 `frozenHash`（手填/纯技能版才按 §2.4 归一化重算）；签过才算冻结 | §2.4、§15.1 2.2 |
 | `required` | 填真或假，默认真 | §2.4 |
 | `inputClasses` | 至少一项，且**本条判据**至少含一个非正常类 | §15.2 |
 | `spansContracts` | 只有跨契约判据填；列出 ≥2 个契约标识 | §15.2 |

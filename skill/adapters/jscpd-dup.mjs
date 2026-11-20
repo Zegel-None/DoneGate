@@ -47,7 +47,7 @@ if (rawOverride) {
 } else {
   const tmpOut = mkdtempSync(join(tmpdir(), 'jscpd-out-'));
   try {
-    const targetDir = arg('--target', 'runner');
+    const targetDir = arg('--target', '.');
     const r = runCmd(['--reporters', 'json', '--output', tmpOut, '--silent', targetDir]);
     const rpt = join(tmpOut, 'jscpd-report.json');
     if (r.status !== 0 || !existsSync(rpt)) fail(3, 'jscpd 执行失败或未产出 jscpd-report.json');

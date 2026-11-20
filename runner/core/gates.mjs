@@ -441,7 +441,8 @@ export function evaluateGate2(projectRoot, contract) {
   if (obs.length === 0) fails.push('2.1 至少有 1 条判据');
   for (const o of obs) {
     if (!o.signedBy || !o.signedBy.trim() || o.frozenHash !== frozenHashOf(o)) {
-      fails.push(`2.2 判据 ${o.id} 未冻结或 frozenHash 不一致`);
+      const bpHint = o.breakPatch ? '（提示：若在冻结后才补加或修改了 breakPatch，也会导致 frozenHash 变化，请重新执行 contract freeze）' : '';
+      fails.push(`2.2 判据 ${o.id} 未冻结或 frozenHash 不一致${bpHint}`);
     }
   }
   if (!obs.some((o) => o.kind === 'command')) fails.push('2.3 至少有 1 条 kind: command 判据');

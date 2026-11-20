@@ -351,6 +351,9 @@ export function cmdHandover(projectRoot, opts = {}) {
   const nextContract = gaps.find((g) => g.contractId)?.contractId || st.contractSummaries[0]?.id || '<contractId>';
   const unverifiedOrPending = gaps.filter((g) => ['unverified', 'pending-recheck', 'expired', 'unknown'].includes(g.kind));
 
+  const dgBin = existsSync(join(projectRoot, 'runner', 'donegate.mjs'))
+    ? 'runner/donegate.mjs'
+    : `"${resolve(dirname(fileURLToPath(import.meta.url)), '..', 'donegate.mjs')}"`;
   const md = [
     '# HANDOVER · 项目交接包',
     '',
@@ -377,8 +380,8 @@ export function cmdHandover(projectRoot, opts = {}) {
     '## 六、怎么跑起来',
     '```powershell',
     smokeCmd,
-    `node runner/donegate.mjs check ${nextContract}`,
-    'node runner/donegate.mjs status',
+    `node ${dgBin} check ${nextContract}`,
+    `node ${dgBin} status`,
     '```',
     '',
     '### 接收方验收记录',
