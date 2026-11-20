@@ -1,0 +1,16 @@
+{
+  "name": "donegate-dev",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "开发层依赖。只给「外部顾问」与变异测试用；十二条必跑判据仍是零依赖的 node 直跑脚本，不读这里。",
+  "scripts": {
+    "test": "vitest run",
+    "mutate": "stryker run"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
+    "vitest": "^5.1.1"
+  }
+}

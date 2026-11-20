@@ -1,0 +1,76 @@
+{
+  "protocolVersion": "1.1",
+  "说明": "砖头入网台账（3 批硬淘汰制）。每条 { brick, wiredAtBatch, actionsChanged }；连续 3 批 actionsChanged === 0 强制拔除接线。见 skill/17 §五。",
+  "bricks": [
+    {
+      "brick": "stryker",
+      "registryId": "stryker@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "在 skill/hash.mjs materialFingerprintOf 捕获 11 个存活变异体并推动补齐测试（变异分 83.82%→95.00%）"
+    },
+    {
+      "brick": "codegraph",
+      "registryId": "codegraph@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "补齐循环依赖检出（D09）并与 runner/engine.mjs 联动输出 pending-recheck 与受影响场景"
+    },
+    {
+      "brick": "gitleaks",
+      "registryId": "gitleaks@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入静态密钥扫描声明（hard）"
+    },
+    {
+      "brick": "osv-scanner",
+      "registryId": "osv-scanner@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "实跑 package-lock.json 检出 5 条 dev 依赖 Medium CVE（hard）"
+    },
+    {
+      "brick": "depcruise",
+      "registryId": "depcruise@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入架构依赖巡航声明，0 模块防空跑退 3（hard）"
+    },
+    {
+      "brick": "beads",
+      "registryId": "beads@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "只读接入 bd ready 依赖排序建议（soft）"
+    },
+    {
+      "brick": "fuck-u-code",
+      "registryId": "fuck-u-code@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入结构复杂度观测声明（soft），实跑修正 v2.2.2 metrics 解析"
+    },
+    {
+      "brick": "jscpd",
+      "registryId": "jscpd@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入跨文件克隆对观测声明（soft），实跑 runner/ 检出 3 处微克隆"
+    },
+    {
+      "brick": "openspec",
+      "registryId": "openspec@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 OpenSpec 规格校验声明（soft）"
+    },
+    {
+      "brick": "srclight",
+      "registryId": "srclight@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 srclight 代码索引新鲜度声明（soft）"
+    }
+  ]
+}

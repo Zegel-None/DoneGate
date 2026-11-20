@@ -1,0 +1,140 @@
+{
+  "protocolVersion": "1.1",
+  "说明": "适配器注册清单。每条冻结 id / tool / stage / checkedBy / protocolVersion / testedToolRange / blindSpots，见 skill/17-砂浆适配器协议.md §一、§二。适配器只许按 --registry-id 原样抄录 stage 与 checkedBy，无权挑选或覆盖。",
+  "adapters": [
+    {
+      "id": "stryker@stage4",
+      "tool": "stryker",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-hash-teeth",
+      "entry": "skill/adapters/stryker-teeth.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=10.1.0 <11.0.0",
+      "blindSpots": [
+        "档 B（Stryker）无法判定 red-wrong-assertion（红灯是否命中目标 assertionId）",
+        "档 B（Stryker）在隔离副本执行变异，不产生 restore-failed 工作区还原哈希校验"
+      ]
+    },
+    {
+      "id": "codegraph@stage4",
+      "tool": "codegraph",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": [
+        "c01/crit-impact-recheck",
+        "c01/crit-no-cycles"
+      ],
+      "entry": "skill/adapters/codegraph-impact.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.6.0 <2.0.0",
+      "blindSpots": [
+        "静态依赖图无法捕获动态 import(var)、拼接路径 require 与运行期反射注入"
+      ]
+    },
+    {
+      "id": "gitleaks@stage4",
+      "tool": "gitleaks",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-no-secrets",
+      "entry": "skill/adapters/gitleaks-scan.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=8.30.0 <9.0.0",
+      "blindSpots": [
+        "基于规则与熵值的静态密钥检测，无法识别自定义私有协议凭据或运行时注入的环境变量密钥"
+      ]
+    },
+    {
+      "id": "osv-scanner@stage4",
+      "tool": "osv-scanner",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-no-cves",
+      "entry": "skill/adapters/osv-vuln.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.7.0 <3.0.0",
+      "blindSpots": [
+        "依赖漏洞库离线或网络不可用时直接退 3 拒判，不覆盖未披露零日漏洞"
+      ]
+    },
+    {
+      "id": "depcruise@stage4",
+      "tool": "depcruise",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-dep-rules",
+      "entry": "skill/adapters/depcruise-arch.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=18.8.0 <19.0.0",
+      "blindSpots": [
+        "仅静态解析 import/require，不覆盖动态路径拼接、运行期 DI 与非 JS/TS 语言"
+      ]
+    },
+    {
+      "id": "beads@stage4",
+      "tool": "beads",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-gap-order",
+      "entry": "skill/adapters/beads-order.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.3.0 <2.0.0",
+      "blindSpots": [
+        "仅作只读依赖排序建议输入，严禁回写或覆盖 DoneGate 核状态"
+      ]
+    },
+    {
+      "id": "fuck-u-code@stage4",
+      "tool": "fuck-u-code",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-complexity-note",
+      "entry": "skill/adapters/fuck-u-code.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.2.0 <3.0.0",
+      "blindSpots": [
+        "复杂度静态指标仅作结构告警，不代表业务正确性"
+      ]
+    },
+    {
+      "id": "jscpd@stage4",
+      "tool": "jscpd",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-dup-check",
+      "entry": "skill/adapters/jscpd-dup.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=5.4.0 <6.0.0",
+      "blindSpots": [
+        "仅检出语法近似的文本克隆对，无法检出同义异构的语义重复"
+      ]
+    },
+    {
+      "id": "openspec@stage4",
+      "tool": "openspec",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-openspec-valid",
+      "entry": "skill/adapters/openspec-validate.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.1.0 <3.0.0",
+      "blindSpots": [
+        "只校 OpenSpec 格式合法性，不替代 DoneGate 契约冻结与有牙实验"
+      ]
+    },
+    {
+      "id": "srclight@stage4",
+      "tool": "srclight",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-srclight-fresh",
+      "entry": "skill/adapters/srclight-fresh.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.25.0 <1.0.0",
+      "blindSpots": [
+        "仅观测代码索引新鲜度，不校验语义正确性"
+      ]
+    }
+  ]
+}

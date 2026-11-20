@@ -1,6 +1,6 @@
 # DoneGate（完工门）0.2.0
 
-**一句话**：用 AI 做项目时，把「AI 嘴上说做完了」变成**「从前期规划到后期维护，每一步都有真凭实据」**。
+**一句话**：用 AI 做项目时，把「AI 嘴上说做完了」变成**「从前期规划到后期维护，每一步都有硬门禁拦着、有真凭实据给你看」**。
 
 ---
 
@@ -17,84 +17,56 @@
 
 ## 它覆盖一个项目的全周期
 
-DoneGate 不是只在最后跑一下测试，而是把从**立项到维护**的整条线串起来：
+DoneGate 把「技能说明书 + 我们自研的零依赖检查内核与门禁脚本 + 外部专业工具」串成一条完整的验收流水线，覆盖从**立项到维护**的每一步：
 
 1. **前期规划与定底线**
    开工前，先用人话写清楚「这个项目要做成什么样」「哪些底线绝对不能碰」（比如不能删老数据、不能改某个核心接口）。条件允许时，先让一个没有历史包袱的独立视角帮你审一遍方案，再动手。
 2. **任务排序，不乱开工**
    需求一多容易东一榔头西一棒槌。先把要做的事按先后依赖排好序，每次只专注做眼下最该做的那一小块。
 3. **先定验收标准，再写代码**
-   每做一块功能前，AI 先和你确认「做成什么样才算过、用什么命令检查」，并把标准**锁死**。写代码过程中不许临时改标准。
+   每做一块功能前，AI 先和你确认「做成什么样才算过、用什么命令检查」，并把标准**锁死**。写代码过程中不许临时改标准——想偷改会被内核当场拦下。
 4. **改了这里，查查有没有弄坏别处**
-   代码写完后，不只看新功能跑通没，还要查**影响面**——这次改动牵连到了哪些旧模块、有没有引入循环依赖或越界引用，被牵连到的老功能必须重新验证。
+   代码写完后，不只看新功能跑通没，还要查**影响面**——这次改动牵连到了哪些旧模块、有没有引入循环依赖或越界引用，被牵连到的老功能会自动标成「待重验」，必须重新跑过才算完。
 5. **挤干测试和代码里的水分**
    - **查测试是不是摆设**：故意把代码改坏一点，看测试能不能抓出来——抓不出来的绿灯不算数。
    - **代码与安全体检**：查有没有漏进代码里的 API Key / 密码、有没有带已知漏洞的第三方包、有没有到处复制粘贴的重复代码、代码结构有没有越写越绕。
 6. **叫第二个独立 AI 来查账（`/donegate-judge`）**
-   不放心干活的 AI？手打 `/donegate-judge` 叫来一个全新的独立 AI。它只看原始的验收标准和实际运行输出，不听第一个 AI 的解释和借口，只给你三个回答：**通过 / 不通过 / 证据不够**。
+   不放心干活的 AI？手打 `/donegate-judge` 叫来一个全新的独立 AI。门禁脚本会提前把干活 AI 的废话和思路草稿过滤掉，只把原始验收标准、代码改动和实际运行输出交给它，只给你三个回答：**通过 / 不通过 / 证据不够**。
 7. **交接、查总账与长期维护**
    换新对话、或者隔了几天回来继续做时，一键打包交接清单，清楚列出「哪些已通过、哪些没测、哪些因为别的改动过期了要重测」；不再需要的旧功能也能干净退场。
 
 ---
 
-## 用之前先说实话（公开版边界）
+## 怎么安装（两种方式）
 
-本仓库提供的是**纯技能版**（给 AI 读的工作规范与检查流程，不含硬性拦截程序）。有两件事得提前说清：
+### 方式一：让你的 AI Agent 帮你全自动装好（推荐）
 
-- **它管不住「AI 偷懒挑简单题测」**：如果 AI 把检查范围划得很窄，只测最容易过的部分，检查虽然全绿，漏掉的地方还是会坏。
-- **它不提升写代码速度，也不保证 AI 天生老实**：它的作用是把每一步的证据摆在明面上，方便你和独立 AI 核对。
+不用自己一行行敲命令。把下面这段话**原封不动发给你的 Agent**（DSH / Claude Code / Cursor 等），它会自动检查本机环境、克隆项目、挂载技能、安装所有需要的外部工具（「砖头」），最后跑通自检向你汇报：
 
----
-
-## 环境要求与外部工具（「砖头」依赖）
-
-先分清两层，免得下载下来跑不起来：
-
-### 1. 本仓自带、开箱即用（零额外安装）
-
-只用本仓的**纯技能流程 + 四条仓库自检**，只需要：
-
-- **Node.js**（建议 v20+）
-- **Git**
-- 支持加载 `SKILL.md` 的 AI 编程工具（如 **DSH** / DeepSeek Harness）
-
-不需要 `npm install`，克隆下来就能让 AI 按这套流程工作，也能直接跑通仓库自检。
-
-### 2. 想要自动跑全周期体检？需要另装对应的外部工具
-
-DoneGate 的完整工作流把许多专业开源工具当成「砖头」来用（本公开仓**不打包**这些第三方软件，需要你在本机按需安装，否则对应的自动检查无法运行）：
-
-| 阶段 | 工具 | 它帮你干什么 | 怎么装（按需选装） |
-|---|---|---|---|
-| **前期评审** | **EGM** (`dsh-egm`) | 开工前用零上下文视角挑方案毛病 | 按 DSH 插件市场 / EGM 说明安装 |
-| **规格演进** | **OpenSpec** / **Spec Kit** | 存量项目改需求时先立提案、再归档 | `npm i -g @fission-ai/openspec` / `specify-cli` |
-| **任务排序** | **Beads** (`bd`) | 理清任务依赖，提示下一步先做哪件 | 按 Beads 官方说明安装 `bd` CLI |
-| **影响面与边界** | **CodeGraph** | 改代码后查牵连到哪些文件、有没有循环依赖 | 安装 `codegraph` CLI |
-| **架构依赖检查** | **dependency-cruiser** (`depcruise`) | 查模块之间有没有越界引用 | `npm i -g dependency-cruiser` |
-| **索引新鲜度** | **Srclight** | 检查代码索引是不是最新的，防 AI 看旧地图 | 安装 `srclight` |
-| **挤测试水分（核心）** | **StrykerJS** + **Vitest** | 故意改坏代码，看你的测试抓不抓得住 | 在你的项目里装 `vitest` 与 `@stryker-mutator/core` |
-| **防泄密** | **Gitleaks** | 扫描代码里有没有遗漏的密钥、Token、密码 | 安装 `gitleaks` CLI |
-| **防漏洞** | **OSV-Scanner** | 查第三方依赖包有没有已知安全漏洞 | 安装 `osv-scanner` CLI |
-| **查重复代码** | **jscpd** | 找跨文件复制粘贴出来的重复块 | `npm i -g jscpd` |
-| **代码复杂度体检** | **fuck-u-code** | 看代码是不是越写越绕、复杂度超标 | 安装 `fuck-u-code` CLI |
-
-> **提示**：不装这些工具，纯技能流程一样能用（AI 会按你的项目现有测试命令来验收）；装了哪几块，就能多出哪几块硬核体检能力。
+> 请帮我完整安装并配置 **DoneGate**（仓库地址：`https://github.com/q862877400-ux/DoneGate.git`）：
+> 1. 检查本机 `node`（建议 v20+）、`git`、`npm`、`python` / `uv`、`go` 等基础环境是否就绪。
+> 2. 把 DoneGate 克隆到一个干净的技能目录（例如 `D:\skills\DoneGate` 或 `~/skills/DoneGate`，注意不要多套一层目录，根目录必须直接看到 `donegate/` 和 `donegate-judge/`）。
+> 3. 如果我在用 DSH，把该目录加到 `%DSH_HOME%\profiles\web\cordis.patch.yml` 的 `skill.config.customSkillDirs` 中（其他宿主请按对应技能目录规范挂载）。
+> 4. 进入克隆好的 DoneGate 目录，按需运行 `npm install`（用于安装可选的 `vitest` 和 `stryker`）。
+> 5. 逐个检查并尽量帮我装好配套外部工具（「砖头」）：`codegraph`、`dependency-cruiser`（`depcruise`）、`jscpd`、`@fission-ai/openspec`、`gitleaks`、`osv-scanner`、`beads`（`bd`）、`srclight`、`fuck-u-code`；遇到本机缺包管理器（如没装 Go/uv）装不上的，如实列出原因和手动装法，不要假装装好。
+> 6. 最后在 DoneGate 目录下依次跑完：`node tools/check-package.mjs`、`node tools/verify-spec.mjs`、`node tools/check-rot.mjs`、`node skill/check-skills.mjs --root .` 以及 `node runner/donegate.mjs --help`，把每一项的实际结果汇报给我。
 
 ---
 
-## 怎么安装
+### 方式二：自己用命令行安装
 
-### 第一步：克隆到本地
-
-找一个专门放 AI 技能的目录，把本仓库克隆下来（**注意不要多套一层目录**，打开目录后应该直接看到 `donegate` 和 `donegate-judge`）：
+#### 第一步：装好 DoneGate 本体
 
 ```powershell
+# 1. 克隆到本地（注意不要多套一层目录）
 git clone https://github.com/q862877400-ux/DoneGate.git D:\skills\DoneGate
+cd D:\skills\DoneGate
+
+# 2. （可选）装上测试与变异测试引擎（Vitest + StrykerJS）；本体内核与门禁零依赖，不装也能跑
+npm install
 ```
 
-### 第二步：在 DSH 中挂载
-
-打开 DSH 的配置文件（`%DSH_HOME%\profiles\web\cordis.patch.yml`，没有就新建），加入：
+然后在 DSH 的配置文件（`%DSH_HOME%\profiles\web\cordis.patch.yml`，没有就新建）里挂上技能目录，保存后重启 DSH：
 
 ```yaml
 - id: skill
@@ -103,13 +75,37 @@ git clone https://github.com/q862877400-ux/DoneGate.git D:\skills\DoneGate
       - D:\skills\DoneGate
 ```
 
-保存后重启 DSH，或等待目录刷新即可。
+#### 第二步：快速装好全套外部工具（「砖头」，按需安装）
+
+DoneGate 的判定内核与全部门禁脚本都是**自研且零第三方依赖**的；下面这些是配套干苦力的开源外部工具，按你的系统和需求用一条命令装好即可：
+
+```powershell
+# 1. Node / npm 生态一把装（架构边界 + 重复代码 + 规格提案 + 规格工具）
+npm install -g dependency-cruiser jscpd @fission-ai/openspec
+
+# 2. Windows 常用二进制（密钥扫描 + 漏洞扫描；macOS 可改用 brew install gitleaks osv-scanner）
+winget install Gitleaks.Gitleaks
+winget install Google.OSVScanner
+
+# 3. Python 生态（代码索引新鲜度；需先有 uv 或 pip）
+uv tool install srclight
+
+# 4. Go 生态（代码复杂度体检；需先有 Go）
+go install github.com/Done-0/fuck-u-code/cmd/fuck-u-code@latest
+```
+
+另外三块工具建议按官方文档安装：
+- **CodeGraph**（影响面与循环依赖）：按 [CodeGraph](https://github.com/colbymchenry/codegraph) 官方发布安装 `codegraph` CLI（支持一键接入各主流 AI Agent）。
+- **Beads (`bd`)**（任务依赖排序）：按 [Beads](https://github.com/steveyegge/beads) 官方说明安装 `bd` CLI。
+- **EGM (`dsh-egm`)**（前期零上下文评审）：通过 DSH 插件市场安装。
+
+> **提示**：不装上面这些外部工具，DoneGate 的内核、门禁脚本和纯技能流程一样能用（配合你项目自带的测试命令即可）；装了哪几块，就能多出哪几块全自动体检能力。
 
 ---
 
 ## 平时怎么用
 
-装好之后，直接用自然语言跟 AI 对话就行：
+装好之后，直接用自然语言跟 AI 对话就行（需要时 AI 会调用 `runner/donegate.mjs` 和各门禁脚本）：
 
 - **立项 / 规划前**：「帮我把目标和绝对不能碰的底线先定下来」
 - **写功能前**：「帮我定一下这轮的验收标准并锁死」
@@ -117,18 +113,32 @@ git clone https://github.com/q862877400-ux/DoneGate.git D:\skills\DoneGate
 - **想找第二个 AI 复核时**：直接输入 `/donegate-judge`
 - **换新对话 / 收尾时**：「帮我做个交接，列出已通过和还没测的」
 
+命令行常用入口（在你的项目目录下调用）：
+
+```text
+node <DoneGate路径>/runner/donegate.mjs --help   # 查看全部 12 条命令
+```
+
 ---
 
-## 装完自检（可选）
+## 装完自检
 
-在 `DoneGate` 目录下运行下面四条命令，全部通过就说明文件完整、AI 也能正常加载：
+在 `DoneGate` 目录下运行下面几条命令，全部通过就说明文件完整、内核正常、AI 也能正常加载：
 
 ```text
 node tools/check-package.mjs               # 检查目录结构和文档链接
 node tools/verify-spec.mjs                 # 检查验收规则本身是否自洽
 node tools/check-rot.mjs                   # 检查文档描述有没有过期
 node skill/check-skills.mjs --root .       # 检查 AI 能不能正常加载这两个技能
+node runner/donegate.mjs --help            # 检查判定核命令是否可执行
 ```
+
+---
+
+## 用之前先说实话（能力边界）
+
+- **它管不住「AI 偷懒挑简单题测」**：如果 AI 把检查范围划得很窄，只测最容易过的部分，检查虽然全绿，漏掉的地方还是会坏。
+- **它不提升写代码速度，也不保证 AI 天生老实**：它的作用是把每一步的门禁卡死、把证据摆在明面上，方便你和独立 AI 核对。
 
 ---
 
@@ -138,8 +148,11 @@ node skill/check-skills.mjs --root .       # 检查 AI 能不能正常加载这�
 |---|---|
 | `donegate/` | 主技能：带 AI 走完定标准、防改坏、留证据、做交接的全流程 |
 | `donegate-judge/` | 独立复核技能：只用 `/donegate-judge` 触发，冷酷查账 |
+| `runner/` | **自研判定核**（零依赖 Node.js）：命令入口、状态计算、防篡改账本、隔离与越界拦截、交接与复核包生成 |
+| `skill/` | **自研硬门禁脚本**（复核包白名单、引用核查、阶段卡控、砖头淘汰等）+ 10 个外部工具适配器（`adapters/`） |
+| `tools/` | 结构、规则、文档腐化自检脚本 |
 | `设计/`、`参考/` | 背后的规则原文与依据（供 AI 按需查阅，平时不用自己翻） |
-| `tools/`、`skill/` | 上面四条自检脚本与配套说明 |
+| `adapters.registry.json`、`ledger.json`、`batches.jsonl` | 外部工具适配器的注册表与使用台账 |
 | `README.md`、`CHANGELOG.md`、`VERSION`、`LICENSE` | 本说明、更新记录、版本号、MIT 开源协议 |
 
 ---
