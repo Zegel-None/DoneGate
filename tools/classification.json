@@ -1,0 +1,58 @@
+{
+  "$comment": "四个子数的判定表。这是唯一权威定义：规格 §3.4.1 的表格由它渲染，tools/verify-spec.mjs 的分类器由它驱动。改条件请改这里，不要改文档或脚本。",
+  "version": "2026-11-18",
+  "matchOrder": "从上到下，第一条命中即止。顺序本身是规则的一部分。",
+  "rows": [
+    {
+      "order": 1,
+      "subclass": "A4",
+      "label": "待重验",
+      "counts": false,
+      "when": { "run": "pass", "pendingRecheck": true }
+    },
+    {
+      "order": 2,
+      "subclass": "A1",
+      "label": "算数",
+      "counts": true,
+      "when": { "run": "pass", "pendingRecheck": false, "teeth": ["killed"] }
+    },
+    {
+      "order": 3,
+      "subclass": "A2",
+      "label": "无牙",
+      "counts": false,
+      "when": {
+        "run": "pass",
+        "pendingRecheck": false,
+        "teeth": [
+          "survived",
+          "no-coverage",
+          "compile-error",
+          "runtime-error",
+          "timeout",
+          "red-wrong-assertion",
+          "hollow-assertion"
+        ]
+      }
+    },
+    {
+      "order": 4,
+      "subclass": "A3",
+      "label": "未做实验",
+      "counts": false,
+      "when": { "run": "pass", "pendingRecheck": false, "teeth": null }
+    }
+  ],
+  "outsideTable": [
+    {
+      "when": { "run": ["fail", "unknown"] },
+      "note": "不在这四栏，走「未通过」或「无法判断」"
+    }
+  ],
+  "requirements": [
+    "互斥：任何义务不得同时命中两行",
+    "穷尽（限 run = pass）：每个 run = pass 的义务必须恰好命中一行",
+    "不匹配任何行且 run = pass 时判红"
+  ]
+}
