@@ -127,14 +127,17 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 
 先读完第零节，再来查这张表。要是把这里当门禁用，结果比不用更糟：它没有拦截，却会让你以为自己被拦住了。
 
-## 八、全绿却出 Bug？漏网复盘与社区反馈（自我迭代闭环）
+## 八、全绿却出 Bug？漏网复盘与安全自迭代（五步闭环）
 
-只要出现「全套门禁都报全绿、但实际用起来还是出了 bug」，说明门禁存在盲区。修完当前症状不算完，必须走完四步闭环：
+只要出现「全套门禁都报全绿、但实际用起来还是出了 bug」，说明门禁存在盲区。修完当前症状不算完，必须走完五步闭环，**绝不允许小模型/补丁直接改完就提交**：
 
 1. **追问为什么没拦住**：找出当时全绿漏检的原因（例如跨平台换行、默认路径、边界顺序、外部工具参数），以及深层根因。
 2. **同类横扫**：按同一个根因把项目里其余脚本、卡片、适配器或模块全扫一遍，类似隐患一次改干净。
-3. **补一条独立门禁**：写出一条能先红后绿的复现检查，用 `node <DoneGate根>/skill/check-escapes.mjs --record ...` 登记进项目 `.donegate/escapes.jsonl`，再跑 `node <DoneGate根>/skill/check-escapes.mjs --project .` 确认真有门禁守着，防止同款问题再犯。
-4. **若盲区在 DoneGate 自身，引导提 GitHub Issue**：在征得用户同意后，跑 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏 Issue 草稿；若本机已有已登录的 `gh` CLI，可协助用 `gh issue create --repo q862877400-ux/DoneGate` 提交，并转达这句社区约定：
+3. **补一条独立门禁并登记**：写出一条能先红后绿的复现检查，用 `node <DoneGate根>/skill/check-escapes.mjs --record ...` 登记进项目 `.donegate/escapes.jsonl`（试跑不通过会直接拒绝登记）。
+4. **用项目自己完整核查一遍自己（必须先过这关才准提交生效）**：补完门禁或改完规则后，**提交前**必须跑一遍全套自我核查，确认没有把自己改崩：
+   `node <DoneGate根>/skill/check-escapes.mjs --self-check --project .`
+   任何一项报错，立刻修正或回滚，**未全绿前禁止 `git commit` 或宣布完成**。
+5. **若盲区在 DoneGate 自身，引导提 GitHub Issue**：在征得用户同意后，跑 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏 Issue 草稿；若本机已有已登录的 `gh` CLI，可协助用 `gh issue create --repo q862877400-ux/DoneGate` 提交，并转达这句社区约定：
 
 > 众人拾柴火焰高——你踩过的坑反馈上来，修成一条新门禁，下次拉取更新时所有人的成果都能直接为你守门。欢迎提个 Issue，你也来添一把柴！
 

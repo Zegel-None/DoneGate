@@ -396,6 +396,64 @@ if (has('--report-template')) {
   process.exit(0);
 }
 
+if (has('--self-check')) {
+  const suites = [
+    ['tools/check-package.mjs', []],
+    ['tools/verify-spec.mjs', []],
+    ['tools/check-rot.mjs', []],
+    ['skill/check-skills.mjs', ['--root', ROOT]],
+    ['skill/check-cards.mjs', []],
+    ['skill/check-reviewpack.mjs', []],
+    ['skill/check-declarations.mjs', []],
+    ['skill/check-brick-liveness.mjs', []],
+    ['skill/check-escapes.mjs', []],
+    ['skill/check-escapes.mjs', ['--red-self-test']],
+    ['runner/donegate.mjs', ['--help']]
+  ];
+  let bad = 0;
+  console.log('=== DoneGate 自我核查（先扫自己，全绿才准提交生效） ===');
+  for (const [script, sArgs] of suites) {
+    const abs = join(ROOT, script);
+    if (!existsSync(abs)) { console.log(`  ✗ 缺核心门禁脚本：${script}`); bad++; continue; }
+    const r = spawnSync(process.execPath, [abs, ...sArgs], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    if (r.error || r.status !== 0) {
+      bad++;
+      console.log(`  ✗ ${script} ${sArgs.join(' ')} → exit ${r.status}`);
+      const detail = (r.stderr || r.stdout || '').trim().split(/\r?\n/).slice(-5).join('\n    ');
+      if (detail) console.log('    ' + detail);
+    } else {
+      console.log(`  ✓ ${script} ${sArgs.join(' ')} → exit 0`);
+    }
+  }
+  const projOpt = arg('--project');
+  if (projOpt) {
+    const projRoot = resolve(projOpt);
+    const rProj = spawnSync(process.execPath, [join(ROOT, 'skill/check-escapes.mjs'), '--project', projRoot], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    if (rProj.error || rProj.status !== 0) {
+      bad++;
+      console.log(`  ✗ 用户项目漏网与硬编码核查失败 (${projRoot}) → exit ${rProj.status}`);
+      console.log((rProj.stderr || rProj.stdout || '').trim());
+    } else {
+      console.log(`  ✓ 用户项目漏网与硬编码核查通过 (${projRoot})`);
+    }
+    if (existsSync(join(projRoot, 'contracts'))) {
+      const rSt = dispatchCommand(['status'], projRoot);
+      if (rSt.exitCode !== 0 && rSt.exitCode !== 1) {
+        bad++;
+        console.log(`  ✗ 用户项目 donegate status 事故态退 ${rSt.exitCode}：${rSt.stderr || rSt.stdout}`);
+      } else {
+        console.log(`  ✓ 用户项目 donegate status 可正常计算（exit ${rSt.exitCode}）`);
+      }
+    }
+  }
+  if (bad > 0) {
+    console.error(`RESULT: FAIL 自我核查 ${bad} 项未通过——禁止提交生效，请先修到全绿！`);
+    process.exit(1);
+  }
+  console.log('RESULT: PASS 自我核查全绿，可安全提交生效');
+  process.exit(0);
+}
+
 if (has('--record')) {
   const proj = resolve(arg('--project', process.cwd()));
   const entry = {
@@ -413,6 +471,13 @@ if (has('--record')) {
     console.error('拒绝登记漏网问题：\n  - ' + errs.join('\n  - '));
     process.exit(1);
   }
+  // 写入前先试跑该门禁命令：防止小模型写了一条本身就崩/过不了的假门禁
+  const preRun = spawnSync(entry.gateCommand, { cwd: proj, shell: true, encoding: 'utf8', timeout: 120000 });
+  if (preRun.error || preRun.status !== 0) {
+    console.error(`拒绝登记：新门禁命令试跑失败（exit=${preRun.status}），请先确认修复已生效且门禁本身可跑通：\n  ${entry.gateCommand}`);
+    if (preRun.stderr || preRun.stdout) console.error((preRun.stderr || preRun.stdout).trim());
+    process.exit(1);
+  }
   const dir = join(proj, '.donegate');
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'escapes.jsonl');
@@ -424,8 +489,8 @@ if (has('--record')) {
     }
   }
   appendFileSync(file, JSON.stringify(entry) + '\n', 'utf8');
-  console.log(`已登记漏网问题 ${entry.id} 到 ${file}`);
-  console.log('下一步请执行校验确认门禁全绿：node skill/check-escapes.mjs --project "' + proj + '"');
+  console.log(`已登记漏网问题 ${entry.id} 到 ${file}（新门禁试跑 exit 0）`);
+  console.log(`提交生效前请务必先跑自我核查：node "${join(ROOT, 'skill/check-escapes.mjs')}" --self-check --project "${proj}"`);
   process.exit(0);
 }
 

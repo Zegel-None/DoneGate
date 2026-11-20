@@ -141,8 +141,11 @@ node runner/donegate.mjs --help            # 检查判定核命令是否可执�
 最怕的不是报错，而是**「整套检查都亮绿灯，结果一上手还是有 bug」**。DoneGate 内置了一套 **漏网之鱼（Escaped-Bug）门禁闭环**（`skill/check-escapes.mjs`）：
 
 1. **不只是修这一个点**：一旦遇到「全绿却踩坑」，修完当前问题后，必须顺藤摸瓜找出**深层根因**，并把项目里所有同款隐患一起清掉。
-2. **加一条永久门禁**：把复现条件写成一条独立检测，登记进项目的 `.donegate/escapes.jsonl` 并由 `check-escapes.mjs --project .` 守住，保证同款坑以后永远过不了绿灯。
-3. **如果你有 GitHub，欢迎随手提个 Issue**：要是盲区出在 DoneGate 自己身上，可以直接运行下面的命令生成一份**已脱敏的反馈草稿**（如果你本机登录了 `gh` CLI，AI 也能经你确认后直接帮你发到 GitHub）：
+2. **加一条永久门禁**：把复现条件写成一条独立检测，登记进项目的 `.donegate/escapes.jsonl`，防止同款坑以后再过绿灯。
+3. **改完先自我核查一遍，全绿才准提交**：防止模型补门禁时把项目本身或现有检查改崩，提交生效前必须运行：
+   `node <DoneGate路径>/skill/check-escapes.mjs --self-check --project .`
+   把所有门禁、硬编码扫描和状态计算从头核查一遍，全绿才准 `git commit`。
+4. **如果你有 GitHub，欢迎随手提个 Issue**：要是盲区出在 DoneGate 自己身上，可以直接运行下面的命令生成一份**已脱敏的反馈草稿**（如果你本机登录了 `gh` CLI，AI 也能经你确认后直接帮你发到 GitHub）：
 
 ```text
 node <DoneGate路径>/skill/check-escapes.mjs --report-template
