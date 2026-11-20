@@ -200,6 +200,19 @@
       "blindSpots": [
         "依赖 OpenAPI/GraphQL schema 声明完整性；不覆盖未在 schema 声明的隐藏路由或复杂多步业务鉴权时序"
       ]
+    },
+    {
+      "id": "trivy@stage4",
+      "tool": "trivy",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-iac-security",
+      "entry": "skill/adapters/trivy-scan.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.70.0 <1.0.0",
+      "blindSpots": [
+        "默认仅启用 misconfig 离线规则；启用 vuln 扫描依赖本机漏洞库更新且不覆盖零日漏洞"
+      ]
     }
   ]
 }

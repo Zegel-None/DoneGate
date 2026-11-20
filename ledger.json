@@ -106,6 +106,13 @@
       "wiredAtBatch": 1,
       "actionsChanged": 1,
       "note": "接入 Schemathesis OpenAPI 接口边界模糊测试观测声明（hard）"
+    },
+    {
+      "brick": "trivy",
+      "registryId": "trivy@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 Trivy Dockerfile/IaC 安全配置与文件系统扫描观测声明（hard）"
     }
   ]
 }
