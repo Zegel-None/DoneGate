@@ -150,6 +150,13 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
    - `⚠️ 阻断提醒（exit 3）`：前置环境/材料没备齐（如脏树、缺 `breakPatch`、未 `codegraph sync`），进度条暂停不涨，直接报缺失项与下一步命令。
    - `❌ 检查未通过（exit 1）`：真正跑红（门 0/1/2 不过、检查项报错、变异存活、盲审打回），点名失败子项并定位修复。
    - `🚨 严重事故（exit 2）`：哈希断链、疑似篡改、禁词越界、还原失败，立即停下等待核查。
-3. **开放扩展入口（允许用户自己的 Agent 补充项目专属报喜/报忧）**：除机械状态外，用户项目里的 Agent 可通过 `node <DoneGate根>/skill/progress-note.mjs --kind good|worry|alert --stage <1..4> --title "..." [--detail "..."] --root .` 把额外排查结论、阶段性提醒追加到卡片对应阶段下（`N-💬` 标记），但不许改动机械计算出的总进度百分比。
+3. **开放扩展入口与防撒谎模板（用户 Agent 可按模板补充，但不许撒谎）**：
+   除机械状态外，允许用户项目里的 Agent 补充阶段性报喜或报忧，**必须走 `progress-note.mjs` 并严守两条铁律**（违者直接退 `1`/`2` 并标 `🚨 拦截·未验真`）：
+   - **报喜模板（`--kind good`，严禁空口白话，必附真凭据）**：
+     `node <DoneGate根>/skill/progress-note.mjs --kind good --stage <1..4> --title "简短实测结论" --verify-cmd "<实跑命令>" --root .`
+     （或用 `--evidence "<项目内非空证据文件>"` 锁死 SHA-256 指纹；命令退非 `0` 禁止报喜）
+   - **报忧/告警模板（`--kind worry|alert`）**：
+     `node <DoneGate根>/skill/progress-note.mjs --kind worry --stage <1..4> --title "客观风险点" --detail "影响与待办" --root .`
+   - **禁止篡改口径**：不许写假进度条（`██░`）、百分比或「全部通关/全部完成」，不许绕过脚本手改 `.donegate/notes.jsonl`（带 `noteHash` 封印，提交前由 `check-escapes.mjs --project` 复验）。
 4. **每轮对话必同步、简短肯定**：只要推进了一个节点就立刻把进度卡原样展示给用户（只用简短、肯定的技术语言，不要啰嗦）。
 

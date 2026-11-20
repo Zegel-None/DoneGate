@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { renderProgressBlock, renderWorryBlock } from '../runner/core/progress.mjs';
+import { appendProgressNote, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from '../runner/core/progress.mjs';
 import { walkByExt } from './fs-walk.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -378,9 +378,21 @@ function runRedSelfTest() {
     const r4 = scanHardcodedPaths([sysFallback], tmp);
     if (r4.length !== 0) { console.error('FAIL: 合法 SystemRoot 系统兜底被误报：' + r4.join('; ')); process.exit(1); }
 
+    // 负样本 4：自定义报喜不带真凭据、冒充 100% 进度条、或手改 notes.jsonl 必被抓
+    const nDir = join(tmp, 'note-proj');
+    mkdirSync(join(nDir, '.donegate'), { recursive: true });
+    const rEmptyGood = appendProgressNote(nDir, { kind: 'good', stage: 2, title: '已完成真机实测' });
+    if (rEmptyGood.ok) { console.error('FAIL: 空口报喜竟然放过了'); process.exit(1); }
+    const rSpoof = appendProgressNote(nDir, { kind: 'worry', stage: 2, title: '总进度 100% 全部通关' });
+    if (rSpoof.ok || rSpoof.exitCode !== 2) { console.error('FAIL: 冒充 100%/通关词竟然没退 2'); process.exit(1); }
+    writeFileSync(join(nDir, '.donegate/notes.jsonl'), JSON.stringify({ kind: 'good', stage: 2, title: '伪造完成', verifyCmd: 'echo ok', exitCode: 0 }) + '\n');
+    const rTamperNote = verifyProjectNotes(nDir);
+    if (rTamperNote.ok || rTamperNote.invalid.length === 0) { console.error('FAIL: 绕过脚本手写 notes.jsonl 竟然放过了'); process.exit(1); }
+
     console.log('  ✓ 负样本 1：缺根因/占位词/缺门禁命令的记录被拒（' + r1.fails.length + ' 项报错）');
     console.log('  ✓ 负样本 2：自建门禁命令退 1 被拒');
     console.log('  ✓ 负样本 3：代码里个人绝对路径硬编码被抓（' + r3[0] + '），合法 SystemRoot 兜底放行');
+    console.log('  ✓ 负样本 4：空口报喜拒收 + 冒充100%/通关词退 2 + 手改 notes.jsonl 封印校验必红');
     console.log('RESULT: PASS check-escapes 负样本自检有牙');
     process.exit(0);
   } finally {
@@ -516,9 +528,11 @@ if (projArg) {
   const file = join(projRoot, '.donegate', 'escapes.jsonl');
   const res = auditEscapesFile(file, projRoot, { onlyId: arg('--only') });
   const pathHits = scanHardcodedPaths(collectProjectCode(projRoot), projRoot);
-  const totalFails = [...res.fails, ...pathHits];
+  const notesChk = verifyProjectNotes(projRoot, { rerunCmds: true });
+  const noteFails = notesChk.invalid.map((b) => `自定义进度条目第 ${b.lineNo} 行「${b.title}」防撒谎门禁失败：${b.reason}`);
+  const totalFails = [...res.fails, ...pathHits, ...noteFails];
 
-  if (!res.exists && pathHits.length === 0) {
+  if (!res.exists && !notesChk.exists && pathHits.length === 0) {
     console.log(`未发现 ${file}（暂无登记的漏网之鱼），且项目代码零个人路径硬编码。`);
     console.log('若全绿后仍发现 bug，可用 --record 记下根因、同类排查与独立门禁，形成自我迭代闭环。');
     console.log(COMMUNITY_MOTTO);

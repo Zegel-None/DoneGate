@@ -1,9 +1,14 @@
-// 全流程机械进度计算、报喜/报忧卡片渲染与开放扩展入口（零第三方依赖）
-// 原则：进度百分比与机械状态完全由真实文件与退出码派生；开放入口（.donegate/notes.jsonl 与 extraItems）
-// 供用户项目自己的 Agent 补充阶段性报喜或报忧，但绝不篡改机械计算的百分比与状态词（守住 INV-01）。
+// 全流程机械进度计算、报喜/报忧卡片渲染与防撒谎开放扩展入口（零第三方依赖）
+// 原则：
+//   1. 机械总进度百分比完全由真实文件状态与退出码派生，自定义条目绝不改动百分比（INV-01）。
+//   2. 开放入口（.donegate/notes.jsonl）允许用户项目自己的 Agent 补充阶段性报喜或报忧，
+//      但必须过防撒谎门禁：禁空口报喜（good 必带可验证文件哈希或实跑 exit 0 命令）、禁冒充百分比/通关词、带 noteHash 防手改。
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { join, relative, resolve } from 'node:path';
 import { computeProjectStatus } from './gates.mjs';
+import { checkCommandBans } from './isolation.mjs';
+import { sha256 } from '../../skill/hash.mjs';
 import { readMaybe } from '../../skill/io.mjs';
 
 function makeBar(pct) {
@@ -17,18 +22,128 @@ function summarizeObligationLabel(o) {
 }
 
 const NOTE_ICONS = { good: '✅', worry: '⚠️', alert: '🚨' };
+const NOTE_PLACEHOLDERS = new Set(['todo', 'tbd', 'ok', 'done', 'pass', 'none', 'na', 'n/a', '无', '暂无', '没问题', '待补充']);
+
+export function checkNoteTextAntiLie(title, detail = '') {
+  const t = String(title || '').trim();
+  const d = String(detail || '').trim();
+  const combined = `${t}\n${d}`;
+  if (!t || t.length < 4) return { ok: false, exitCode: 1, reason: 'title 至少 4 个字符，不许写空话' };
+  if (NOTE_PLACEHOLDERS.has(t.toLowerCase())) return { ok: false, exitCode: 1, reason: `title 不许填占位词「${t}」` };
+  if (/[█░■□]{3,}|\b\d{1,3}\s*%|总进度/.test(combined)) {
+    return { ok: false, exitCode: 2, reason: '防撒谎门禁：自定义条目禁止伪造进度条、百分比或冒充「总进度」' };
+  }
+  if (/全部通关|项目完工|全部通过|全部完成|盲审已过|verify\s*pass|\bcleared\b/i.test(combined)) {
+    return { ok: false, exitCode: 2, reason: '防撒谎门禁：自定义条目禁止越权声明「全部通关/全部完成/盲审已过」' };
+  }
+  if (/\|\|\s*true\b|continue-on-error|--no-fail\b/i.test(combined)) {
+    return { ok: false, exitCode: 2, reason: '防撒谎门禁：禁止出现吞错写法（|| true / continue-on-error）' };
+  }
+  return { ok: true };
+}
+
+function computeNoteSeal(entry) {
+  return sha256(JSON.stringify({
+    at: entry.at || '',
+    kind: entry.kind || '',
+    stage: entry.stage || 0,
+    title: entry.title || '',
+    detail: entry.detail || '',
+    verifyCmd: entry.verifyCmd || '',
+    exitCode: entry.exitCode ?? null,
+    stdoutSha256: entry.stdoutSha256 || '',
+    evidencePath: entry.evidencePath || '',
+    evidenceSha256: entry.evidenceSha256 || ''
+  }));
+}
+
+export function verifySingleNoteOnDisk(projectRoot, entry, opts = {}) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return { ok: false, exitCode: 2, reason: '条目不是 JSON 对象' };
+  }
+  if (!['good', 'worry', 'alert'].includes(entry.kind)) {
+    return { ok: false, exitCode: 2, reason: `非法 kind: ${entry.kind}` };
+  }
+  const stage = Number(entry.stage);
+  if (!Number.isInteger(stage) || stage < 1 || stage > 4) {
+    return { ok: false, exitCode: 2, reason: `非法 stage: ${entry.stage}` };
+  }
+  const textChk = checkNoteTextAntiLie(entry.title, entry.detail);
+  if (!textChk.ok) return textChk;
+
+  // 防手改封印校验（绕过 progress-note.mjs 手写 notes.jsonl 会在这里直接被抓）
+  if (!entry.noteHash || entry.noteHash !== computeNoteSeal(entry)) {
+    return { ok: false, exitCode: 2, reason: 'noteHash 缺失或与内容不符（疑似绕过脚本手改或篡改）' };
+  }
+
+  if (entry.kind === 'good') {
+    const hasCmd = typeof entry.verifyCmd === 'string' && entry.verifyCmd.trim().length > 0;
+    const hasEv = typeof entry.evidencePath === 'string' && entry.evidencePath.trim().length > 0;
+    if (!hasCmd && !hasEv) {
+      return { ok: false, exitCode: 1, reason: '空口报喜拒收：kind=good 必须附 verifyCmd 或 evidencePath 真凭据' };
+    }
+    if (hasCmd) {
+      const bans = checkCommandBans(entry.verifyCmd);
+      if (bans.length > 0) return { ok: false, exitCode: 2, reason: 'verifyCmd 触发禁令：' + bans.join('；') };
+      if (entry.exitCode !== 0) return { ok: false, exitCode: 1, reason: `verifyCmd 记录退出码为 ${entry.exitCode}，非 0 不许报喜` };
+      if (opts.rerunCmds) {
+        const rr = spawnSync(entry.verifyCmd, { cwd: projectRoot, shell: true, encoding: 'utf8', timeout: 60000 });
+        if (rr.error || rr.status !== 0) {
+          return { ok: false, exitCode: 1, reason: `复跑 verifyCmd 失败（exit=${rr.status}）：${entry.verifyCmd}` };
+        }
+      }
+    }
+    if (hasEv) {
+      const abs = resolve(projectRoot, entry.evidencePath);
+      const rel = relative(projectRoot, abs);
+      if (rel.startsWith('..') || !existsSync(abs)) {
+        return { ok: false, exitCode: 1, reason: `证据文件不存在或越界：${entry.evidencePath}` };
+      }
+      const buf = readFileSync(abs);
+      if (buf.length === 0) return { ok: false, exitCode: 1, reason: `证据文件为空：${entry.evidencePath}` };
+      if (!entry.evidenceSha256 || sha256(buf) !== entry.evidenceSha256) {
+        return { ok: false, exitCode: 2, reason: `证据文件指纹已变化或篡改：${entry.evidencePath}` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+export function verifyProjectNotes(projectRoot, opts = {}) {
+  const p = join(projectRoot, '.donegate', 'notes.jsonl');
+  if (!existsSync(p)) return { exists: false, ok: true, entries: [], valid: [], invalid: [] };
+  const raw = readFileSync(p, 'utf8');
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const entries = [];
+  const valid = [];
+  const invalid = [];
+  lines.forEach((line, i) => {
+    let obj;
+    try { obj = JSON.parse(line); } catch (e) {
+      invalid.push({ lineNo: i + 1, title: '(JSON 损坏)', exitCode: 2, reason: e.message });
+      return;
+    }
+    entries.push(obj);
+    const v = verifySingleNoteOnDisk(projectRoot, obj, opts);
+    if (v.ok) valid.push(obj);
+    else invalid.push({ lineNo: i + 1, entry: obj, title: obj?.title || '?', exitCode: v.exitCode || 1, reason: v.reason });
+  });
+  return { exists: true, ok: invalid.length === 0, entries, valid, invalid };
+}
 
 export function loadCustomNotes(projectRoot) {
-  const p = join(projectRoot, '.donegate', 'notes.jsonl');
-  if (!existsSync(p)) return [];
+  const res = verifyProjectNotes(projectRoot, { rerunCmds: false });
   const out = [];
-  for (const line of readFileSync(p, 'utf8').split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t) continue;
-    try {
-      const obj = JSON.parse(t);
-      if (obj && typeof obj.title === 'string' && obj.title.trim()) out.push(obj);
-    } catch { /* ignore corrupted line */ }
+  for (const e of res.valid) out.push({ ...e, _verified: true });
+  for (const bad of res.invalid) {
+    out.push({
+      kind: 'alert',
+      stage: Number.isInteger(Number(bad.entry?.stage)) && Number(bad.entry.stage) >= 1 && Number(bad.entry.stage) <= 4
+        ? Number(bad.entry.stage) : 2,
+      title: bad.title,
+      detail: `拦截·未验真：${bad.reason}`,
+      _verified: false
+    });
   }
   return out;
 }
@@ -37,9 +152,56 @@ export function appendProgressNote(projectRoot, note) {
   const kind = ['good', 'worry', 'alert'].includes(note?.kind) ? note.kind : null;
   const stage = Number(note?.stage);
   const title = typeof note?.title === 'string' ? note.title.trim() : '';
-  if (!kind) return { ok: false, reason: 'kind 必须是 good | worry | alert' };
-  if (!Number.isInteger(stage) || stage < 1 || stage > 4) return { ok: false, reason: 'stage 必须是 1 | 2 | 3 | 4' };
-  if (!title) return { ok: false, reason: 'title 不能为空' };
+  const detail = typeof note?.detail === 'string' ? note.detail.trim() : '';
+  if (!kind) return { ok: false, exitCode: 1, reason: 'kind 必须是 good | worry | alert' };
+  if (!Number.isInteger(stage) || stage < 1 || stage > 4) return { ok: false, exitCode: 1, reason: 'stage 必须是 1 | 2 | 3 | 4' };
+
+  const textChk = checkNoteTextAntiLie(title, detail);
+  if (!textChk.ok) return { ok: false, exitCode: textChk.exitCode, reason: textChk.reason };
+
+  let verifyCmd = typeof note?.verifyCmd === 'string' ? note.verifyCmd.trim() : '';
+  let exitCode = null;
+  let stdoutSha256 = '';
+  let evidencePath = typeof note?.evidence === 'string' ? note.evidence.trim() : '';
+  let evidenceSha256 = '';
+
+  if (kind === 'good') {
+    if (!verifyCmd && !evidencePath) {
+      return {
+        ok: false,
+        exitCode: 1,
+        reason: '拒绝空口报喜：--kind good 必须提供 --verify-cmd "<实跑命令>" 或 --evidence "<项目内证据文件>"；若只是主观判断或风险提醒，请改用 --kind worry'
+      };
+    }
+    if (verifyCmd) {
+      const bans = checkCommandBans(verifyCmd);
+      if (bans.length > 0) {
+        return { ok: false, exitCode: 2, reason: '拒绝违禁命令：' + bans.join('；') };
+      }
+      const r = spawnSync(verifyCmd, { cwd: projectRoot, shell: true, encoding: 'utf8', timeout: 60000 });
+      if (r.error || r.status !== 0) {
+        return {
+          ok: false,
+          exitCode: 1,
+          reason: `验证命令未通过（exit=${r.status}），严禁以 good 报喜；请修好重跑或改用 --kind worry 报忧：\n${(r.stderr || r.stdout || '').trim()}`
+        };
+      }
+      exitCode = 0;
+      stdoutSha256 = sha256((r.stdout || '') + (r.stderr || ''));
+    }
+    if (evidencePath) {
+      const abs = resolve(projectRoot, evidencePath);
+      const rel = relative(projectRoot, abs).replace(/\\/g, '/');
+      if (rel.startsWith('..') || !existsSync(abs)) {
+        return { ok: false, exitCode: 1, reason: `证据文件不存在或越出项目目录：${evidencePath}` };
+      }
+      const buf = readFileSync(abs);
+      if (buf.length === 0) return { ok: false, exitCode: 1, reason: `证据文件为空：${evidencePath}` };
+      evidencePath = rel;
+      evidenceSha256 = sha256(buf);
+    }
+  }
+
   const dir = join(projectRoot, '.donegate');
   mkdirSync(dir, { recursive: true });
   const entry = {
@@ -47,9 +209,12 @@ export function appendProgressNote(projectRoot, note) {
     kind,
     stage,
     title,
-    detail: typeof note?.detail === 'string' ? note.detail.trim() : '',
-    source: typeof note?.source === 'string' && note.source.trim() ? note.source.trim() : 'agent'
+    detail,
+    source: typeof note?.source === 'string' && note.source.trim() ? note.source.trim() : 'agent',
+    ...(verifyCmd ? { verifyCmd, exitCode, stdoutSha256 } : {}),
+    ...(evidencePath ? { evidencePath, evidenceSha256 } : {})
   };
+  entry.noteHash = computeNoteSeal(entry);
   appendFileSync(join(dir, 'notes.jsonl'), JSON.stringify(entry) + '\n', 'utf8');
   return { ok: true, entry };
 }
@@ -62,8 +227,12 @@ export function clearCustomNotes(projectRoot, stage = null) {
     writeFileSync(p, '', 'utf8');
     return n;
   }
-  const kept = loadCustomNotes(projectRoot).filter((x) => Number(x.stage) !== Number(stage));
-  writeFileSync(p, kept.map((x) => JSON.stringify(x)).join('\n') + (kept.length ? '\n' : ''), 'utf8');
+  const kept = loadCustomNotes(projectRoot).filter((x) => Number(x.stage) !== Number(stage) && x._verified !== false);
+  writeFileSync(p, kept.map((x) => {
+    const clean = { ...x };
+    delete clean._verified;
+    return JSON.stringify(clean);
+  }).join('\n') + (kept.length ? '\n' : ''), 'utf8');
   return kept.length;
 }
 
@@ -81,12 +250,10 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
   const rawMap = new Map(rawContracts.map((c) => [c.id, c]));
   const chainEntries = st && st.chainRes?.ok ? st.chainRes.entries : [];
 
-  // 阶段 1（10%）：init 5% + 至少建了 1 个活跃契约（或意图已填写）5%
   const s1Item1 = hasInit;
   const s1Item2 = activeContracts.length > 0 || intentFilled;
   const s1Pct = (s1Item1 ? 5 : 0) + (s1Item2 ? 5 : 0);
 
-  // 阶段 2（60%）：按全部活跃契约均分（frozen 占 20%，逐条真实通过占 80%）
   let s2Pct = 0;
   const contractProgress = activeContracts.map((c) => {
     const raw = rawMap.get(c.id) || {};
@@ -120,7 +287,6 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
     s2Pct = Math.round(60 * avgRatio);
   }
 
-  // 阶段 3（20%）：防假绿（有牙实验）10% + 影响面/外部工具体检 10%
   const totalCmds = contractProgress.reduce((s, c) => s + c.cmdCount, 0);
   const totalTeeth = contractProgress.reduce((s, c) => s + c.teethDone, 0);
   const s3Item1Pct = totalCmds > 0 ? Math.round(10 * (totalTeeth / totalCmds)) : 0;
@@ -136,7 +302,6 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
   const s3Item2Pct = hasImpactOrAdapter ? 10 : (totalTeeth > 0 ? 5 : 0);
   const s3Pct = s3Item1Pct + s3Item2Pct;
 
-  // 阶段 4（10%）：独立复核（verify apply pass）5% + 交接包（HANDOVER.md）5%
   const verifiedCount = contractProgress.filter((c) => c.verifiedPass).length;
   const s4Item1Pct = contractProgress.length > 0 ? Math.round(5 * (verifiedCount / contractProgress.length)) : 0;
   const hasHandover = existsSync(join(projectRoot, 'HANDOVER.md')) && (readMaybe(join(projectRoot, 'HANDOVER.md')) || '').trim().length > 0;
@@ -164,9 +329,14 @@ function appendStageNotes(lines, stageNo, allNotes) {
   const mine = allNotes.filter((n) => Number(n.stage) === stageNo);
   for (const n of mine) {
     const icon = NOTE_ICONS[n.kind] || '💬';
-    const tag = n.kind === 'good' ? '补充' : (n.kind === 'alert' ? '告警' : '报忧');
+    const tag = n._verified === false
+      ? '拦截·未验真'
+      : (n.kind === 'good' ? '补充·已验真' : (n.kind === 'alert' ? '告警' : '报忧'));
+    const evHint = n.kind === 'good' && n._verified !== false
+      ? (n.evidencePath ? ` [证据:${n.evidencePath}]` : (n.verifyCmd ? ` [实跑exit 0]` : ''))
+      : '';
     const detail = n.detail ? `（${n.detail}）` : '';
-    lines.push(`  ${stageNo}-💬 ${icon} [${tag}] ${n.title}${detail}`);
+    lines.push(`  ${stageNo}-💬 ${icon} [${tag}] ${n.title}${detail}${evHint}`);
   }
 }
 
@@ -193,7 +363,7 @@ export function renderProgressBlock(projectRoot, opts = {}) {
     appendStageNotes(lines, 1, customNotes);
   }
 
-  // 阶段 2：各模块开发与验收（动态读取用户真实契约名与判据）
+  // 阶段 2：各模块开发与验收
   const cDoneCount = snap.contractProgress.filter((c) => c.totalObs > 0 && c.passedClean === c.totalObs && c.frozen).length;
   const cTotal = snap.contractProgress.length;
   if (cTotal === 0) {
@@ -226,9 +396,7 @@ export function renderProgressBlock(projectRoot, opts = {}) {
   const s3Done = (teethDone ? 1 : 0) + (snap.adapterCount > 0 ? 1 : 0);
   if (s3Done === 2 && !hasStageNotes(3) && opts.activeStage !== 3) {
     lines.push(`阶段 3：防假绿与体检（✅ 2/2 完成）`);
-  } else if (cTotal === 0 && !hasStageNotes(3) && opts.activeStage !== 3) {
-    lines.push(`阶段 3：防假绿与体检（⏳ 待开始 0/2）`);
-  } else if (cDoneCount === 0 && snap.totalTeeth === 0 && snap.adapterCount === 0 && !hasStageNotes(3) && opts.activeStage !== 3) {
+  } else if ((cTotal === 0 || (cDoneCount === 0 && snap.totalTeeth === 0 && snap.adapterCount === 0)) && !hasStageNotes(3) && opts.activeStage !== 3) {
     lines.push(`阶段 3：防假绿与体检（⏳ 待开始 0/2）`);
   } else {
     lines.push(`阶段 3：防假绿与体检（🔄 ${s3Done}/2）`);
