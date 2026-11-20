@@ -73,10 +73,11 @@ export function cmdInit(projectRoot) {
   ].join('\n'));
   writeFileSync(join(projectRoot, 'thresholds.json'), JSON.stringify(DEFAULT_THRESHOLDS, null, 2) + '\n');
   writeFileSync(join(projectRoot, '.donegate', 'chain.jsonl'), '');
+  writeFileSync(join(projectRoot, '.donegate', 'escapes.jsonl'), '');
 
   return {
     exitCode: 0,
-    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl'
+    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl'
   };
 }
 

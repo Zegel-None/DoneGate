@@ -130,8 +130,25 @@ node tools/check-package.mjs               # 检查目录结构和文档链接
 node tools/verify-spec.mjs                 # 检查验收规则本身是否自洽
 node tools/check-rot.mjs                   # 检查文档描述有没有过期
 node skill/check-skills.mjs --root .       # 检查 AI 能不能正常加载这两个技能
+node skill/check-escapes.mjs               # 检查历史漏网 bug 的回归门禁是否全绿
 node runner/donegate.mjs --help            # 检查判定核命令是否可执行
 ```
+
+---
+
+## 全绿还是出了 Bug？漏网门禁与社区共建
+
+最怕的不是报错，而是**「整套检查都亮绿灯，结果一上手还是有 bug」**。DoneGate 内置了一套 **漏网之鱼（Escaped-Bug）门禁闭环**（`skill/check-escapes.mjs`）：
+
+1. **不只是修这一个点**：一旦遇到「全绿却踩坑」，修完当前问题后，必须顺藤摸瓜找出**深层根因**，并把项目里所有同款隐患一起清掉。
+2. **加一条永久门禁**：把复现条件写成一条独立检测，登记进项目的 `.donegate/escapes.jsonl` 并由 `check-escapes.mjs --project .` 守住，保证同款坑以后永远过不了绿灯。
+3. **如果你有 GitHub，欢迎随手提个 Issue**：要是盲区出在 DoneGate 自己身上，可以直接运行下面的命令生成一份**已脱敏的反馈草稿**（如果你本机登录了 `gh` CLI，AI 也能经你确认后直接帮你发到 GitHub）：
+
+```text
+node <DoneGate路径>/skill/check-escapes.mjs --report-template
+```
+
+> **众人拾柴火焰高——你踩过的坑反馈上来，修成一条新门禁，下次拉取更新时所有人的成果都能直接为你守门。欢迎到 [GitHub Issues](https://github.com/q862877400-ux/DoneGate/issues/new) 提一条反馈，你也来添一把柴！**
 
 ---
 
@@ -152,7 +169,7 @@ node runner/donegate.mjs --help            # 检查判定核命令是否可执�
 | `skill/` | **自研硬门禁脚本**（复核包白名单、引用核查、阶段卡控、砖头淘汰等）+ 10 个外部工具适配器（`adapters/`） |
 | `tools/` | 结构、规则、文档腐化自检脚本 |
 | `设计/`、`参考/` | 背后的规则原文与依据（供 AI 按需查阅，平时不用自己翻） |
-| `adapters.registry.json`、`ledger.json`、`batches.jsonl` | 外部工具适配器的注册表与使用台账 |
+| `adapters.registry.json`、`ledger.json`、`batches.jsonl`、`escapes.jsonl` | 外部工具适配器的注册表、砖头台账与历史漏网门禁台账 |
 | `README.md`、`CHANGELOG.md`、`VERSION`、`LICENSE` | 本说明、更新记录、版本号、MIT 开源协议 |
 
 ---
