@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,7 +26,7 @@ function findBin(spec) {
   if (/[\\/]/.test(spec)) return existsSync(spec) ? spec : null;
   const w = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [spec], { encoding: 'utf8' });
   if (w.status === 0 && w.stdout.trim()) return w.stdout.trim().split(/\r?\n/)[0].trim();
-  const fallback = process.platform === 'win32' ? join(process.env.USERPROFILE || 'C:\\Users\\Zegel', 'bin', spec + '.exe') : '';
+  const fallback = process.platform === 'win32' ? join(process.env.USERPROFILE || homedir(), 'bin', spec + '.exe') : '';
   return fallback && existsSync(fallback) ? fallback : null;
 }
 const binPath = findBin(arg('--bin', 'gitleaks'));

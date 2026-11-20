@@ -18,9 +18,10 @@
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
+import { walkByExt } from './fs-walk.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -210,8 +211,113 @@ const BUILTIN_GATES = {
       return { ok: false, detail: 'codegraph-impact.mjs 索引未完成提示缺少 codegraph sync' };
     }
     return { ok: true, detail: 'codegraph-impact.mjs 明确提示 codegraph init + codegraph sync' };
+  },
+  E07() {
+    const targets = [];
+    for (const d of ['runner', 'tools', 'skill/adapters']) {
+      if (existsSync(join(ROOT, d))) targets.push(...walkByExt(join(ROOT, d), ['.mjs']));
+    }
+    for (const f of readdirSync(join(ROOT, 'skill'), { withFileTypes: true })) {
+      if (!f.isFile() || !f.name.endsWith('.mjs')) continue;
+      if (f.name.startsWith('pilot-') || f.name.endsWith('-fixtures.mjs')) continue;
+      targets.push(join(ROOT, 'skill', f.name));
+    }
+    const hits = scanHardcodedPaths(targets, ROOT);
+    if (hits.length) return { ok: false, detail: `发现个人/机器硬编码路径：\n    ` + hits.join('\n    ') };
+    return { ok: true, detail: `${targets.length} 份可执行代码零个人/机器路径硬编码` };
+  },
+  E08() {
+    const hasBuilders = existsSync(join(ROOT, 'skill/build-public.mjs')) && existsSync(join(ROOT, 'skill/build-dist.mjs'));
+    const verifyShippedDir = (dir, label) => {
+      const sk = readFileSync(join(dir, 'donegate/SKILL.md'), 'utf8');
+      if (/^node\s+"?skill\/check-plan\.mjs"?/m.test(sk)) {
+        return `${label}: donegate/SKILL.md 仍指示用户跑不在包里的 skill/check-plan.mjs`;
+      }
+      for (const f of walkByExt(dir, ['.md'])) {
+        const t = readFileSync(f, 'utf8');
+        if (t.includes('`标签（调研/评审材料')) return `${label}: ${relative(dir, f)} 反引号内链接示例被误降级`;
+        for (const m of t.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+          const ls = t.lastIndexOf('\n', m.index) + 1;
+          if ((t.slice(ls, m.index).match(/`/g) || []).length % 2 === 1) continue;
+          const u = m[1].replace(/^<(.*)>$/, '$1');
+          if (/^(https?:|#|mailto:)/.test(u)) continue;
+          if (!existsSync(resolve(dirname(f), u.replace(/#.*$/, '')))) {
+            return `${label}: ${relative(dir, f)} 存在死链 ${m[1]}`;
+          }
+        }
+      }
+      return null;
+    };
+
+    if (!hasBuilders) {
+      const err = verifyShippedDir(ROOT, '公开包');
+      return err ? { ok: false, detail: err } : { ok: true, detail: '公开包链接、反引号示例与 SKILL.md 自检命令均自洽' };
+    }
+
+    const tmpPub = mkdtempSync(join(tmpdir(), 'dg-esc-e08p-'));
+    const tmpDist = mkdtempSync(join(tmpdir(), 'dg-esc-e08d-'));
+    try {
+      const rPub = spawnSync(process.execPath, [join(ROOT, 'skill/build-public.mjs'), '--out', tmpPub], { cwd: ROOT, encoding: 'utf8' });
+      if (rPub.status !== 0) return { ok: false, detail: `build-public 失败：\n${rPub.stdout}${rPub.stderr}` };
+      const errPub = verifyShippedDir(tmpPub, 'public产物');
+      if (errPub) return { ok: false, detail: errPub };
+
+      const rDist = spawnSync(process.execPath, [join(ROOT, 'skill/build-dist.mjs'), '--out', tmpDist], { cwd: ROOT, encoding: 'utf8' });
+      if (rDist.status !== 0) return { ok: false, detail: `build-dist 失败：\n${rDist.stdout}${rDist.stderr}` };
+      const errDist = verifyShippedDir(tmpDist, 'dist产物');
+      if (errDist) return { ok: false, detail: errDist };
+      return { ok: true, detail: 'build-public 与 build-dist 双产物均过空格链接/反引号/README先后序/自检命令门禁' };
+    } finally {
+      rmSync(tmpPub, { recursive: true, force: true });
+      rmSync(tmpDist, { recursive: true, force: true });
+    }
   }
 };
+
+// ── 个人/机器绝对路径硬编码扫描（工程级口径：区分 OS 系统兜底与个人绝对路径） ──
+// 允许：import.meta.url 相对解析、homedir()/tmpdir()、process.cwd()、以及标准系统根兜底（如 SystemRoot 指向的 Windows 系统目录）。
+// 禁止：盘符硬编码工作区路径、/Users/<name>、/home/<name>、作者用户名/仓名硬编码。
+const CODE_EXTS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs'];
+const WIN_DRIVE_RE = /\b[A-Za-z]:(?:\\\\|\\|\/)[^\s'"`)]+/g;
+const UNIX_HOME_RE = /(?:^|['"`(\s])(\/(?:Users|home)\/[A-Za-z0-9._-]+(?:\/[^\s'"`)]*)?)/g;
+
+export function scanHardcodedPaths(files, baseDir) {
+  const hits = [];
+  for (const f of files) {
+    const rel = relative(baseDir, f).split(sep).join('/');
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/\/\/\s*portable-ok|#\s*portable-ok/.test(line)) continue;
+      // 跳过纯 URL（如 https://... 或 file://...）
+      const cleanLine = line.replace(/(?:https?|file):\/\/\S+/g, '');
+      for (const m of cleanLine.matchAll(WIN_DRIVE_RE)) {
+        const val = m[0];
+        // 允许标准 OS 系统根目录兜底（如 SystemRoot || 'C:\\Windows'）
+        if (/^[Cc]:(?:\\\\|\\|\/)Windows$/i.test(val) && /SystemRoot/i.test(line)) continue;
+        hits.push(`${rel}:${i + 1} 含 Windows 绝对路径硬编码 ${val}`);
+      }
+      for (const m of cleanLine.matchAll(UNIX_HOME_RE)) {
+        hits.push(`${rel}:${i + 1} 含本机家目录硬编码 ${m[1]}`);
+      }
+    }
+  }
+  return hits;
+}
+
+function collectProjectCode(dir) {
+  const out = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === '.git' || e.name === 'node_modules' || e.name === '.donegate' || e.name === 'dist' || e.name === 'build') continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (CODE_EXTS.some((ext) => e.name.endsWith(ext))) out.push(p);
+    }
+  };
+  walk(dir);
+  return out;
+}
 
 function printReportTemplate() {
   const pkgVer = existsSync(join(ROOT, 'VERSION')) ? readFileSync(join(ROOT, 'VERSION'), 'utf8').trim() : 'unknown';
@@ -259,8 +365,21 @@ function runRedSelfTest() {
     const r2 = auditEscapesFile(failGatePath, tmp);
     if (r2.fails.length === 0) { console.error('FAIL: 门禁命令退 1 的假记录竟然放过了'); process.exit(1); }
 
+    const badCode = join(tmp, 'src_bad.mjs');
+    const badPathLiteral = ['C:', 'Users', 'Someone', 'secret'].join('\\\\');
+    writeFileSync(badCode, `export const p = "${badPathLiteral}";\n`);
+    const r3 = scanHardcodedPaths([badCode], tmp);
+    if (r3.length === 0) { console.error('FAIL: 代码里硬编码个人盘符路径竟然放过了'); process.exit(1); }
+
+    const sysFallback = join(tmp, 'src_sys.mjs');
+    const winRootLiteral = ['C:', 'Windows'].join('\\\\');
+    writeFileSync(sysFallback, `export const w = process.env.SystemRoot || "${winRootLiteral}";\n`);
+    const r4 = scanHardcodedPaths([sysFallback], tmp);
+    if (r4.length !== 0) { console.error('FAIL: 合法 SystemRoot 系统兜底被误报：' + r4.join('; ')); process.exit(1); }
+
     console.log('  ✓ 负样本 1：缺根因/占位词/缺门禁命令的记录被拒（' + r1.fails.length + ' 项报错）');
     console.log('  ✓ 负样本 2：自建门禁命令退 1 被拒');
+    console.log('  ✓ 负样本 3：代码里个人绝对路径硬编码被抓（' + r3[0] + '），合法 SystemRoot 兜底放行');
     console.log('RESULT: PASS check-escapes 负样本自检有牙');
     process.exit(0);
   } finally {
@@ -316,20 +435,24 @@ if (projArg) {
   const projRoot = resolve(projArg);
   const file = join(projRoot, '.donegate', 'escapes.jsonl');
   const res = auditEscapesFile(file, projRoot, { onlyId: arg('--only') });
-  if (!res.exists) {
-    console.log(`未发现 ${file}（暂无登记的漏网之鱼）。`);
+  const pathHits = scanHardcodedPaths(collectProjectCode(projRoot), projRoot);
+  const totalFails = [...res.fails, ...pathHits];
+
+  if (!res.exists && pathHits.length === 0) {
+    console.log(`未发现 ${file}（暂无登记的漏网之鱼），且项目代码零个人路径硬编码。`);
     console.log('若全绿后仍发现 bug，可用 --record 记下根因、同类排查与独立门禁，形成自我迭代闭环。');
     console.log(COMMUNITY_MOTTO);
     process.exit(0);
   }
-  console.log(`核验项目漏网门禁：${file}（${res.entries.length} 条）`);
+  console.log(`核验项目漏网门禁与可移植性：${projRoot}（漏网记录 ${res.entries.length} 条）`);
   for (const p of res.passed) console.log('  ✓ ' + p);
-  for (const f of res.fails) console.log('  ✗ ' + f);
-  if (res.fails.length > 0) {
-    console.log('RESULT: FAIL 有漏网问题缺少根因/同类排查或独立门禁未通过');
+  if (pathHits.length === 0) console.log('  ✓ 项目源码零个人/本机绝对路径硬编码');
+  for (const f of totalFails) console.log('  ✗ ' + f);
+  if (totalFails.length > 0) {
+    console.log('RESULT: FAIL 存在漏网门禁缺口、未通过项或绝对路径硬编码');
     process.exit(1);
   }
-  console.log('RESULT: PASS 所有已登记漏网问题均有根因修复、同类排查与在跑门禁');
+  console.log('RESULT: PASS 所有已登记漏网问题均有根因修复与在跑门禁，且代码零个人路径硬编码');
   console.log(`\n提示：若这次漏网源于 DoneGate 自身盲区，欢迎提 Issue：${REPO_URL}/issues/new`);
   console.log(COMMUNITY_MOTTO);
   process.exit(0);
