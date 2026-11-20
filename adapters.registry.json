@@ -174,6 +174,19 @@
       "blindSpots": [
         "仅检验已编写的 E2E 用例与断言，不覆盖未写进测试脚本的视觉美观与主观手感"
       ]
+    },
+    {
+      "id": "maestro@stage4",
+      "tool": "maestro",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-app-e2e",
+      "entry": "skill/adapters/maestro-flow.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.0.0 <3.0.0",
+      "blindSpots": [
+        "依赖本地 Android 模拟器或 iOS Simulator 环境；仅检验已写入 YAML 流的关键路径"
+      ]
     }
   ]
 }
