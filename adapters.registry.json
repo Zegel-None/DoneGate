@@ -148,6 +148,19 @@
       "blindSpots": [
         "仅覆盖 JS/TS 生态静态导入关系，无法捕获反射与运行时动态字符串 require"
       ]
+    },
+    {
+      "id": "dotenv-linter@stage4",
+      "tool": "dotenv-linter",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-env-valid",
+      "entry": "skill/adapters/dotenv-check.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=4.0.0 <5.0.0",
+      "blindSpots": [
+        "仅检查 .env 语法、重复键与与 .env.example 键集合对齐，不校验运行时环境变量实际值有效性"
+      ]
     }
   ]
 }

@@ -78,6 +78,13 @@
       "wiredAtBatch": 1,
       "actionsChanged": 1,
       "note": "接入 Knip 死文件与无用依赖观测声明（soft）"
+    },
+    {
+      "brick": "dotenv-linter",
+      "registryId": "dotenv-linter@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 dotenv-linter 环境变量校验与键对齐观测（soft）"
     }
   ]
 }
