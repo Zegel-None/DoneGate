@@ -8,6 +8,18 @@
 
 本包把「这一轮做完没有」从人回忆换成一份冻结的判据加一次真实运行；判据＝一条可执行的命令，或一条明确的人工判断标准。
 
+## 0.3.0 — 2026-11-20
+
+全周期开发与验收闭环升级（公开仓现为完整可运行版）。
+
+- **完整项目公开分发**：公开仓 `DoneGate` 由纯技能说明书升级为**完整可运行套件**（判定核 `runner/` + 自研硬门禁 `skill/` + **16 个外部工具适配器** `skill/adapters/`），并修复 Windows CRLF `check-cards` 失败、适配器默认 `--target`、外部项目 `handover` 路径与个人家目录硬编码（全改用 `os.homedir()`）。
+- **漏网自迭代与防撒谎进度体系**：
+  - 新增 `escapes.jsonl` 与 `skill/check-escapes.mjs`（固化 E01–E08 回归门禁、`--project` 用户项目漏网与个人路径硬编码检查、`--self-check` 提交前全量自检、`--report-template` GitHub Issue 脱敏草稿）。
+  - 新增 `runner/core/progress.mjs` 与 `skill/progress-note.mjs`：全流程命令机械触发分阶段缩进进度卡与三档报忧卡片，开放入口强制要求实跑 `--verify-cmd` 或哈希 `--evidence` + `noteHash` 封印，禁止空口报喜或伪造百分比。
+- **全周期新接入砖头（非上线部署 DLC 部分）**：
+  - 阶段 1：`grill-me` 决策树拷问澄清（守住 `INV-18` 原话与 `链 F` 配额）+ `CodeGraph` 前移探现状；
+  - 阶段 2/3/4 适配器：**Knip**（死依赖/死文件）、**dotenv-linter**（`.env` 规范与对比）、**Playwright**（Web 真实浏览器 E2E）、**Maestro**（本地 App 模拟器 UI 流）、**Schemathesis**（OpenAPI 接口模糊测试）、**Trivy**（IaC/Dockerfile/文件系统扫描），并补齐阶段 2 `Context7` 按需查文档引导。
+
 ## 0.2.0 — 2026-11-20
 
 公开仓整治。这一版只动**分发形态**，判据、门禁与规则原文一个字未改。

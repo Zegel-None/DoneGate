@@ -1,4 +1,4 @@
-# DoneGate（完工门）0.2.0
+# DoneGate（完工门）0.3.0
 
 **一句话**：用 AI 做项目时，把「AI 嘴上说做完了」变成**「从前期规划到后期维护，每一步都有硬门禁拦着、有真凭实据给你看」**。
 
@@ -48,8 +48,8 @@ DoneGate 把「技能说明书 + 我们自研的零依赖检查内核与门禁�
 > 2. 把 DoneGate 克隆到一个干净的技能目录（例如 `D:\skills\DoneGate` 或 `~/skills/DoneGate`，注意不要多套一层目录，根目录必须直接看到 `donegate/` 和 `donegate-judge/`）。
 > 3. 如果我在用 DSH，把该目录加到 `%DSH_HOME%\profiles\web\cordis.patch.yml` 的 `skill.config.customSkillDirs` 中（其他宿主请按对应技能目录规范挂载）。
 > 4. 进入克隆好的 DoneGate 目录，按需运行 `npm install`（用于安装可选的 `vitest` 和 `stryker`）。
-> 5. 逐个检查并尽量帮我装好配套外部工具（「砖头」）：`codegraph`、`dependency-cruiser`（`depcruise`）、`jscpd`、`@fission-ai/openspec`、`gitleaks`、`osv-scanner`、`beads`（`bd`）、`srclight`、`fuck-u-code`；遇到本机缺包管理器（如没装 Go/uv）装不上的，如实列出原因和手动装法，不要假装装好。
-> 6. 最后在 DoneGate 目录下依次跑完：`node tools/check-package.mjs`、`node tools/verify-spec.mjs`、`node tools/check-rot.mjs`、`node skill/check-skills.mjs --root .` 以及 `node runner/donegate.mjs --help`，把每一项的实际结果汇报给我。
+> 5. 逐个检查并尽量帮我装好配套外部工具（「砖头」，按需用于全周期不同阶段）：`codegraph`、`dependency-cruiser`（`depcruise`）、`jscpd`、`knip`、`@fission-ai/openspec`、`gitleaks`、`osv-scanner`、`dotenv-linter`、`trivy`、`beads`（`bd`）、`srclight`、`schemathesis`、`playwright`、`maestro`、`fuck-u-code`（以及阶段 2 编码可选的 Context7 MCP）；遇到本机缺包管理器装不上的，如实列出原因和手动装法，不要假装装好。
+> 6. 最后在 DoneGate 目录下跑完 `node skill/check-escapes.mjs --self-check`（涵盖全套 11 项结构/规则/腐化/技能加载/回归/防撒谎自检）以及 `node skill/check-declarations.mjs --verify-adapters`，把每一项的实际结果汇报给我。
 
 ---
 
@@ -80,24 +80,28 @@ npm install
 DoneGate 的判定内核与全部门禁脚本都是**自研且零第三方依赖**的；下面这些是配套干苦力的开源外部工具，按你的系统和需求用一条命令装好即可：
 
 ```powershell
-# 1. Node / npm 生态一把装（架构边界 + 重复代码 + 规格提案 + 规格工具）
-npm install -g dependency-cruiser jscpd @fission-ai/openspec
+# 1. Node / npm 生态一把装（架构边界 + 重复代码 + 死依赖清理 + 规格提案 + Web E2E）
+npm install -g dependency-cruiser jscpd knip @fission-ai/openspec playwright
 
-# 2. Windows 常用二进制（密钥扫描 + 漏洞扫描；macOS 可改用 brew install gitleaks osv-scanner）
+# 2. Windows 常用二进制（密钥扫描 + 漏洞扫描 + .env 体检 + 安全配置扫描；macOS 可改用 brew）
 winget install Gitleaks.Gitleaks
 winget install Google.OSVScanner
+winget install AquaSecurity.Trivy
+# dotenv-linter 可从官方 GitHub Releases 下载并放到 PATH 中
 
-# 3. Python 生态（代码索引新鲜度；需先有 uv 或 pip）
+# 3. Python 生态（代码索引新鲜度 + API 边界模糊测试；需先有 uv）
 uv tool install srclight
+uv tool install schemathesis
 
 # 4. Go 生态（代码复杂度体检；需先有 Go）
 go install github.com/Done-0/fuck-u-code/cmd/fuck-u-code@latest
 ```
 
-另外三块工具建议按官方文档安装：
-- **CodeGraph**（影响面与循环依赖）：按 [CodeGraph](https://github.com/colbymchenry/codegraph) 官方发布安装 `codegraph` CLI（支持一键接入各主流 AI Agent）。
-- **Beads (`bd`)**（任务依赖排序）：按 [Beads](https://github.com/steveyegge/beads) 官方说明安装 `bd` CLI。
-- **EGM (`dsh-egm`)**（前期零上下文评审）：通过 DSH 插件市场安装。
+另外四块工具建议按官方文档按需安装：
+- **CodeGraph**（规划摸底 + 影响面与循环依赖）：按 [CodeGraph](https://github.com/colbymchenry/codegraph) 官方发布安装 `codegraph` CLI。
+- **Maestro**（Android / iOS 本地模拟器 UI 测试）：按 [Maestro](https://github.com/mobile-dev-inc/maestro) 官方发布安装 `maestro` CLI（依赖 JDK 17+）。
+- **Beads (`bd`)**（超长项目任务排序）：按 [Beads](https://github.com/steveyegge/beads) 官方说明安装 `bd` CLI。
+- **Context7 MCP / EGM (`dsh-egm`)**：编码期防幻觉 API 可选配 [Context7](https://github.com/upstash/context7) MCP；前期零上下文方案评审可通过 DSH 安装 EGM。
 
 > **提示**：不装上面这些外部工具，DoneGate 的内核、门禁脚本和纯技能流程一样能用（配合你项目自带的测试命令即可）；装了哪几块，就能多出哪几块全自动体检能力。
 
@@ -169,7 +173,7 @@ node <DoneGate路径>/skill/check-escapes.mjs --report-template
 | `donegate/` | 主技能：带 AI 走完定标准、防改坏、留证据、做交接的全流程 |
 | `donegate-judge/` | 独立复核技能：只用 `/donegate-judge` 触发，冷酷查账 |
 | `runner/` | **自研判定核**（零依赖 Node.js）：命令入口、状态计算、防篡改账本、隔离与越界拦截、交接与复核包生成 |
-| `skill/` | **自研硬门禁脚本**（复核包白名单、引用核查、阶段卡控、砖头淘汰等）+ 10 个外部工具适配器（`adapters/`） |
+| `skill/` | **自研硬门禁脚本**（复核包白名单、引用核查、阶段卡控、漏网闭环、防撒谎进度入口等）+ 16 个外部工具适配器（`adapters/`） |
 | `tools/` | 结构、规则、文档腐化自检脚本 |
 | `设计/`、`参考/` | 背后的规则原文与依据（供 AI 按需查阅，平时不用自己翻） |
 | `adapters.registry.json`、`ledger.json`、`batches.jsonl`、`escapes.jsonl` | 外部工具适配器的注册表、砖头台账与历史漏网门禁台账 |
@@ -182,8 +186,14 @@ node <DoneGate路径>/skill/check-escapes.mjs --report-template
 DoneGate 的全周期验收思路与配套工具链，站在下面这些优秀的开源项目肩膀上；在此一并声明依赖并致谢：
 
 - **[StrykerJS](https://github.com/stryker-mutator/stryker-js)** — 变异测试框架，用来验证测试「有没有牙」，是防止假绿灯最核心的一块砖。
-- **[CodeGraph](https://github.com/colbymchenry/codegraph)** — 代码知识图谱与影响面分析，帮我们在改动后找出受牵连的模块与循环依赖。
+- **[CodeGraph](https://github.com/colbymchenry/codegraph)** — 代码知识图谱与影响面分析，规划期看清结构、改动后找出受牵连模块与循环依赖。
 - **[dependency-cruiser](https://github.com/sverweij/dependency-cruiser)** — 模块依赖边界检查，防止代码越写越乱。
+- **[Knip](https://knip.dev)** — 查找并清理 JS/TS 项目中装了却没用、或导出了无人引用的死代码与依赖。
+- **[Playwright](https://playwright.dev)** — Web 真实浏览器端到端验收，真实点击网页并核对控制台报错。
+- **[Maestro](https://github.com/mobile-dev-inc/maestro)** — 极简 YAML 驱动的本地 Android / iOS 模拟器 UI 流程测试。
+- **[Schemathesis](https://github.com/schemathesis/schemathesis)** — 依据 OpenAPI / GraphQL 文档自动对后端接口做边界异常压测。
+- **[Trivy](https://github.com/aquasecurity/trivy)** — 文件系统、Dockerfile 与 IaC 安全配置及漏洞扫描。
+- **[dotenv-linter](https://github.com/dotenv-linter/dotenv-linter)** — 检查 `.env` 语法、重复键及与 `.env.example` 的差异，防环境漏配。
 - **[Beads](https://github.com/steveyegge/beads)** — 面向 AI 编程的任务依赖图与优先级排序工具。
 - **[OpenSpec](https://github.com/Fission-AI/OpenSpec)** & **[Spec Kit](https://github.com/github/spec-kit)** — 轻量规格驱动开发工作流，启发并支撑了前期的变更提案与规格梳理。
 - **[Gitleaks](https://github.com/gitleaks/gitleaks)** — 静态密钥扫描，守住不把密码和 Token 写进仓库的底线。
@@ -191,9 +201,10 @@ DoneGate 的全周期验收思路与配套工具链，站在下面这些优秀�
 - **[jscpd](https://github.com/kucherenko/jscpd)** — 跨文件代码克隆检测。
 - **[Srclight](https://github.com/srclight/srclight)** — 带索引新鲜度标识的代码检索服务。
 - **[fuck-u-code](https://github.com/Done-0/fuck-u-code)** — 代码复杂度与坏味道体检工具。
+- **[Context7](https://github.com/upstash/context7)** — 编码期按库版本拉取真实 API 文档的 MCP 工具，减少接口幻觉。
 - **[Vitest](https://github.com/vitest-dev/vitest)** — 现代前端与 Node 测试运行器。
 
-同时也感谢 **Elephant-Goldfish Model (EGM)** 的零上下文评审思路对前期方案审查环节的启发。
+同时也感谢 **[grill-me](https://github.com/mattpocock/skills)** 的决策树追问思路以及 **Elephant-Goldfish Model (EGM)** 的零上下文评审思路对前期设计与方案审查环节的启发。
 
 ---
 

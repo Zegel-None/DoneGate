@@ -172,4 +172,5 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
    - **禁止额外写 `PRD.md`**：拷问结果直接落进 `INTENT.md`、`CONSTRAINTS.md` 与 `functions/*.json`。
    - **守住 `INV-18`**：`functions/*.json` 的 `source` 必须**逐字摘录用户在追问中自己说出的原话**，不许用 AI 总结改写顶替。
    - **守住 `链 F` 配额**：`CONSTRAINTS.md` 只放项目级红线（常驻 ≤6、临时 ≤12），单功能验收项写进对应 `contract.json` 的 `obligations`。
+4. **编码期防幻觉 API（`Context7` 可选引导）**：**不要在阶段 1 规划期拉取第三方库文档**（会挤爆规划上下文）；进入阶段 2 写代码时，若用到更新快或不熟悉的第三方库且本机配了 Context7 MCP，再按库名与当前版本查真实 API 签名，避免凭记忆编接口。
 
