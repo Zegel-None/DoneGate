@@ -161,6 +161,19 @@
       "blindSpots": [
         "仅检查 .env 语法、重复键与与 .env.example 键集合对齐，不校验运行时环境变量实际值有效性"
       ]
+    },
+    {
+      "id": "playwright@stage4",
+      "tool": "playwright",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-web-e2e",
+      "entry": "skill/adapters/playwright-e2e.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.50.0 <2.0.0",
+      "blindSpots": [
+        "仅检验已编写的 E2E 用例与断言，不覆盖未写进测试脚本的视觉美观与主观手感"
+      ]
     }
   ]
 }

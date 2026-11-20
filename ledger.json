@@ -85,6 +85,13 @@
       "wiredAtBatch": 1,
       "actionsChanged": 1,
       "note": "接入 dotenv-linter 环境变量校验与键对齐观测（soft）"
+    },
+    {
+      "brick": "playwright",
+      "registryId": "playwright@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 Playwright Web 真实浏览器 E2E 观测声明（hard）"
     }
   ]
 }
