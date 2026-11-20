@@ -8,6 +8,7 @@ import { materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
 import { walk } from '../../skill/fs-walk.mjs';
 import { appendChainEntry, readAndVerifyChain } from './chain.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
+import { renderProgressBlock } from './progress.mjs';
 
 const CMDB_REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TREE_ORDER = { '未通过': 1, '无牙': 2, '未验证': 3, '通过': 4, '过期': 5, '无法判断': 6, '不稳定': 0, '未定验收': 3 };
@@ -131,6 +132,10 @@ export function cmdStatus(projectRoot, opts = {}) {
     lines.push(cs.state === '未定验收'
       ? `契约 ${cs.id}：未定验收（INV-03）`
       : `契约 ${cs.id}：${cs.cleared ? '通关' : cs.state}（${cs.passTrusted}/${cs.passTotal} 算数）`);
+  }
+
+  if (!opts.flow && !opts.tree) {
+    lines.push('', renderProgressBlock(projectRoot, { statusData: st }));
   }
 
   if (opts.tree) {
@@ -394,7 +399,12 @@ export function cmdHandover(projectRoot, opts = {}) {
 
   const outPath = resolve(projectRoot, opts.out || 'HANDOVER.md');
   writeFileSync(outPath, md, 'utf8');
-  return { exitCode: 0, stdout: `已生成交接包：${relative(projectRoot, outPath) || 'HANDOVER.md'}（六节齐）`, path: outPath };
+  return {
+    exitCode: 0,
+    stdout: `已生成交接包：${relative(projectRoot, outPath) || 'HANDOVER.md'}（六节齐）\n\n` +
+      renderProgressBlock(projectRoot, { headline: '✅ [4-2] 交接包 HANDOVER.md 已生成 · 总进度 {{PCT}}' }),
+    path: outPath
+  };
 }
 
 export function cmdVerifyPack(projectRoot, opts = {}) {
@@ -495,7 +505,13 @@ export function cmdVerifyPack(projectRoot, opts = {}) {
   if (chk.status !== 0) {
     return { exitCode: chk.status === 3 ? 3 : 2, stderr: `自建复核包未通过 check-reviewpack：\n${chk.stdout}\n${chk.stderr}` };
   }
-  return { exitCode: 0, stdout: `复核包已生成并通过 INV-14 自检：${packDir}`, packDir, packageHash: sha256(manifestBody) };
+  return {
+    exitCode: 0,
+    stdout: `复核包已生成并通过 INV-14 自检：${packDir}\n\n` +
+      renderProgressBlock(projectRoot, { focusContractId: id, headline: `📦 [4-1] 「${contract.title || id}」独立复核材料包已就绪（待 /donegate-judge 盲审） · 总进度 {{PCT}}` }),
+    packDir,
+    packageHash: sha256(manifestBody)
+  };
 }
 
 export function cmdVerifyApply(projectRoot, opts = {}) {
@@ -549,5 +565,9 @@ export function cmdVerifyApply(projectRoot, opts = {}) {
     signedBy: v.judge || 'independent-judge'
   });
   if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
-  return { exitCode: 0, stdout: `门 5 记录：通过（${contractId}，seq=${app.entry.seq}）` };
+  return {
+    exitCode: 0,
+    stdout: `门 5 记录：通过（${contractId}，seq=${app.entry.seq}）\n\n` +
+      renderProgressBlock(projectRoot, { focusContractId: contractId, headline: `✅ [4-1] 独立 AI 盲审通过（${contractId}） · 总进度 {{PCT}}` })
+  };
 }

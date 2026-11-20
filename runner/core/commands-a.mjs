@@ -8,6 +8,7 @@ import { verifyClaimInMemory } from '../../skill/check-declarations.mjs';
 import { appendChainEntry, readAndVerifyChain, verifyFreezeImplementRun } from './chain.mjs';
 import { DEFAULT_THRESHOLDS, computeProjectStatus, evaluateGate0, evaluateGate1, evaluateGate2, loadThresholds } from './gates.mjs';
 import { buildSanitizedEnv, checkCommandBans, runIsolationProbes } from './isolation.mjs';
+import { renderProgressBlock } from './progress.mjs';
 
 function gitAnchorInfo(projectRoot) {
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -77,7 +78,8 @@ export function cmdInit(projectRoot) {
 
   return {
     exitCode: 0,
-    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl'
+    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl\n\n' +
+      renderProgressBlock(projectRoot, { headline: '✅ [1-1] 项目基线已初始化 · 总进度 {{PCT}}' })
   };
 }
 
@@ -103,7 +105,10 @@ export function cmdContractNew(projectRoot, opts) {
     obligations: []
   };
   writeFileSync(cPath, JSON.stringify(contractObj, null, 2) + '\n');
-  return { exitCode: 0, stdout: `契约已创建：contracts/${id}/contract.json（provisional=true）`, path: cPath };
+  const prog = existsSync(join(projectRoot, 'INTENT.md'))
+    ? '\n\n' + renderProgressBlock(projectRoot, { focusContractId: id, headline: `✅ [1-2] 已建模块「${contractObj.title}」 · 总进度 {{PCT}}` })
+    : '';
+  return { exitCode: 0, stdout: `契约已创建：contracts/${id}/contract.json（provisional=true）${prog}`, path: cPath };
 }
 
 export function cmdContractFreeze(projectRoot, opts) {
@@ -158,7 +163,11 @@ export function cmdContractFreeze(projectRoot, opts) {
       materialFingerprint: materialFingerprintOf(materials)
     });
     if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
-    return { exitCode: 0, stdout: `契约 ${id}：通关（已签收，链序号 seq=${app.entry.seq}）${speedWarn}` };
+    return {
+      exitCode: 0,
+      stdout: `契约 ${id}：通关（已签收，链序号 seq=${app.entry.seq}）${speedWarn}\n\n` +
+        renderProgressBlock(projectRoot, { focusContractId: id, headline: `🏆 「${contract.title || id}」已签收通关 · 总进度 {{PCT}}` })
+    };
   }
 
   // 失效链 A：单轮新增判据上限（默认 3 条，超限须 --force-batch）
@@ -210,7 +219,8 @@ export function cmdContractFreeze(projectRoot, opts) {
   if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
   return {
     exitCode: 0,
-    stdout: `冻结 ${obs.length} 条（seq=${app.entry.seq}）：\n` + obs.map((o) => `  ${o.id}  frozenHash=${o.frozenHash.slice(0, 12)}`).join('\n') + legacyNotice
+    stdout: `冻结 ${obs.length} 条（seq=${app.entry.seq}）：\n` + obs.map((o) => `  ${o.id}  frozenHash=${o.frozenHash.slice(0, 12)}`).join('\n') + legacyNotice + '\n\n' +
+      renderProgressBlock(projectRoot, { focusContractId: id, headline: `🔒 「${contract.title || id}」${obs.length} 项验收标准已锁定 · 总进度 {{PCT}}` })
   };
 }
 
@@ -354,7 +364,17 @@ export function cmdCheck(projectRoot, opts) {
   }
 
   const exitCode = bad > 0 ? 1 : unknown > 0 ? 3 : 0;
-  return { exitCode, stdout: lines.join('\n') + `\nRESULT: ${exitCode === 0 ? 'PASS' : exitCode === 1 ? 'FAIL' : '无法判断'}` };
+  const passCnt = targets.length - bad - unknown;
+  const hl = opts.allowDirty
+    ? '⚠️ 脏工作区调试运行（不计入通过进度） · 总进度 {{PCT}}'
+    : (exitCode === 0
+      ? `✅ 「${contract.title || id}」${passCnt}/${targets.length} 项检查通过 · 总进度 {{PCT}}`
+      : `❌ 「${contract.title || id}」检查未全过（通过 ${passCnt}/${targets.length}，失败 ${bad}） · 总进度 {{PCT}}`);
+  return {
+    exitCode,
+    stdout: lines.join('\n') + `\nRESULT: ${exitCode === 0 ? 'PASS' : exitCode === 1 ? 'FAIL' : '无法判断'}\n\n` +
+      renderProgressBlock(projectRoot, { focusContractId: id, headline: hl })
+  };
 }
 
 export function cmdTeeth(projectRoot, opts) {
@@ -387,7 +407,10 @@ export function cmdTeeth(projectRoot, opts) {
     ob.teeth = { at: new Date().toISOString().slice(0, 10), tier: 'B', result };
     writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
     const exitCode = result === 'killed' ? 0 : (result === 'pending' ? 3 : 1);
-    return { exitCode, stdout: `teeth (tier B): ${id}/${criterionId} -> ${result}` };
+    const hl = exitCode === 0
+      ? `✅ [3-1] 「${ob.claim || criterionId}」变异验证通过（非假绿） · 总进度 {{PCT}}`
+      : `❌ [3-1] 「${ob.claim || criterionId}」变异验证未通过（${result}）`;
+    return { exitCode, stdout: `teeth (tier B): ${id}/${criterionId} -> ${result}\n\n` + renderProgressBlock(projectRoot, { focusContractId: id, headline: hl }) };
   }
 
   // Tier A: breakPatch + 还原哈希校验 + 恢复后绿灯验证
@@ -431,9 +454,13 @@ export function cmdTeeth(projectRoot, opts) {
 
   ob.teeth = { at: new Date().toISOString().slice(0, 10), tier: 'A', result: mutantOutcome };
   writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
+  const tExit = mutantOutcome === 'killed' ? 0 : 1;
+  const hl = tExit === 0
+    ? `✅ [3-1] 「${ob.claim || criterionId}」防假绿验证通过（改坏代码已检出并还原） · 总进度 {{PCT}}`
+    : `❌ [3-1] 「${ob.claim || criterionId}」防假绿验证未通过（改坏代码未检出）`;
   return {
-    exitCode: mutantOutcome === 'killed' ? 0 : 1,
-    stdout: `teeth (tier A): ${id}/${criterionId} -> ${mutantOutcome}`
+    exitCode: tExit,
+    stdout: `teeth (tier A): ${id}/${criterionId} -> ${mutantOutcome}\n\n` + renderProgressBlock(projectRoot, { focusContractId: id, headline: hl })
   };
 }
 

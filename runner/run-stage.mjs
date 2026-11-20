@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../skill/io.mjs';
 import { verifyClaimInMemory } from '../skill/check-declarations.mjs';
+import { renderProgressBlock } from './core/progress.mjs';
 
 const STAGE_HERE = dirname(fileURLToPath(import.meta.url));
 const STAGE_REPO = resolve(STAGE_HERE, '..');
@@ -63,4 +64,7 @@ if (check.exitCode !== 0) {
   process.exit(check.exitCode);
 }
 console.log(`RESULT: PASS run-stage 采证与声明核验通过（${toolName}）`);
+if (existsSync(join(rootDir, 'INTENT.md')) && existsSync(join(rootDir, '.donegate', 'chain.jsonl'))) {
+  console.log('\n' + renderProgressBlock(rootDir, { headline: `✅ [3-2] 外部工具 ${toolName} 体检入账完成 · 总进度 {{PCT}}` }));
+}
 process.exit(0);

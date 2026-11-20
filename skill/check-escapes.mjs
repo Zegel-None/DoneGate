@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
+import { renderProgressBlock } from '../runner/core/progress.mjs';
 import { walkByExt } from './fs-walk.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -451,6 +452,9 @@ if (has('--self-check')) {
     process.exit(1);
   }
   console.log('RESULT: PASS 自我核查全绿，可安全提交生效');
+  if (projOpt && existsSync(join(resolve(projOpt), 'INTENT.md')) && existsSync(join(resolve(projOpt), '.donegate', 'chain.jsonl'))) {
+    console.log('\n' + renderProgressBlock(resolve(projOpt), { headline: '✅ 自我核查全绿（可安全提交生效） · 总进度 {{PCT}}' }));
+  }
   process.exit(0);
 }
 
@@ -490,6 +494,9 @@ if (has('--record')) {
   }
   appendFileSync(file, JSON.stringify(entry) + '\n', 'utf8');
   console.log(`已登记漏网问题 ${entry.id} 到 ${file}（新门禁试跑 exit 0）`);
+  if (existsSync(join(proj, 'INTENT.md')) && existsSync(join(proj, '.donegate', 'chain.jsonl'))) {
+    console.log('\n' + renderProgressBlock(proj, { headline: `✅ 漏网问题 ${entry.id} 已登记并过试跑 · 总进度 {{PCT}}` }));
+  }
   console.log(`提交生效前请务必先跑自我核查：node "${join(ROOT, 'skill/check-escapes.mjs')}" --self-check --project "${proj}"`);
   process.exit(0);
 }
