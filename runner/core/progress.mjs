@@ -1,6 +1,7 @@
-// 全流程机械进度计算与分阶段缩进进度卡渲染（零第三方依赖）
-// 原则：进度与报喜消息完全由真实文件状态与退出码派生，严禁由模型自述或虚构。
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+// 全流程机械进度计算、报喜/报忧卡片渲染与开放扩展入口（零第三方依赖）
+// 原则：进度百分比与机械状态完全由真实文件与退出码派生；开放入口（.donegate/notes.jsonl 与 extraItems）
+// 供用户项目自己的 Agent 补充阶段性报喜或报忧，但绝不篡改机械计算的百分比与状态词（守住 INV-01）。
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeProjectStatus } from './gates.mjs';
 import { readMaybe } from '../../skill/io.mjs';
@@ -13,6 +14,57 @@ function makeBar(pct) {
 function summarizeObligationLabel(o) {
   const raw = (o.claim || o.id || '').trim().replace(/\s+/g, ' ');
   return raw.length > 36 ? raw.slice(0, 35) + '…' : raw;
+}
+
+const NOTE_ICONS = { good: '✅', worry: '⚠️', alert: '🚨' };
+
+export function loadCustomNotes(projectRoot) {
+  const p = join(projectRoot, '.donegate', 'notes.jsonl');
+  if (!existsSync(p)) return [];
+  const out = [];
+  for (const line of readFileSync(p, 'utf8').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const obj = JSON.parse(t);
+      if (obj && typeof obj.title === 'string' && obj.title.trim()) out.push(obj);
+    } catch { /* ignore corrupted line */ }
+  }
+  return out;
+}
+
+export function appendProgressNote(projectRoot, note) {
+  const kind = ['good', 'worry', 'alert'].includes(note?.kind) ? note.kind : null;
+  const stage = Number(note?.stage);
+  const title = typeof note?.title === 'string' ? note.title.trim() : '';
+  if (!kind) return { ok: false, reason: 'kind 必须是 good | worry | alert' };
+  if (!Number.isInteger(stage) || stage < 1 || stage > 4) return { ok: false, reason: 'stage 必须是 1 | 2 | 3 | 4' };
+  if (!title) return { ok: false, reason: 'title 不能为空' };
+  const dir = join(projectRoot, '.donegate');
+  mkdirSync(dir, { recursive: true });
+  const entry = {
+    at: new Date().toISOString(),
+    kind,
+    stage,
+    title,
+    detail: typeof note?.detail === 'string' ? note.detail.trim() : '',
+    source: typeof note?.source === 'string' && note.source.trim() ? note.source.trim() : 'agent'
+  };
+  appendFileSync(join(dir, 'notes.jsonl'), JSON.stringify(entry) + '\n', 'utf8');
+  return { ok: true, entry };
+}
+
+export function clearCustomNotes(projectRoot, stage = null) {
+  const p = join(projectRoot, '.donegate', 'notes.jsonl');
+  if (!existsSync(p)) return 0;
+  if (stage === null) {
+    const n = loadCustomNotes(projectRoot).length;
+    writeFileSync(p, '', 'utf8');
+    return n;
+  }
+  const kept = loadCustomNotes(projectRoot).filter((x) => Number(x.stage) !== Number(stage));
+  writeFileSync(p, kept.map((x) => JSON.stringify(x)).join('\n') + (kept.length ? '\n' : ''), 'utf8');
+  return kept.length;
 }
 
 export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
@@ -108,8 +160,21 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
   };
 }
 
+function appendStageNotes(lines, stageNo, allNotes) {
+  const mine = allNotes.filter((n) => Number(n.stage) === stageNo);
+  for (const n of mine) {
+    const icon = NOTE_ICONS[n.kind] || '💬';
+    const tag = n.kind === 'good' ? '补充' : (n.kind === 'alert' ? '告警' : '报忧');
+    const detail = n.detail ? `（${n.detail}）` : '';
+    lines.push(`  ${stageNo}-💬 ${icon} [${tag}] ${n.title}${detail}`);
+  }
+}
+
 export function renderProgressBlock(projectRoot, opts = {}) {
   const snap = computeProgressSnapshot(projectRoot, opts.statusData || null);
+  const customNotes = [...loadCustomNotes(projectRoot), ...(Array.isArray(opts.extraItems) ? opts.extraItems : [])];
+  const hasStageNotes = (s) => customNotes.some((n) => Number(n.stage) === s);
+
   const lines = [
     `#### 📊 DoneGate · 验收进度   ${snap.bar} ${snap.totalPct}%`
   ];
@@ -119,12 +184,13 @@ export function renderProgressBlock(projectRoot, opts = {}) {
 
   // 阶段 1：立项与规划
   const s1Done = (snap.s1Item1 ? 1 : 0) + (snap.s1Item2 ? 1 : 0);
-  if (s1Done === 2 && snap.contractProgress.length > 0) {
+  if (s1Done === 2 && snap.contractProgress.length > 0 && !hasStageNotes(1) && opts.activeStage !== 1) {
     lines.push(`阶段 1：立项与规划（✅ 2/2 完成）`);
   } else {
     lines.push(`阶段 1：立项与规划（${s1Done === 2 ? '✅' : '🔄'} ${s1Done}/2）`);
     lines.push(`  1-1 ${snap.s1Item1 ? '✅' : '⏳'} 目标与禁区文件已初始化（INTENT / CONSTRAINTS / escapes）`);
     lines.push(`  1-2 ${snap.s1Item2 ? '✅' : '⏳'} 拆出验收模块（当前 ${snap.contractProgress.length} 个）`);
+    appendStageNotes(lines, 1, customNotes);
   }
 
   // 阶段 2：各模块开发与验收（动态读取用户真实契约名与判据）
@@ -132,7 +198,8 @@ export function renderProgressBlock(projectRoot, opts = {}) {
   const cTotal = snap.contractProgress.length;
   if (cTotal === 0) {
     lines.push(`阶段 2：功能开发与验收（⏳ 待建首个契约模块）`);
-  } else if (cDoneCount === cTotal && !opts.focusContractId) {
+    appendStageNotes(lines, 2, customNotes);
+  } else if (cDoneCount === cTotal && !opts.focusContractId && !hasStageNotes(2) && opts.activeStage !== 2) {
     lines.push(`阶段 2：功能开发与验收（✅ ${cDoneCount}/${cTotal} 模块检查全绿）`);
   } else {
     lines.push(`阶段 2：功能开发与验收（${cDoneCount === cTotal ? '✅' : '🔄'} ${cDoneCount}/${cTotal} 模块全绿）`);
@@ -151,33 +218,60 @@ export function renderProgressBlock(projectRoot, opts = {}) {
         });
       }
     });
+    appendStageNotes(lines, 2, customNotes);
   }
 
   // 阶段 3：防假绿与体检
   const teethDone = snap.totalCmds > 0 && snap.totalTeeth === snap.totalCmds;
   const s3Done = (teethDone ? 1 : 0) + (snap.adapterCount > 0 ? 1 : 0);
-  if (s3Done === 2) {
+  if (s3Done === 2 && !hasStageNotes(3) && opts.activeStage !== 3) {
     lines.push(`阶段 3：防假绿与体检（✅ 2/2 完成）`);
-  } else if (cTotal === 0 || (cDoneCount === 0 && snap.totalTeeth === 0 && snap.adapterCount === 0)) {
+  } else if (cTotal === 0 && !hasStageNotes(3) && opts.activeStage !== 3) {
+    lines.push(`阶段 3：防假绿与体检（⏳ 待开始 0/2）`);
+  } else if (cDoneCount === 0 && snap.totalTeeth === 0 && snap.adapterCount === 0 && !hasStageNotes(3) && opts.activeStage !== 3) {
     lines.push(`阶段 3：防假绿与体检（⏳ 待开始 0/2）`);
   } else {
     lines.push(`阶段 3：防假绿与体检（🔄 ${s3Done}/2）`);
     lines.push(`  3-1 ${teethDone ? '✅' : (snap.totalTeeth > 0 ? '🔄' : '⏳')} 变异验证防假绿（${snap.totalTeeth}/${snap.totalCmds} 项已检出改坏代码）`);
     lines.push(`  3-2 ${snap.adapterCount > 0 ? '✅' : '⏳'} 影响面与外部工具体检（已入账 ${snap.adapterCount} 项）`);
+    appendStageNotes(lines, 3, customNotes);
   }
 
   // 阶段 4：独立复核与收尾
   const allVerified = cTotal > 0 && snap.verifiedCount === cTotal;
   const s4Done = (allVerified ? 1 : 0) + (snap.hasHandover ? 1 : 0);
-  if (s4Done === 2) {
+  if (s4Done === 2 && !hasStageNotes(4) && opts.activeStage !== 4) {
     lines.push(`阶段 4：独立复核与收尾（✅ 2/2 完成）`);
-  } else if (s4Done === 0 && cDoneCount === 0) {
+  } else if (s4Done === 0 && cDoneCount === 0 && !hasStageNotes(4) && opts.activeStage !== 4) {
     lines.push(`阶段 4：独立复核与收尾（⏳ 待开始 0/2）`);
   } else {
     lines.push(`阶段 4：独立复核与收尾（${s4Done === 2 ? '✅' : '🔄'} ${s4Done}/2）`);
     lines.push(`  4-1 ${allVerified ? '✅' : (snap.verifiedCount > 0 ? '🔄' : '⏳')} 独立 AI 盲审通过（${snap.verifiedCount}/${cTotal} 模块）`);
     lines.push(`  4-2 ${snap.hasHandover ? '✅' : '⏳'} 交接包生成与收尾归档`);
+    appendStageNotes(lines, 4, customNotes);
   }
 
   return lines.join('\n');
+}
+
+// ── 统一报忧卡片渲染（对应退出码 3 阻断提醒 / 1 检查未通过 / 2 严重事故） ──
+export function renderWorryBlock(projectRoot, opts = {}) {
+  const exitCode = opts.exitCode ?? 1;
+  const stage = opts.stage || 2;
+  const icon = exitCode === 2 ? '🚨' : (exitCode === 3 ? '⚠️' : '❌');
+  const levelLabel = exitCode === 2 ? '严重事故（立即停下核查）' : (exitCode === 3 ? '阻断提醒（前置未备齐，进度已暂停）' : '检查未通过（需修复后重跑）');
+  let pctLine = '░░░░░░░░░░ 0%';
+  try {
+    const snap = computeProgressSnapshot(projectRoot);
+    pctLine = `${snap.bar} ${snap.totalPct}%`;
+  } catch { /* ignore if project uninitialized or corrupt */ }
+
+  const out = [
+    `#### ${icon} DoneGate · 进度受阻（${levelLabel}）   ${pctLine}`,
+    `阶段 ${stage}：${opts.stageTitle || '当前环节受阻'}`,
+    `  ${stage}-! ${icon} ${opts.title || '执行未通过'}`
+  ];
+  if (opts.reason) out.push(`  原因：${opts.reason}`);
+  if (opts.action) out.push(`  下一步：${opts.action}`);
+  return out.join('\n');
 }

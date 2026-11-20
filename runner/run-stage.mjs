@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../skill/io.mjs';
 import { verifyClaimInMemory } from '../skill/check-declarations.mjs';
-import { renderProgressBlock } from './core/progress.mjs';
+import { renderProgressBlock, renderWorryBlock } from './core/progress.mjs';
 
 const STAGE_HERE = dirname(fileURLToPath(import.meta.url));
 const STAGE_REPO = resolve(STAGE_HERE, '..');
@@ -23,6 +23,14 @@ if (!registryId) { console.error('缺少 --registry-id'); process.exit(2); }
 const st = spawnSync('git', ['-C', rootDir, 'status', '--porcelain'], { encoding: 'utf8' });
 if (st.status !== 0 || st.stdout.trim() !== '') {
   console.error('run-stage 拒收：工作区存在未提交改动或非 git 仓库（退 3）');
+  if (existsSync(join(rootDir, 'INTENT.md'))) {
+    console.error('\n' + renderWorryBlock(rootDir, {
+      exitCode: 3, stage: 3, stageTitle: '外部工具体检（脏树拒收）',
+      title: '工作区存在未提交改动，无法采信外部工具体检',
+      reason: '未提交状态下的扫描报告不能绑定到当前提交',
+      action: '先提交或暂存工作区改动，再重新跑外部工具体检'
+    }));
+  }
   process.exit(3);
 }
 
@@ -61,6 +69,14 @@ if (adpRes.status !== 0) {
 const check = verifyClaimInMemory(outAbs, rootDir, { skipContractLookup: true });
 if (check.exitCode !== 0) {
   console.error('run-stage 拦截非法声明：' + check.reason);
+  if (existsSync(join(rootDir, 'INTENT.md'))) {
+    console.error('\n' + renderWorryBlock(rootDir, {
+      exitCode: check.exitCode, stage: 3, stageTitle: `外部工具 ${toolName} 协议核查`,
+      title: '外部工具产出声明未通过安全核验',
+      reason: check.reason,
+      action: '检查适配器输出是否含禁用词或文件哈希篡改'
+    }));
+  }
   process.exit(check.exitCode);
 }
 console.log(`RESULT: PASS run-stage 采证与声明核验通过（${toolName}）`);

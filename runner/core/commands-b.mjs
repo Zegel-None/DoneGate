@@ -8,7 +8,7 @@ import { materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
 import { walk } from '../../skill/fs-walk.mjs';
 import { appendChainEntry, readAndVerifyChain } from './chain.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
-import { renderProgressBlock } from './progress.mjs';
+import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 
 const CMDB_REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TREE_ORDER = { '未通过': 1, '无牙': 2, '未验证': 3, '通过': 4, '过期': 5, '无法判断': 6, '不稳定': 0, '未定验收': 3 };
@@ -454,7 +454,16 @@ export function cmdVerifyPack(projectRoot, opts = {}) {
     const startCheck = readJsonStrict(join(latestRunDir, 'start.json'));
     const reportCheck = readJsonStrict(join(latestRunDir, 'report.json'));
     if (startCheck.ok && (startCheck.value?.debugDirtyRun === true || startCheck.value?.isDirty === true || reportCheck.value?.debugDirtyRun === true)) {
-      return { exitCode: 3, stderr: `判据 ${o.id} 最新证据为脏树调试运行（--allow-dirty），禁打入复核包，请提交干净树后重跑 check` };
+      return {
+        exitCode: 3,
+        stderr: `判据 ${o.id} 最新证据为脏树调试运行（--allow-dirty），禁打入复核包，请提交干净树后重跑 check\n\n` +
+          renderWorryBlock(projectRoot, {
+            exitCode: 3, stage: 4, stageTitle: `「${contract.title || id}」独立复核打包`,
+            title: '最新运行证据来自脏工作区，不能送审',
+            reason: `判据 ${o.id} 使用了 --allow-dirty 调试证据`,
+            action: '提交干净树后重新执行 donegate check，再跑 verify pack'
+          })
+      };
     }
     evPairs.push({ oid: o.id, runName, latestRunDir });
   }
@@ -523,7 +532,18 @@ export function cmdVerifyApply(projectRoot, opts = {}) {
   // 先由 check-reviewpack.mjs 核验复核包是否被篡改（清单闭合 / 哈希）
   const packChk = spawnSync(process.execPath, [join(CMDB_REPO, 'skill', 'check-reviewpack.mjs'), '--pack', packDir], { encoding: 'utf8' });
   if (packChk.status === 3) return { exitCode: 3, stderr: '复核包有文件不可读：' + packChk.stdout };
-  if (packChk.status !== 0) return { exitCode: 2, stderr: '复核包已被篡改或结构不闭合（退 2）：\n' + packChk.stdout };
+  if (packChk.status !== 0) {
+    return {
+      exitCode: 2,
+      stderr: '复核包已被篡改或结构不闭合（退 2）：\n' + packChk.stdout + '\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 2, stage: 4, stageTitle: '独立复核校验',
+          title: '复核材料包哈希异常或包含越界内容',
+          reason: '清单文件与实际字节不一致或混入了非白名单文件',
+          action: '停止裁决，删除旧复核包并重新执行 verify pack'
+        })
+    };
+  }
 
   const vRes = readJsonStrict(verdictPath);
   if (!vRes.ok) return { exitCode: vRes.error === 'parse' ? 2 : 3, stderr: '判定书读不出或 JSON 损坏' };
@@ -550,9 +570,42 @@ export function cmdVerifyApply(projectRoot, opts = {}) {
   }
 
   // G-02：材料自相矛盾导致的 unknown，总结论按 §八 退 2（不降级为 3）
-  if (isContradiction) return { exitCode: 2, stderr: '门 5 发现材料自相矛盾（G-02 按 §八 退 2）' };
-  if (hasFail) return { exitCode: 1, stdout: '门 5 判定：未通过（存在 fail 项，退 1）' };
-  if (hasUnknown) return { exitCode: 3, stdout: '门 5 判定：无法判断（材料不足，退 3）' };
+  if (isContradiction) {
+    return {
+      exitCode: 2,
+      stderr: '门 5 发现材料自相矛盾（G-02 按 §八 退 2）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 2, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '提交送审的材料自相矛盾',
+          reason: '独立复核指出不同文件或声称之间互相冲突',
+          action: '核对代码 diff、运行输出与完成声称后重新打包送审'
+        })
+    };
+  }
+  if (hasFail) {
+    return {
+      exitCode: 1,
+      stdout: '门 5 判定：未通过（存在 fail 项，退 1）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 1, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '独立 AI 复核驳回（存在未通过项）',
+          reason: '独立盲审在标准核对中发现 fail 项',
+          action: '按判定书指出的 fail 项修复后，重跑 check 与 verify pack'
+        })
+    };
+  }
+  if (hasUnknown) {
+    return {
+      exitCode: 3,
+      stdout: '门 5 判定：无法判断（材料不足，退 3）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 3, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '复核材料不足，无法裁决',
+          reason: '判定书中存在因缺失材料而给出的 unknown',
+          action: '补齐缺失证据或说明后重新运行 verify pack'
+        })
+    };
+  }
 
   const contractId = v.contractId || packDir.split(/[\\/]/).pop();
   const maniPath = join(packDir, 'MANIFEST.txt');

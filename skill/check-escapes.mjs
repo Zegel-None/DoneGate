@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { renderProgressBlock } from '../runner/core/progress.mjs';
+import { renderProgressBlock, renderWorryBlock } from '../runner/core/progress.mjs';
 import { walkByExt } from './fs-walk.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -449,6 +449,14 @@ if (has('--self-check')) {
   }
   if (bad > 0) {
     console.error(`RESULT: FAIL 自我核查 ${bad} 项未通过——禁止提交生效，请先修到全绿！`);
+    if (projOpt && existsSync(join(resolve(projOpt), 'INTENT.md'))) {
+      console.error('\n' + renderWorryBlock(resolve(projOpt), {
+        exitCode: 1, stage: 4, stageTitle: '提交前自我核查（安全拦截）',
+        title: `自我核查有 ${bad} 项未通过，已拦截提交`,
+        reason: '新增门禁或项目改动触发了回归失败/硬编码告警',
+        action: '按上面 ❌ 报错修到全绿，或回滚本次改动后再提交'
+      }));
+    }
     process.exit(1);
   }
   console.log('RESULT: PASS 自我核查全绿，可安全提交生效');

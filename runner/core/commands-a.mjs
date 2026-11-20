@@ -8,7 +8,7 @@ import { verifyClaimInMemory } from '../../skill/check-declarations.mjs';
 import { appendChainEntry, readAndVerifyChain, verifyFreezeImplementRun } from './chain.mjs';
 import { DEFAULT_THRESHOLDS, computeProjectStatus, evaluateGate0, evaluateGate1, evaluateGate2, loadThresholds } from './gates.mjs';
 import { buildSanitizedEnv, checkCommandBans, runIsolationProbes } from './isolation.mjs';
-import { renderProgressBlock } from './progress.mjs';
+import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 
 function gitAnchorInfo(projectRoot) {
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -235,13 +235,32 @@ export function cmdCheck(projectRoot, opts) {
   const anchor = gitAnchorInfo(projectRoot);
   const isDirtyRun = Boolean(anchor.isGit && (anchor.isDirty || !anchor.head));
   if (!opts.allowDirty && isDirtyRun) {
-    return { exitCode: 3, stderr: '拒绝执行：工作区存在未提交改动或尚无提交（§8.2.2 脏树退 3，开发期调试可传 --allow-dirty）' };
+    return {
+      exitCode: 3,
+      stderr: '拒绝执行：工作区存在未提交改动或尚无提交（§8.2.2 脏树退 3，开发期调试可传 --allow-dirty）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 3, stage: 2, stageTitle: `「${contract.title || id}」检查前环境校验`,
+          title: '工作区存在未提交改动，暂不计入正式验收',
+          reason: '有未提交文件时跑出的结果无法锚定版本号',
+          action: '先 git add/commit 提交干净树再重跑；调试可临时加 --allow-dirty'
+        })
+    };
   }
   const debugDirtyRun = Boolean(opts.allowDirty && isDirtyRun);
 
   // §四：执行隔离声明与门 4 双探针验证（虚假隔离声称退 2）
   const isoRes = runIsolationProbes(projectRoot);
-  if (!isoRes.ok) return { exitCode: isoRes.exitCode, stderr: isoRes.reason };
+  if (!isoRes.ok) {
+    return {
+      exitCode: isoRes.exitCode,
+      stderr: isoRes.reason + '\n\n' + renderWorryBlock(projectRoot, {
+        exitCode: isoRes.exitCode, stage: 2, stageTitle: `「${contract.title || id}」隔离校验`,
+        title: '执行隔离声明与环境不符（严重事故）',
+        reason: isoRes.reason,
+        action: '核对 .donegate/runner.json 中的隔离模式并恢复安全运行环境'
+      })
+    };
+  }
 
   const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
   const targets = opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs;
@@ -252,18 +271,60 @@ export function cmdCheck(projectRoot, opts) {
     if (o.kind !== 'command') continue;
     const banHits = checkCommandBans(o.command);
     if (banHits.length > 0) {
-      return { exitCode: 2, stderr: `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}` };
+      return {
+        exitCode: 2,
+        stderr: `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}\n\n` +
+          renderWorryBlock(projectRoot, {
+            exitCode: 2, stage: 2, stageTitle: `「${contract.title || id}」命令安全核查`,
+            title: `判据 ${o.id} 含禁用假绿写法（如 || true / 包装层吞码）`,
+            reason: banHits.join('；'),
+            action: '去掉吞错或包装层写法，改用直跑命令并重新锁定（contract freeze）'
+          })
+      };
     }
   }
 
   // 门 0 → 门 1 → 门 2 → §8.2.2 冻结绑定串联校验（可通过 --skip-gates 显式跳过）
   if (!opts.skipGates) {
     const g0 = evaluateGate0(projectRoot, id);
-    if (!g0.ok) return { exitCode: 1, stderr: `门 0 起手段未过（退 1）：${g0.fails.join('；')}` };
+    if (!g0.ok) {
+      return {
+        exitCode: 1,
+        stderr: `门 0 起手段未过（退 1）：${g0.fails.join('；')}\n\n` +
+          renderWorryBlock(projectRoot, {
+            exitCode: 1, stage: 1, stageTitle: '立项与前置条件未齐',
+            title: '门 0 起手校验未通过',
+            reason: g0.fails.join('；'),
+            action: '补齐 INTENT.md 四节与 CONSTRAINTS.md 约束条文后再试'
+          })
+      };
+    }
     const g1 = evaluateGate1(projectRoot);
-    if (!g1.ok) return { exitCode: g1.exitCode, stderr: `门 1 基线未过：${g1.reason}` };
+    if (!g1.ok) {
+      return {
+        exitCode: g1.exitCode,
+        stderr: `门 1 基线未过：${g1.reason}\n\n` +
+          renderWorryBlock(projectRoot, {
+            exitCode: g1.exitCode, stage: 2, stageTitle: '基线健康校验',
+            title: '项目基线（冒烟命令）未通过',
+            reason: g1.reason,
+            action: '先修绿 INTENT.md 里的冒烟命令，再测新功能'
+          })
+      };
+    }
     const g2 = evaluateGate2(projectRoot, contract);
-    if (!g2.ok) return { exitCode: g2.exitCode, stderr: `门 2 判据段未过：${g2.fails.join('；')}` };
+    if (!g2.ok) {
+      return {
+        exitCode: g2.exitCode,
+        stderr: `门 2 判据段未过：${g2.fails.join('；')}\n\n` +
+          renderWorryBlock(projectRoot, {
+            exitCode: g2.exitCode, stage: 2, stageTitle: `「${contract.title || id}」验收标准校验`,
+            title: '验收标准未锁定或内容已被改动',
+            reason: g2.fails.join('；'),
+            action: '执行 contract freeze 重新签字锁定判据'
+          })
+      };
+    }
     const chainChk = readAndVerifyChain(projectRoot);
     if (!chainChk.ok) return { exitCode: chainChk.exitCode || 2, stderr: chainChk.reason };
     if (chainChk.entries.some((e) => e.kind === 'implement' && e.contractId === id)) {
@@ -415,7 +476,16 @@ export function cmdTeeth(projectRoot, opts) {
 
   // Tier A: breakPatch + 还原哈希校验 + 恢复后绿灯验证
   if (!ob.breakPatch || !ob.breakPatch.file || ob.breakPatch.from === undefined || ob.breakPatch.to === undefined) {
-    return { exitCode: 3, stderr: `判据 ${criterionId} 缺少 breakPatch { file, from, to }（请先在 contract.json 补齐 breakPatch 并重新执行 contract freeze）` };
+    return {
+      exitCode: 3,
+      stderr: `判据 ${criterionId} 缺少 breakPatch { file, from, to }（请先在 contract.json 补齐 breakPatch 并重新执行 contract freeze）\n\n` +
+        renderWorryBlock(projectRoot, {
+          exitCode: 3, stage: 3, stageTitle: '防假绿验证（变异实验）',
+          title: `缺少改坏补丁配置（${criterionId}）`,
+          reason: '未配置 breakPatch，无法自动演示「改坏代码后测试能否抓住」',
+          action: '在 contract.json 该判据下补齐 breakPatch 后重新 contract freeze'
+        })
+    };
   }
   const targetFile = resolve(projectRoot, ob.breakPatch.file);
   if (!existsSync(targetFile)) return { exitCode: 3, stderr: 'breakPatch 目标文件不存在：' + ob.breakPatch.file };
@@ -443,7 +513,16 @@ export function cmdTeeth(projectRoot, opts) {
   if (restoredHash !== origHash) {
     ob.teeth = { at: new Date().toISOString().slice(0, 10), tier: 'A', result: 'restore-failed' };
     writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
-    return { exitCode: 2, stderr: `事故：还原后哈希不一致 (${restoredHash} ≠ ${origHash})，退 2` };
+    return {
+      exitCode: 2,
+      stderr: `事故：还原后哈希不一致 (${restoredHash} ≠ ${origHash})，退 2\n\n` +
+        renderWorryBlock(projectRoot, {
+          exitCode: 2, stage: 3, stageTitle: '防假绿验证（代码还原事故）',
+          title: '实验后代码未能原样还原，已立即中断',
+          reason: `文件 ${ob.breakPatch.file} 还原前后哈希不一致`,
+          action: '用 git status / git diff 核查并恢复目标文件'
+        })
+    };
   }
 
   // 第 5 步：还原后必须跑绿（§6.2.2）
