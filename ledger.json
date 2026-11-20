@@ -71,6 +71,13 @@
       "wiredAtBatch": 1,
       "actionsChanged": 1,
       "note": "接入 srclight 代码索引新鲜度声明（soft）"
+    },
+    {
+      "brick": "knip",
+      "registryId": "knip@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 Knip 死文件与无用依赖观测声明（soft）"
     }
   ]
 }

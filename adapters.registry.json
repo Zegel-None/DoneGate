@@ -135,6 +135,19 @@
       "blindSpots": [
         "仅观测代码索引新鲜度，不校验语义正确性"
       ]
+    },
+    {
+      "id": "knip@stage4",
+      "tool": "knip",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-no-dead-deps",
+      "entry": "skill/adapters/knip-prune.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=6.0.0 <7.0.0",
+      "blindSpots": [
+        "仅覆盖 JS/TS 生态静态导入关系，无法捕获反射与运行时动态字符串 require"
+      ]
     }
   ]
 }
