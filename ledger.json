@@ -99,6 +99,13 @@
       "wiredAtBatch": 1,
       "actionsChanged": 1,
       "note": "接入 Maestro 本地 App 模拟器 UI 流程观测声明（hard）"
+    },
+    {
+      "brick": "schemathesis",
+      "registryId": "schemathesis@stage4",
+      "wiredAtBatch": 1,
+      "actionsChanged": 1,
+      "note": "接入 Schemathesis OpenAPI 接口边界模糊测试观测声明（hard）"
     }
   ]
 }
