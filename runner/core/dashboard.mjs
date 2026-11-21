@@ -50,21 +50,35 @@ export function exportDashboardHtml(projectRoot, outPath = join(projectRoot, '.d
   }
 }
 
-export function openInSystemBrowser(filePath) {
+export function buildBrowserOpenCommand(fileOrUrl, platform = process.platform, pathMod = { resolve }) {
+  const raw = String(fileOrUrl || '').trim();
+  if (!raw) return null;
+  const isUrl = /^(?:https?|file):\/\//i.test(raw);
+  const target = isUrl ? raw : pathMod.resolve(raw);
+  if (platform === 'win32') {
+    const safe = target.replace(/"/g, '%22').replace(/[\r\n]/g, '');
+    return {
+      cmd: 'cmd.exe',
+      args: ['/d', '/s', '/c', `"start "" "${safe}""`],
+      opts: { detached: true, stdio: 'ignore', windowsVerbatimArguments: true, windowsHide: true }
+    };
+  }
+  return {
+    cmd: platform === 'darwin' ? 'open' : 'xdg-open',
+    args: [target],
+    opts: { detached: true, stdio: 'ignore' }
+  };
+}
+
+export function openInSystemBrowser(filePath, platform = process.platform) {
   try {
-    const abs = resolve(filePath);
-    if (process.platform === 'win32') {
-      const child = spawn('cmd.exe', ['/d', '/s', '/c', `start "" "${abs}"`], { detached: true, stdio: 'ignore' });
-      child.unref();
-    } else if (process.platform === 'darwin') {
-      const child = spawn('open', [abs], { detached: true, stdio: 'ignore' });
-      child.unref();
-    } else {
-      const child = spawn('xdg-open', [abs], { detached: true, stdio: 'ignore' });
-      child.unref();
-    }
+    const spec = buildBrowserOpenCommand(filePath, platform);
+    if (!spec) return false;
+    const child = spawn(spec.cmd, spec.args, spec.opts);
+    child.unref();
     return true;
-  } catch {
+  } catch (err) {
+    void err;
     return false;
   }
 }

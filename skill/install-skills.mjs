@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { sha256Short } from './hash.mjs';
 import { walk } from './fs-walk.mjs';
@@ -21,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const DEST_ROOT = join(ROOT, '.dsh', 'skills');
 const SKILLS = ['donegate', 'donegate-judge', 'donegate-forge'];
-const VALIDATOR = join(process.env.DSH_HOME || join(process.env.USERPROFILE || '', '.dsh'), 'skills',
+const VALIDATOR = join(process.env.DSH_HOME || join(process.env.USERPROFILE || homedir(), '.dsh'), 'skills',
   'dsh-skill-authoring', 'scripts', 'validate-skill.mjs');
 
 // 遍历两份技能目录：跳过集交给唯一实现（这里刻意不跳任何目录——只装 donegate*）
@@ -63,9 +64,10 @@ if (!existsSync(VALIDATOR)) {
   process.exit(0);
 }
 try {
-  const out = execFileSync('node', [VALIDATOR, '--root', DEST_ROOT], { encoding: 'utf8' });
-  const tail = out.trim().split('\n').filter((l) => l.includes('checked,') || l.includes('would load')).join('\n');
-  console.log(tail || out.trim().split('\n').slice(-1)[0]);
+  const out = execFileSync(process.execPath, [VALIDATOR, '--root', DEST_ROOT], { encoding: 'utf8', windowsHide: true });
+  const lines = out.trim().split(/\r?\n/);
+  const tail = lines.filter((l) => l.includes('checked,') || l.includes('would load')).join('\n');
+  console.log(tail || lines.slice(-1)[0]);
   console.log('RESULT: PASS 校验器退出码 0（两个技能都会被加载）');
   process.exit(0);
 } catch (e) {

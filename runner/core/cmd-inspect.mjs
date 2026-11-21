@@ -189,7 +189,7 @@ export function cmdStatus(projectRoot, opts = {}) {
       const drRes = exportDashboardHtml(projectRoot, outHtml, { statusData: st, edges });
       const livePort = drRes.atlas?.project?.livePort || 43180;
       try {
-        const ch = spawn(process.execPath, [srvScript, '--root', projectRoot, '--port', String(livePort)], { detached: true, stdio: 'ignore' });
+        const ch = spawn(process.execPath, [srvScript, '--root', projectRoot, '--port', String(livePort)], { detached: true, stdio: 'ignore', windowsHide: true });
         ch.unref();
       } catch { /* 非致命降级，不影响主状态 */ }
       if (opts.open) {

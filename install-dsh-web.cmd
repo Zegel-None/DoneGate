@@ -17,5 +17,5 @@ if errorlevel 1 (
 )
 echo.
 echo [完成] 请重启或刷新您的 DeepSeek Harness Web 页面 (如 http://127.0.0.1:3000)，在对话顶部点击「完结门」标签页！
-if "%1"=="" pause
+if "%~1"=="" pause
 exit /b 0
