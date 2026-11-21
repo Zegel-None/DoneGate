@@ -1,4 +1,4 @@
-// 工作台实时后端桥接外壳：ATLAS 活体数据注水、明暗双主题切换、撤销历史基线初始化、重扫后端与目录定位（<= 260 行）
+// 工作台实时后端桥接外壳：ATLAS 活体数据注水、开发流依赖就位巡检与一键后台补齐、明暗主题与目录定位（<= 295 行）
 export function buildShellScript() {
   return String.raw`
 let liveServerConnected = false;
@@ -21,6 +21,8 @@ function toggleTheme() {
 function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   if (!atlasData || typeof atlasData !== 'object') return;
   const wb = atlasData.workbench || {};
+  if (!state.packDepReports) state.packDepReports = {};
+  if (!state.provisionedPacks) state.provisionedPacks = {};
 
   if (Array.isArray(wb.registeredTemplates)) {
     wb.registeredTemplates.forEach((tpl) => {
@@ -62,7 +64,12 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   const sv = wb.savedState;
   if (!preservePositions && sv && typeof sv === 'object') {
     if (sv.customPacks && typeof sv.customPacks === 'object') {
-      Object.entries(sv.customPacks).forEach(([k, v]) => { if (v && v.id) WORKFLOW_PACKS[k] = v; });
+      Object.entries(sv.customPacks).forEach(([k, v]) => {
+        if (v && v.id) {
+          WORKFLOW_PACKS[k] = v;
+          if (v.group && !WORKFLOW_GROUPS.includes(v.group)) WORKFLOW_GROUPS.push(v.group);
+        }
+      });
     }
     if (Array.isArray(sv.starredRepos) && sv.starredRepos.length > 0) {
       state.starredRepos = new Set(sv.starredRepos);
@@ -77,6 +84,91 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
       state.controlStyleOverrides = { ...state.controlStyleOverrides, ...sv.controlStyles };
     }
   }
+}
+
+async function syncAllWorkflowDepsFromBackend(focusPackId) {
+  if (!/^https?:$/i.test(location.protocol)) {
+    if (focusPackId && WORKFLOW_PACKS[focusPackId]) {
+      const s = computeClientPackDepSummary(WORKFLOW_PACKS[focusPackId]);
+      showToast(s.missingCount > 0 ? ('离线检查：尚缺 ' + s.missingCount + ' 项依赖') : '离线检查：依赖已就位');
+    }
+    return;
+  }
+  try {
+    const r = await fetch('/donegate/api/workflow-deps/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packs: WORKFLOW_PACKS })
+    });
+    const j = await r.json();
+    if (r.ok && j && j.reports) {
+      state.packDepReports = { ...(state.packDepReports || {}), ...j.reports };
+      renderLeftDrawer();
+      if (focusPackId && j.reports[focusPackId]) {
+        const rep = j.reports[focusPackId];
+        showToast(rep.ready ? ('✓「' + rep.packName + '」全部 ' + rep.total + ' 项依赖已就位') : ('「' + rep.packName + '」尚缺 ' + rep.missingCount + ' 项依赖待补齐'));
+      }
+    }
+  } catch (err) { void err; }
+}
+
+async function triggerProvisionWorkflowDeps(packId) {
+  const pk = WORKFLOW_PACKS[packId || state.activePackId];
+  if (!pk) return;
+  const safeId = String(pk.id || 'default').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const fallbackDir = 'workflows/.deps/' + safeId;
+  showToast('📦 正在准备「' + pk.name + '」专属依赖目录 ' + fallbackDir + '/...');
+
+  if (/^https?:$/i.test(location.protocol)) {
+    try {
+      const r = await fetch('/donegate/api/workflow-deps/provision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pack: pk })
+      });
+      const rep = await r.json();
+      if (r.ok && rep && rep.ok) {
+        state.packDepReports = { ...(state.packDepReports || {}), [pk.id]: rep };
+        if (rep.ready) {
+          showToast('✅「' + pk.name + '」依赖已全部就位（' + rep.depsDir + '/）');
+          renderAll();
+          return;
+        }
+        if (typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
+          window.parent.postMessage({
+            source: 'donegate-canvas',
+            sessionId: DSH_SESSION_ID,
+            type: 'dg:insert-quote',
+            text: rep.agentPrompt,
+            summary: { label: '[补齐依赖] ' + pk.name, title: rep.depsDir, detail: '待装 ' + rep.missingCount + ' 项开源组件与环境', body: rep.agentPrompt }
+          }, '*');
+        }
+        if (typeof dshRuntime !== 'undefined') {
+          dshRuntime.dockItems.unshift({
+            id: 'dep-' + Date.now(),
+            kind: 'receipt',
+            title: '📦 已建好 ' + rep.depsDir + '/ 隔离清单，后台 Agent 正在拉取 ' + rep.missingCount + ' 项项目与环境依赖'
+          });
+          if (typeof renderDshStandaloneShell === 'function') renderDshStandaloneShell();
+        }
+        state.chatMessages.push({
+          role: 'agent',
+          html: '📦 已为「<b>' + esc(pk.name) + '</b>」创建专属目录 <code>' + esc(rep.depsDir) + '/</code> 并生成补齐工单（共 <b>' + rep.missingCount + '</b> 项待装）：<br><pre class="mt-1 p-2 rounded text-[10.5px] whitespace-pre-wrap" style="background:var(--surface-soft);">' + esc(rep.agentPrompt) + '</pre>'
+        });
+        renderAll();
+        showToast('📦 已派发后台 Agent 补齐工单至 ' + rep.depsDir + '/');
+        return;
+      }
+    } catch (err) { void err; }
+  }
+
+  state.provisionedPacks[pk.id] = true;
+  state.chatMessages.push({
+    role: 'agent',
+    html: '📦 离线预览模式：正式连接本地服务或 DSH 后，点击「补齐」会自动将「<b>' + esc(pk.name) + '</b>」所需开源项目与环境安装到 <code>' + esc(fallbackDir) + '/</code>。'
+  });
+  renderAll();
+  showToast('已生成 ' + fallbackDir + '/ 补齐指令（连接 DSH 后自动后台执行）');
 }
 
 function collectPersistedSnapshot() {
@@ -143,6 +235,7 @@ async function refreshBackendData() {
     const syncBadge = document.getElementById('atlas-ov-sync');
     if (syncBadge) syncBadge.textContent = '实时同步已连接';
     hydrateWorkbenchFromAtlas(ATLAS, true);
+    await syncAllWorkflowDepsFromBackend();
     renderAll();
     if (typeof recordHistoryCheckpoint === 'function') recordHistoryCheckpoint();
     const ovModal = document.getElementById('atlas-overview-modal');
@@ -218,6 +311,7 @@ async function openFolderViaBackend(dirPath) {
         liveServerConnected = true;
         const syncBadge = document.getElementById('atlas-ov-sync');
         if (syncBadge) syncBadge.textContent = '实时同步已连接';
+        syncAllWorkflowDepsFromBackend();
       }
     }).catch((err) => { void err; });
   }

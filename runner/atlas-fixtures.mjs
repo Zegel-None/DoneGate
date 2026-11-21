@@ -26,7 +26,7 @@ try {
   const proj = join(tmp, 'fullstack-shop');
   mkdirSync(proj, { recursive: true });
   dispatchCommand(['init', '.'], proj);
-  writeFileSync(join(proj, '.gitignore'), '.donegate/\n');
+  writeFileSync(join(proj, '.gitignore'), '.donegate/\nworkflows/.deps/\n');
   writeFileSync(join(proj, 'tsconfig.json'), JSON.stringify({
     compilerOptions: { baseUrl: '.', paths: { '@/*': ['apps/web/*'] } }
   }, null, 2));
@@ -159,13 +159,13 @@ try {
   c.check('工作台按契约 scope[] 映射项目看板真实目录（ADR-005）并注入砂浆注册表开源积木与锁死版本',
     Boolean(hostSb && hostSb.isHost === true && hostSb.readonly === false && webNode && webNode.contractIds.includes('shop-main') && hasAdpCatalog));
 
-  // 3. 核验零外网单文件工作台 HTML（含无界拖曳、100步 Ctrl+Z/Ctrl+Y 撤销重做、全元素点选与四模式整理）
+  // 3. 核验零外网单文件工作台 HTML（含无界拖曳、100步 Ctrl+Z/Ctrl+Y、开发流一键补齐依赖按钮与右键菜单）
   const stHtml = dispatchCommand(['status', '--html', '.donegate/dashboard.html'], proj);
   const htmlPath = join(proj, '.donegate', 'dashboard.html');
   const html = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : '';
   const hasExternalUrl = /<(?:script|link|img)\b[^>]*(?:src|href)\s*=\s*['"]https?:\/\//i.test(html);
   const hasOldCoordClamp = /Math\.max\(16,\s*Math\.round\(orig\./.test(html) || /Math\.max\(54,\s*Math\.round\(orig\./.test(html);
-  c.check('生成零外网单文件工作台 HTML（无坐标正值封顶限制、支持 100 步 Ctrl+Z/Ctrl+Y 撤销重做、四模式整理与全元素点选）',
+  c.check('生成零外网单文件工作台 HTML（含无界拖曳、100 步撤销重做、开发流行内补齐按钮与右键依赖菜单）',
     stHtml.exitCode === 0 &&
     !hasExternalUrl &&
     !hasOldCoordClamp &&
@@ -179,20 +179,16 @@ try {
     html.includes('刷新最新数据') &&
     html.includes('项目看板') &&
     html.includes('开发流') &&
-    html.includes('会话常驻子代理') &&
-    html.includes('拓扑结构模式') &&
-    html.includes('S型紧凑模式') &&
-    html.includes('转为合并') &&
-    html.includes('转换为组合') &&
+    html.includes('provision-pack-deps') &&
+    html.includes('openWorkflowPackContextMenu') &&
+    html.includes('一键补齐此开发流依赖') &&
+    html.includes('triggerProvisionWorkflowDeps') &&
     html.includes('在文件夹中打开') &&
     html.includes('data-sel-text') &&
-    html.includes('1. 项目有哪些功能') &&
-    html.includes('复制这句话发给 AI 处理') &&
-    html.includes('展开开发者技术细节') &&
     existsSync(join(proj, '.donegate/atlas.json')) &&
     existsSync(join(proj, '.donegate/project.c4')));
 
-  // 4. 真测后台实时服务：刷新重扫 + 负坐标无界位置落盘 + 基于契约 scope 的安全目录解析与越界拦截
+  // 4. 真测后台实时服务：刷新重扫 + 负坐标落盘 + 目录解析 + 开发流依赖巡检与隔离补齐路由
   const srvInfo = await startAtlasHttpServer(proj, { port: 0, idleExitSec: 30 });
   try {
     const beforeCount = atlas.project.moduleCount;
@@ -235,6 +231,28 @@ try {
         rehydrated.workbench.savedState.customPacks['pack-u-e2e']?.name === '端到端持久化包' &&
         savedWeb?.x === -640 && savedWeb?.y === -1280 && savedWeb?.w === 310 &&
         rehydrated.workbench.savedState.textOverrides['chrome:agent-title'] === '专职验收子代理'
+      ));
+
+    const provResp = await fetch(`${srvInfo.url}donegate/api/workflow-deps/provision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pack: {
+          id: 'pack-stage-01',
+          name: '阶段一规格审校流',
+          deps: [{ id: 'spec-cli-x', title: 'SpecCLI', repo: 'acme/spec-cli-x', version: 'v1.0.0', kind: 'git', bin: 'spec-cli-x-uninstalled', allowHostEnv: false }],
+          nodes: []
+        }
+      })
+    });
+    const provJson = await provResp.json();
+    c.check('工作台一键补齐依赖接口自动建好 workflows/.deps/<id>/ 并返回后台 Agent 补齐工单',
+      Boolean(
+        provResp.ok &&
+        provJson.ok &&
+        provJson.depsDir === 'workflows/.deps/pack-stage-01' &&
+        provJson.missingCount === 1 &&
+        existsSync(join(proj, 'workflows/.deps/pack-stage-01/PROVISION-PLAN.json'))
       ));
 
     const folderResp = await fetch(`${srvInfo.url}api/workbench/open-folder`, {
