@@ -80,7 +80,7 @@ export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
   const forbidden = findForbiddenKeysDeep(claim);
   if (forbidden.length) return { exitCode: 2, reason: '出现协议禁词键名：' + forbidden.join('、') };
 
-  if (!Number.isInteger(claim.stage) || claim.stage < 1 || claim.stage > 7) return { exitCode: 2, reason: 'stage 必须是 1-7 整数' };
+  if (!Number.isInteger(claim.stage) || claim.stage < 1 || claim.stage > 20) return { exitCode: 2, reason: 'stage 必须是 1-20 整数' };
   if (typeof claim.tool !== 'string' || !claim.tool.trim()) return { exitCode: 2, reason: 'tool 非法' };
   if (typeof claim.version !== 'string' || !claim.version.trim()) return { exitCode: 2, reason: 'version 非法' };
   if (claim.role !== 'hard' && claim.role !== 'soft') return { exitCode: 2, reason: 'role 必须是 hard 或 soft' };
@@ -92,8 +92,8 @@ export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
   }
 
   for (const u of claim.unresolved) {
-    if (!u || typeof u !== 'object' || typeof u.text !== 'string' || !u.text.trim() || !Number.isInteger(u.stage) || u.stage < 1 || u.stage > 7) {
-      return { exitCode: 2, reason: 'unresolved 条目必须含 { text, stage(1-7) }' };
+    if (!u || typeof u !== 'object' || typeof u.text !== 'string' || !u.text.trim() || !Number.isInteger(u.stage) || u.stage < 1 || u.stage > 20) {
+      return { exitCode: 2, reason: 'unresolved 条目必须含 { text, stage(1-20) }' };
     }
   }
 

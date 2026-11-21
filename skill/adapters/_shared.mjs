@@ -137,7 +137,7 @@ export function runMortarAdapter(spec) {
   const validCb = Array.isArray(entry.checkedBy)
     ? entry.checkedBy.length > 0 && entry.checkedBy.every((cb) => typeof cb === 'string' && /^[^/]+\/[^/]+$/.test(cb))
     : typeof entry.checkedBy === 'string' && /^[^/]+\/[^/]+$/.test(entry.checkedBy);
-  if (entry.protocolVersion !== '1.1' || !Number.isInteger(entry.stage) || entry.stage < 1 || entry.stage > 7 || !validCb) {
+  if (entry.protocolVersion !== '1.1' || !Number.isInteger(entry.stage) || entry.stage < 1 || entry.stage > 20 || !validCb) {
     fail(2, 'registry 条目协议版本或字段非法：' + registryId);
   }
 
@@ -154,6 +154,13 @@ export function runMortarAdapter(spec) {
   let toolVer = '';
   if (typeof spec.resolveVersion === 'function') {
     toolVer = spec.resolveVersion({ arg, rootDir, repoDir: ADAPTERS_REPO, entry, fail });
+  } else if (spec.mode === 'artifact' || spec.mode === 'knowledge' || spec.mode === 'custom') {
+    const pkgPath = join(rootDir, 'package.json');
+    let fallbackVer = '1.0.0';
+    if (existsSync(pkgPath)) {
+      try { fallbackVer = JSON.parse(readFileSync(pkgPath, 'utf8')).version || '1.0.0'; } catch (err) { void err; }
+    }
+    toolVer = arg('--tool-version', fallbackVer);
   } else {
     const resolved = resolveExecutable(binSpec, typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : []);
     if (!resolved) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
@@ -268,6 +275,12 @@ export function runMortarAdapter(spec) {
     inputs,
     artifacts: [
       rawArtifact,
+      ...((res.extraArtifacts || []).map((ea) => {
+        const absEa = resolve(rootDir, ea.path);
+        if (!existsSync(absEa)) fail(3, `生成产物不存在：${ea.path}`);
+        const eaBuf = readFileSync(absEa);
+        return { path: relPath(absEa), sha256: shaBytes(eaBuf), kind: ea.kind || `${spec.tool}-artifact`, bytes: eaBuf.length };
+      })),
       { path: relPath(obsPath), sha256: shaBytes(obsBuf), kind: res.obsKind || `${spec.tool}-observation`, bytes: obsBuf.length },
       { path: relPath(anchorPath), sha256: shaBytes(anchorBuf), kind: 'git-anchor', bytes: anchorBuf.length }
     ],

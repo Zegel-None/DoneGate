@@ -219,41 +219,41 @@ function loadRegisteredAdapterTemplates(projectRoot) {
     const localCap = join(resolve(projectRoot), 'bricks', tool, 'capabilities.json');
     const capPath = existsSync(localCap) ? localCap : join(DG_ROOT, 'bricks', tool, 'capabilities.json');
     const capRes = readJsonStrict(capPath);
-    const obsList = Array.isArray(capRes.value?.observables) ? capRes.value.observables.slice(0, 3) : [];
-    const up = UPSTREAM_GITHUB_MAP[tool] || [`opensource/${tool}`, adp.testedToolRange || 'v1.0.0', adp.testedToolRange || 'v1.0.0'];
-
-    const cat = ['gitleaks', 'osv-scanner', 'semgrep'].includes(tool)
+    const capDoc = capRes.value || {};
+    const cardCfg = (capDoc.card && typeof capDoc.card === 'object') ? capDoc.card : {};
+    const upCfg = (capDoc.upstream && typeof capDoc.upstream === 'object') ? capDoc.upstream : {};
+    const obsList = Array.isArray(capDoc.observables) ? capDoc.observables.slice(0, 3) : [];
+    const up = UPSTREAM_GITHUB_MAP[tool] || [upCfg.repo || `opensource/${tool}`, adp.testedToolRange || 'v1.0.0', adp.testedToolRange || 'v1.0.0'];
+    const repoSlug = upCfg.repo || up[0];
+    const cat = cardCfg.category || (['gitleaks', 'osv-scanner', 'semgrep'].includes(tool)
       ? '安全与运维'
-      : (['playwright', 'maestro', 'vitest'].includes(tool) ? '端侧与构建' : '代码护栏');
-
-    const outputs = [
-      { id: 'out_sig', name: '0-3 判定码', type: 'SIGNAL' },
-      { id: 'out_obs', name: '观测声明原文', type: 'TEXT' }
-    ];
-    const slots = obsList.length > 0
-      ? obsList.map((o, i) => ({
-          id: `ob_${i}`,
-          label: String(o.description || o.id || '观测项').slice(0, 20),
-          wired: o.wired !== false,
-          boundOut: i === 0 ? 'out_sig' : 'out_obs'
-        }))
-      : [
-          { id: 'ob_0', label: `${tool} 退出码声明`, wired: true, boundOut: 'out_sig' },
-          { id: 'ob_1', label: '结构化观测报告输出', wired: true, boundOut: 'out_obs' }
-        ];
+      : (['playwright', 'maestro', 'vitest'].includes(tool) ? '端侧与构建' : '代码护栏'));
+    const inputs = Array.isArray(cardCfg.inputs) && cardCfg.inputs.length > 0
+      ? cardCfg.inputs
+      : [{ id: 'in_src', name: '代码或构建快照', type: 'ARTIFACT' }];
+    const outputs = Array.isArray(cardCfg.outputs) && cardCfg.outputs.length > 0
+      ? cardCfg.outputs
+      : [{ id: 'out_sig', name: '0-3 判定码', type: 'SIGNAL' }, { id: 'out_obs', name: '观测声明原文', type: 'TEXT' }];
+    const slots = Array.isArray(cardCfg.slots) && cardCfg.slots.length > 0
+      ? cardCfg.slots
+      : (obsList.length > 0
+          ? obsList.map((o, i) => ({ id: `ob_${i}`, label: String(o.description || o.id || '观测项').slice(0, 20), wired: o.wired !== false, boundOut: outputs[Math.min(i, outputs.length - 1)].id }))
+          : [{ id: 'ob_0', label: `${tool} 核心能力`, wired: true, boundOut: outputs[0].id }]);
 
     templates.push({
       tplId: `tpl-adp-${tool}`,
       category: cat,
-      title: `${tool} 砂浆转接积木`,
-      repoSlug: up[0],
-      repoUrl: `https://github.com/${up[0]}`,
+      title: cardCfg.title || `${tool} 砂浆转接积木`,
+      archetype: capDoc.archetype || 'scanner',
+      uiExternalUrl: upCfg.uiExternalUrl || null,
+      repoSlug,
+      repoUrl: upCfg.homepage || `https://github.com/${repoSlug}`,
       pinnedVersion: up[1],
       latestUpstream: up[2],
       entryPath: adp.entry || `skill/adapters/${tool}.mjs`,
       brickDir: `bricks/${tool}/`,
-      tip: (adp.blindSpots && adp.blindSpots[0]) ? `砂浆协议 v${adp.protocolVersion} · 边界：${adp.blindSpots[0]}` : `砂浆协议 v1.1 外部工具转接器（${tool}）`,
-      inputs: [{ id: 'in_src', name: '代码或构建快照', type: 'ARTIFACT' }],
+      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `砂浆协议 v${adp.protocolVersion} · 边界：${adp.blindSpots[0]}` : `砂浆协议外部工具转接卡（${tool}）`),
+      inputs,
       outputs,
       slots
     });
@@ -261,8 +261,26 @@ function loadRegisteredAdapterTemplates(projectRoot) {
   return templates;
 }
 
+function loadDeclarativeWorkflowPacks(projectRoot) {
+  const packs = {};
+  for (const base of [DG_ROOT, resolve(projectRoot)]) {
+    const wfDir = join(base, 'workflows');
+    if (!existsSync(wfDir)) continue;
+    try {
+      for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
+        const r = readJsonStrict(join(wfDir, f));
+        if (r.ok && r.value && r.value.id && Array.isArray(r.value.nodes)) {
+          packs[r.value.id] = { group: r.value.group || '项目声明式开发流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
+        }
+      }
+    } catch (err) { void err; }
+  }
+  return packs;
+}
+
 export function hydrateWorkbenchData(projectRoot, baseAtlas) {
   const savedState = readSavedWorkbenchState(projectRoot);
+  savedState.customPacks = { ...loadDeclarativeWorkflowPacks(projectRoot), ...(savedState.customPacks || {}) };
   const hostSandbox = buildHostSandboxFromAtlas(baseAtlas, savedState);
   const siblingSandboxes = scanSiblingWorkspaces(projectRoot);
   const registeredTemplates = loadRegisteredAdapterTemplates(projectRoot);
