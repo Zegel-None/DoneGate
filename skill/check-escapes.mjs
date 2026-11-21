@@ -19,7 +19,9 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import Module from 'node:module';
 import { fileURLToPath } from 'node:url';
+try { Module.enableCompileCache?.(); } catch (err) { void err; }
 import { dispatchCommand } from '../runner/donegate.mjs';
 import { appendProgressNote, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from '../runner/core/progress.mjs';
 import { walkByExt } from './fs-walk.mjs';

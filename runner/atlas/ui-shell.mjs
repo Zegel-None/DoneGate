@@ -1,8 +1,9 @@
-// 工作台实时后端桥接外壳：ATLAS 注水、开发流依赖补齐、过夜挂机断点续跑与早间简报同步（<= 295 行）
+// 工作台实时后端桥接外壳：ATLAS 注水、SSE 脉冲呼吸灯、依赖补齐、过夜挂机、盲判打包与 .workflow.json 导入导出
 export function buildShellScript() {
   return String.raw`
 let liveServerConnected = false;
 let persistTimer = null;
+let dgEventSource = null;
 
 function applyThemeClasses(theme) {
   const isDark = theme === 'dark';
@@ -23,6 +24,7 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   const wb = atlasData.workbench || {};
   if (!state.packDepReports) state.packDepReports = {};
   if (!state.provisionedPacks) state.provisionedPacks = {};
+  if (!state.nodeTelemetry) state.nodeTelemetry = {};
 
   if (Array.isArray(wb.registeredTemplates)) {
     wb.registeredTemplates.forEach((tpl) => {
@@ -71,6 +73,190 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   }
 }
 
+function connectDoneGateLiveEvents() {
+  if (!/^https?:$/i.test(location.protocol) || typeof EventSource === 'undefined' || dgEventSource) return;
+  try {
+    dgEventSource = new EventSource('/donegate/api/events');
+    dgEventSource.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data || '{}');
+        if (!state.nodeTelemetry) state.nodeTelemetry = {};
+        if (msg.type === 'connected' && msg.nodeTelemetry) {
+          state.nodeTelemetry = { ...state.nodeTelemetry, ...msg.nodeTelemetry };
+          renderCanvas();
+        } else if (msg.type === 'node_enter' && msg.nodeId) {
+          state.nodeTelemetry[msg.nodeId] = { nodeId: msg.nodeId, state: 'running', updatedAt: Date.now() };
+          renderCanvas();
+        } else if (msg.type === 'gate_settled' && msg.nodeId) {
+          state.nodeTelemetry[msg.nodeId] = {
+            nodeId: msg.nodeId,
+            state: msg.cacheHit ? 'cached' : (msg.exitCode === 0 ? 'pass' : (msg.exitCode === 1 ? 'fail' : 'fault')),
+            exitCode: msg.exitCode,
+            durationMs: msg.durationMs || 0,
+            cacheHit: Boolean(msg.cacheHit),
+            diagSummary: msg.diagSummary || ''
+          };
+          renderCanvas();
+        } else if (msg.type === 'workflow_deps_updated' && msg.packId && msg.report) {
+          state.packDepReports = { ...(state.packDepReports || {}), [msg.packId]: msg.report };
+          renderLeftDrawer();
+          renderCanvas();
+        }
+      } catch (err) { void err; }
+    };
+  } catch (err) { void err; }
+}
+
+async function previewNodeObservation(nodeId) {
+  const nd = getActiveNodesList().find((n) => n.id === nodeId);
+  if (!nd) return;
+  const slug = nd.repoSlug || (BLOCK_TEMPLATES[nd.tplId] && BLOCK_TEMPLATES[nd.tplId].repoSlug) || '';
+  const tool = slug ? slug.split('/').pop().toLowerCase() : String(nd.tplId || '').replace(/^tpl-adp-/, '');
+  const tel = state.nodeTelemetry && state.nodeTelemetry[nodeId];
+  if (/^https?:$/i.test(location.protocol)) {
+    try {
+      const r = await fetch('/donegate/api/observation-preview?tool=' + encodeURIComponent(tool) + '&nodeId=' + encodeURIComponent(nodeId));
+      const j = await r.json();
+      if (r.ok && j && j.ok) {
+        openRightFilePreview(j.sourcePath || ('bricks/' + tool + '/capabilities.json'), nd.title + ' · 观测与门禁输出', j.content);
+        return;
+      }
+    } catch (err) { void err; }
+  }
+  const fallbackTxt = tel
+    ? JSON.stringify(tel, null, 2)
+    : ('// 节点「' + nd.title + '」实时观测预览\n// 连接本地服务并运行检查后，此处直接展示 .donegate/adapters/' + (tool || 'tool') + '/observation.json 原文');
+  openRightFilePreview('.donegate/adapters/' + (tool || 'node') + '/observation.json', nd.title + ' · 观测输出', fallbackTxt);
+}
+
+async function triggerJudgePackForCard(nodeId) {
+  const nd = getActiveNodesList().find((n) => n.id === nodeId);
+  if (!nd) return;
+  const cid = nd.primaryContractId || (Array.isArray(nd.contractIds) && nd.contractIds[0]) || (Array.isArray(nd.contracts) && nd.contracts[0]) || '';
+  if (!cid) {
+    showToast('该模块尚未关联契约，请先通过「❝ 引用」让 Agent 建立 contract.json');
+    return;
+  }
+  if (!/^https?:$/i.test(location.protocol)) {
+    showToast('连接本地服务后可一键打包契约「' + cid + '」的门 5 盲判复核包');
+    return;
+  }
+  showToast('⚖️ 正在打包契约「' + cid + '」门 5 独立盲判材料包...');
+  try {
+    const r = await fetch('/donegate/api/judge/pack', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contractId: cid })
+    });
+    const out = await r.json();
+    if (out && out.ok && out.relPackDir) {
+      if (typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:insert-quote',
+          text: out.judgePrompt, summary: { label: '[盲判包] ' + cid, title: out.relPackDir, detail: 'SHA-256: ' + String(out.packageHash || '').slice(0, 12), body: out.judgePrompt }
+        }, '*');
+      }
+      state.chatMessages.push({
+        role: 'agent',
+        html: '⚖️ 契约「<b>' + esc(cid) + '</b>」门 5 盲判复核包已通过 INV-14 白名单校验并落盘：<br><code>' + esc(out.relPackDir) + '</code><br>可直接复制发给独立判方会话：<br><code>' + esc(out.judgePrompt) + '</code>'
+      });
+      renderAll();
+      showToast('⚖️ 盲判包已生成：' + out.relPackDir);
+    } else {
+      const msg = String((out && out.stderr) || '需先跑通 check 生成干净运行证据').split('\n')[0];
+      showToast('⚖️ 暂无法打包：' + msg);
+    }
+  } catch (err) { void err; showToast('盲判打包请求失败'); }
+}
+
+function exportActiveWorkflowJson(packId) {
+  const pk = WORKFLOW_PACKS[packId || state.activePackId];
+  if (!pk) return;
+  const safeId = String(pk.id || 'workflow').replace(/[^a-zA-Z0-9._-]/g, '-');
+  const payload = {
+    schemaVersion: '1.0',
+    id: safeId,
+    name: pk.name || safeId,
+    group: pk.group || '项目声明式开发流',
+    tip: pk.tip || '',
+    exportedAt: new Date().toISOString(),
+    deps: Array.isArray(pk.deps) ? pk.deps : [],
+    nodes: pk.nodes || [],
+    links: pk.links || [],
+    groups: pk.groups || []
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2) + '\n'], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = safeId + '.workflow.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  showToast('⬇ 已导出开发流文件：' + safeId + '.workflow.json');
+}
+
+async function importWorkflowJsonText(rawText, sourceName) {
+  let parsed = null;
+  try { parsed = JSON.parse(rawText); } catch (err) { void err; showToast('导入失败：JSON 语法格式无效'); return; }
+  if (!parsed || !Array.isArray(parsed.nodes) || parsed.nodes.length === 0) {
+    showToast('导入失败：不是有效的 .workflow.json（缺少 nodes 节点列表）');
+    return;
+  }
+  const baseId = String(parsed.id || String(sourceName || 'imported').replace(/\.workflow\.json$|\.json$/i, '')).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const packId = baseId || ('pack-u-' + Date.now());
+  const normalized = {
+    schemaVersion: parsed.schemaVersion || '1.0',
+    id: packId,
+    name: parsed.name || packId,
+    group: parsed.group || '项目声明式开发流',
+    tip: parsed.tip || ('自 ' + (sourceName || '.workflow.json') + ' 导入的开发流'),
+    deps: Array.isArray(parsed.deps) ? parsed.deps : [],
+    nodes: parsed.nodes,
+    links: Array.isArray(parsed.links) ? parsed.links : [],
+    groups: Array.isArray(parsed.groups) ? parsed.groups : []
+  };
+  if (!WORKFLOW_GROUPS.includes(normalized.group)) WORKFLOW_GROUPS.push(normalized.group);
+  WORKFLOW_PACKS[packId] = normalized;
+  state.page = 'workshop';
+  state.leftTab = 'workflows';
+  state.activePackId = packId;
+  state.wsSubgraphStack = [];
+  state.selectedNodeIds = normalized.nodes[0] ? new Set([normalized.nodes[0].id]) : new Set();
+
+  if (/^https?:$/i.test(location.protocol)) {
+    try {
+      await fetch('/donegate/api/workflow-pack/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: normalized })
+      });
+      await syncAllWorkflowDepsFromBackend(packId);
+    } catch (err) { void err; }
+  }
+  renderAll();
+  requestAnimationFrame(fitCanvas);
+  showToast('⬆ 已导入开发流「' + normalized.name + '」（如缺外部依赖可点右侧「补齐」）');
+}
+
+function triggerWorkflowJsonFilePicker() {
+  let inp = document.getElementById('wf-file-import-input');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.id = 'wf-file-import-input';
+    inp.type = 'file';
+    inp.accept = '.json,.workflow.json';
+    inp.className = 'hidden';
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => importWorkflowJsonText(String(reader.result || ''), f.name);
+      reader.readAsText(f, 'utf-8');
+      inp.value = '';
+    });
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+
 async function syncAllWorkflowDepsFromBackend(focusPackId) {
   if (!/^https?:$/i.test(location.protocol)) {
     if (focusPackId && WORKFLOW_PACKS[focusPackId]) {
@@ -87,6 +273,7 @@ async function syncAllWorkflowDepsFromBackend(focusPackId) {
     if (r.ok && j && j.reports) {
       state.packDepReports = { ...(state.packDepReports || {}), ...j.reports };
       renderLeftDrawer();
+      renderCanvas();
       if (focusPackId && j.reports[focusPackId]) {
         const rep = j.reports[focusPackId];
         showToast(rep.ready ? ('✓「' + rep.packName + '」全部 ' + rep.total + ' 项依赖已就位') : ('「' + rep.packName + '」尚缺 ' + rep.missingCount + ' 项依赖待补齐'));
@@ -124,10 +311,10 @@ async function triggerStartAutopilot() {
     showToast('连接本地实时服务或 DSH Web 后即可启动过夜断点续跑状态机');
     return;
   }
-  showToast('🌙 已启动过夜挂机长跑状态机（每步自动写入 checkpoint.json）...');
+  showToast('🌙 已启动过夜挂机长跑（独立 Git Worktree 零污染沙箱 + 断点续跑）...');
   try {
     const r = await fetch('/donegate/api/autopilot/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: pk })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: pk, useWorktreeSandbox: true, useFingerprintCache: true })
     });
     const out = await r.json();
     if (out && out.suspended && out.pendingHumanGate) {
@@ -140,10 +327,10 @@ async function triggerStartAutopilot() {
       showToast('⏸ 已停在人工闸门待你拍板');
     } else if (out && !out.ok) {
       renderAll();
-      showToast('🛑 挂机拦截：' + (out.reason || out.code || '未通过'));
+      showToast('🛑 挂机拦截（主工作区已隔离保护）：' + (out.reason || out.code || '未通过'));
     } else {
       renderAll();
-      showToast('🌅 挂机长跑全部完成（runId=' + (out && out.runId) + '）');
+      showToast('🌅 挂机长跑全部完成（免跑缓存命中 ' + ((out && out.cacheHits) || 0) + ' 项）');
     }
   } catch (err) { void err; showToast('挂机服务请求异常'); }
 }
@@ -301,6 +488,7 @@ async function openFolderViaBackend(dirPath) {
         if (syncBadge) syncBadge.textContent = '实时同步已连接';
         syncAllWorkflowDepsFromBackend();
         syncAutopilotMorningBrief();
+        connectDoneGateLiveEvents();
       }
     }).catch((err) => { void err; });
   }

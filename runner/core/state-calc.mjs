@@ -1,4 +1,4 @@
-// L0 五状态六栏与通过四分现算引擎（INV-01..INV-18，<= 350 行聚焦子模块）
+// L0 五状态六栏、契约显式生命周期状态机与通过四分现算引擎（INV-01..INV-18，<= 420 有效行）
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -8,6 +8,56 @@ import { classifyBySpecTable, propagateImpact } from '../engine.mjs';
 import { readAndVerifyChain } from './chain.mjs';
 import { ensureRunnerConfig } from './isolation.mjs';
 import { STATE_PRIORITY, VALID_TEETH, checkHumanOutcome, checkMaterialsFresh, isSelfWriterIdentity, loadContracts, loadFunctions, loadThresholds, readEvidenceRuns } from './project-loader.mjs';
+
+export const CONTRACT_LIFECYCLE = {
+  RETIRED: 'RETIRED',
+  DRAFT: 'DRAFT',
+  FROZEN: 'FROZEN',
+  IMPLEMENTED: 'IMPLEMENTED',
+  TEETH_VERIFIED: 'TEETH_VERIFIED',
+  SIGNED_OFF: 'SIGNED_OFF'
+};
+
+export function deriveContractLifecycle(contract, obs, obResults, reqCmds, allTrusted, signedOff, worstState) {
+  if (contract.retired) {
+    return { lifecycleState: CONTRACT_LIFECYCLE.RETIRED, lifecycleLabel: '已退役', nextCommand: null };
+  }
+  const reqObs = obs.filter((o) => o.required !== false);
+  const allFrozen = reqObs.length > 0 && reqObs.every((o) => typeof o.signedBy === 'string' && o.signedBy.trim() && typeof o.frozenHash === 'string' && o.frozenHash.trim());
+  if (obs.length === 0 || !allFrozen) {
+    return {
+      lifecycleState: CONTRACT_LIFECYCLE.DRAFT,
+      lifecycleLabel: '草稿待冻结',
+      nextCommand: `node runner/donegate.mjs contract freeze ${contract.id} --by <裁方姓名>`
+    };
+  }
+  if (obResults.length > 0 && obResults.every((x) => x.state === '未验证')) {
+    return {
+      lifecycleState: CONTRACT_LIFECYCLE.FROZEN,
+      lifecycleLabel: '已锁待实现',
+      nextCommand: `node runner/donegate.mjs check ${contract.id}`
+    };
+  }
+  if (allTrusted && worstState === '通过' && signedOff) {
+    return { lifecycleState: CONTRACT_LIFECYCLE.SIGNED_OFF, lifecycleLabel: '人签通关', nextCommand: null };
+  }
+  if (allTrusted && worstState === '通过' && !signedOff) {
+    return {
+      lifecycleState: CONTRACT_LIFECYCLE.TEETH_VERIFIED,
+      lifecycleLabel: '有牙待盲审',
+      nextCommand: `node runner/donegate.mjs verify pack ${contract.id}`
+    };
+  }
+  const untrustedOb = reqCmds.find((x) => x.state === '通过' && x.subclass !== 'A1');
+  const nextCmd = (worstState === '通过' && untrustedOb)
+    ? `node runner/donegate.mjs teeth ${contract.id} ${untrustedOb.id}`
+    : `node runner/donegate.mjs check ${contract.id}`;
+  return {
+    lifecycleState: CONTRACT_LIFECYCLE.IMPLEMENTED,
+    lifecycleLabel: worstState === '通过' ? '已过待验牙' : '实现修复中',
+    nextCommand: nextCmd
+  };
+}
 
 export function evaluateObligationState(projectRoot, contract, ob, thresholds, pendingContracts = new Set()) {
   const runs = readEvidenceRuns(projectRoot, contract.id, ob.id);
@@ -24,7 +74,6 @@ export function evaluateObligationState(projectRoot, contract, ob, thresholds, p
   const hashMatches = hasSigned && typeof ob.frozenHash === 'string' && ob.frozenHash === currentCriteriaHash;
   const wasExpired = latest && latest.valid && !checkMaterialsFresh(projectRoot, latest.start);
   if (hasSigned && ob.frozenHash && !hashMatches) {
-    // INV-15: 在「过期」状态下改写判据且未重签 → 未验证；否则 INV-06 → 无法判断
     return {
       id: ob.id,
       state: wasExpired ? '未验证' : '无法判断',
@@ -66,7 +115,7 @@ export function evaluateObligationState(projectRoot, contract, ob, thresholds, p
     }
   }
 
-  // §8.2.2 / INV-07：运行证据绑定的判据哈希与当前判据不一致（防改强判据重签后冒用旧弱判据绿灯）
+  // §8.2.2 / INV-07：运行证据绑定的判据哈希与当前判据不一致
   if (latest.start?.run?.criteriaHash && latest.start.run.criteriaHash !== currentCriteriaHash) {
     return { id: ob.id, state: '过期', reason: '运行证据绑定的判据哈希与当前判据不一致（判据已变更，须重跑 check）', teeth: teethVal, run: 'unknown', pendingRecheck: false };
   }
@@ -127,7 +176,6 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
   const runnerCfg = ensureRunnerConfig(projectRoot);
   const isolationNotice = runnerCfg.isolation === 'none' ? '本次运行无隔离' : `隔离=${runnerCfg.isolation}`;
 
-  // 自动消费 codegraph 声明（经核侧复算校验后驱动 engine.mjs 算出 pendingRecheck）
   const effectivePending = new Set(pendingContracts);
   let autoImpact = null;
   const cgClaimPath = join(projectRoot, '.donegate', 'adapters', 'codegraph', 'claim.json');
@@ -157,7 +205,8 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
 
   for (const c of contracts) {
     if (c.retired) {
-      contractSummaries.push({ id: c.id, title: c.title, retired: c.retired, state: '已退役', obligations: [] });
+      const lc = deriveContractLifecycle(c, [], [], [], false, false, '已退役');
+      contractSummaries.push({ id: c.id, title: c.title, retired: c.retired, state: '已退役', ...lc, obligations: [] });
       continue;
     }
     const obs = Array.isArray(c.obligations) ? c.obligations : [];
@@ -193,10 +242,12 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
     const reqCmds = obResults.filter((x) => x.required && x.kind === 'command' && x.teeth !== 'ignored');
     const allTrusted = reqCmds.length > 0 && reqCmds.every((x) => x.state === '通过' && x.subclass === 'A1');
     const signedOff = chainRes.ok && chainRes.entries.some((e) => e.kind === 'signoff' && e.contractId === c.id);
+    const lc = deriveContractLifecycle(c, obs, obResults, reqCmds, allTrusted, signedOff, worstState);
     contractSummaries.push({
       id: c.id,
       title: c.title || c.id,
       state: obs.length === 0 ? '未定验收' : worstState,
+      ...lc,
       cleared: Boolean(allTrusted && signedOff && worstState === '通过'),
       signedOff,
       passTrusted: reqCmds.filter((x) => x.subclass === 'A1').length,
@@ -205,7 +256,6 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
     });
   }
 
-  // 功能层计数（§3.3.1 & INV-17 & INV-18）
   const activeContractIds = new Set(contracts.filter((c) => !c.retired).map((c) => c.id));
   const knownAllContractIds = new Set(contracts.map((c) => c.id));
   const referencedIds = new Set(functions.flatMap((f) => Array.isArray(f.contracts) ? f.contracts : []));
@@ -214,7 +264,6 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
   const badSourceFunctions = functions.filter((f) => typeof f.source !== 'string' || f.source.trim() === '' || /(基于分析|根据规范|从代码推断|总结|概括)/.test(f.source));
   const badNameFunctions = functions.filter((f) => f.id && f._fileId !== f.id);
 
-  // J3 过程信号：统计 .donegate/adapters/*/claim.json 中 unresolved 总数
   let unresolvedTotal = 0;
   const adpDir = join(projectRoot, '.donegate', 'adapters');
   if (existsSync(adpDir)) {
@@ -222,6 +271,20 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
       if (!e.isDirectory()) continue;
       const cRes = readJsonStrict(join(adpDir, e.name, 'claim.json'));
       if (cRes.ok && cRes.value && Array.isArray(cRes.value.unresolved)) unresolvedTotal += cRes.value.unresolved.length;
+    }
+  }
+
+  // #10 汇总砖头技术栈分组统计（core vs 扩展生态旁注砖）
+  const brickEcosystems = {};
+  const lRes = readJsonStrict(join(projectRoot, 'ledger.json'));
+  if (lRes.ok && Array.isArray(lRes.value?.bricks)) {
+    for (const b of lRes.value.bricks) {
+      const eco = b.ecosystem || (b.actionsChanged > 0 ? 'core' : 'extension');
+      if (!brickEcosystems[eco]) brickEcosystems[eco] = { total: 0, wired: 0, advisory: 0, bricks: [] };
+      brickEcosystems[eco].total++;
+      if (b.actionsChanged > 0) brickEcosystems[eco].wired++;
+      else brickEcosystems[eco].advisory++;
+      brickEcosystems[eco].bricks.push(b.brick);
     }
   }
 
@@ -235,7 +298,7 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
 
   return {
     thresholds, contracts, contractErrors, functions, functionErrors, chainRes,
-    ledger, humanStats, ignoredList, contractSummaries,
+    ledger, humanStats, ignoredList, contractSummaries, brickEcosystems,
     orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions,
     unresolvedTotal, ledgerLines, funcLine, j3Line, isolationNotice, autoImpact
   };

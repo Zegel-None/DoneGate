@@ -73,6 +73,7 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
     return lr !== 0 ? lr : a.key.localeCompare(b.key);
   });
   const rawById = new Map((baseAtlas.rawContracts || []).map((c) => [c.id, c]));
+  const summaryById = new Map(((baseAtlas.status && baseAtlas.status.contractSummaries) || []).map((s) => [s.id, s]));
   const modsByDom = new Map();
   for (const m of (baseAtlas.modules || [])) {
     if (!modsByDom.has(m.domainId)) modsByDom.set(m.domainId, []);
@@ -128,6 +129,8 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
       title: dom.humanTitle || dom.key,
       tip: tipParts.join(' · '),
       contractIds,
+      primaryContractId: contractIds[0] || null,
+      lifecycleLabel: (contractIds[0] && summaryById.get(contractIds[0])?.lifecycleLabel) || (contractIds.length ? "草稿待冻结" : "未挂契约"),
       scopePaths: [...scopeSet],
       bypassed: Boolean(saved.bypassed || false),
       collapsed: Boolean(saved.collapsed || false),

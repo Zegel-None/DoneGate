@@ -1,4 +1,4 @@
-// 完结门开发流确定性运行引擎与挂机持久状态机（类 ComfyUI 缺依赖禁跑 + 断点续跑 + 三重熔断 + 人工闸门，<= 285 行）
+// 完结门开发流确定性运行引擎与挂机持久状态机（缺依赖禁跑 + Worktree 零污染沙箱 + 材料指纹免跑缓存 + 断点续跑 + 三重熔断）
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,6 +9,8 @@ import {
   AUTOPILOT_STATES, createInitialCheckpoint, isHumanGateNode,
   loadAutopilotCheckpoint, saveAutopilotCheckpoint, tripAutopilotBreaker
 } from './autopilot-state.mjs';
+import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot-worktree.mjs';
+import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-cache.mjs';
 
 const HUB_MAP = new Map();
 
@@ -18,14 +20,29 @@ export function getRunEventHub(projectRoot) {
     const listeners = new Set();
     const recentEvents = [];
     const activeCards = new Map();
+    const nodeTelemetry = new Map();
     const dockItems = [];
     HUB_MAP.set(key, {
-      listeners, recentEvents, activeCards, dockItems,
+      listeners, recentEvents, activeCards, nodeTelemetry, dockItems,
       emit(evt) {
         const record = { seq: recentEvents.length + 1, ts: Date.now(), ...evt };
         recentEvents.push(record);
         if (recentEvents.length > 200) recentEvents.shift();
         if (record.type === 'micro_card_ready' && record.card?.targetUri) activeCards.set(record.card.targetUri, record.card);
+        if (record.type === 'node_enter' && record.nodeId) {
+          nodeTelemetry.set(record.nodeId, { nodeId: record.nodeId, state: 'running', updatedAt: record.ts });
+        }
+        if (record.type === 'gate_settled' && record.nodeId) {
+          nodeTelemetry.set(record.nodeId, {
+            nodeId: record.nodeId,
+            state: record.cacheHit ? 'cached' : (record.exitCode === 0 ? 'pass' : (record.exitCode === 1 ? 'fail' : 'fault')),
+            exitCode: record.exitCode,
+            durationMs: record.durationMs || 0,
+            cacheHit: Boolean(record.cacheHit),
+            diagSummary: record.diagSummary || '',
+            updatedAt: record.ts
+          });
+        }
         if (record.type === 'dock_item' && record.item) {
           const idx = dockItems.findIndex((x) => x.id === record.item.id);
           if (idx >= 0) dockItems[idx] = record.item;
@@ -64,19 +81,28 @@ export function preflightWorkflowPack(pack, opts = {}) {
 }
 
 function collectGitDiffStats(cwd) {
-  const r = spawnSync('git', ['-C', cwd, 'diff', '--numstat'], { encoding: 'utf8' });
-  if (r.status !== 0) return { files: [], added: 0, removed: 0 };
-  const files = [];
+  const r = spawnSync('git', ['-C', cwd, 'diff', '--numstat', 'HEAD'], { encoding: 'utf8', env: cleanGitEnv() });
+  const rFallback = r.status === 0 ? r : spawnSync('git', ['-C', cwd, 'diff', '--numstat'], { encoding: 'utf8', env: cleanGitEnv() });
+  const files = new Set();
   let added = 0;
   let removed = 0;
-  for (const line of normalizeLf(r.stdout).split('\n').filter(Boolean)) {
-    const [a, d, f] = line.split('\t');
-    if (!f) continue;
-    files.push(normalizeSlashes(f.trim()));
-    if (/^\d+$/.test(a)) added += Number(a);
-    if (/^\d+$/.test(d)) removed += Number(d);
+  if (rFallback.status === 0) {
+    for (const line of normalizeLf(rFallback.stdout).split('\n').filter(Boolean)) {
+      const [a, d, f] = line.split('\t');
+      if (!f) continue;
+      files.add(normalizeSlashes(f.trim()));
+      if (/^\d+$/.test(a)) added += Number(a);
+      if (/^\d+$/.test(d)) removed += Number(d);
+    }
   }
-  return { files, added, removed };
+  const untracked = spawnSync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'], { encoding: 'utf8', env: cleanGitEnv() });
+  if (untracked.status === 0) {
+    for (const u of normalizeLf(untracked.stdout).split('\n').map((s) => s.trim()).filter(Boolean)) {
+      const norm = normalizeSlashes(u);
+      if (!norm.startsWith('.donegate/')) files.add(norm);
+    }
+  }
+  return { files: [...files], added, removed };
 }
 
 function checkWriteScopeMandate(files, allowedScopes) {
@@ -113,9 +139,8 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     ? (() => { const c = { ...existingCp, state: AUTOPILOT_STATES.RUNNING, breaker: null }; delete c.briefMarkdown; delete c.checkpointFile; return saveAutopilotCheckpoint(root, c); })()
     : createInitialCheckpoint(root, runId, pack, ticket);
 
-  const workCwd = ticket?.worktreePath ? resolve(root, ticket.worktreePath) : root;
   if (hooks.requireCleanGit === true) {
-    const st = spawnSync('git', ['-C', workCwd, 'status', '--porcelain'], { encoding: 'utf8' });
+    const st = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', env: cleanGitEnv() });
     if (st.status !== 0 || st.stdout.trim() !== '') {
       tripAutopilotBreaker(root, cp, { code: 'DIRTY_WORKTREE_FAULT', nodeId: cp.cursorNodeId, reason: '挂机前检测到脏工作区或未提交文件，已触发安全隔离熔断' });
       logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine } });
@@ -123,7 +148,25 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     }
   }
 
+  const wantSandbox = hooks.useWorktreeSandbox === true || Boolean(existingCp?.sandboxWorktree?.active);
+  const wtInfo = wantSandbox ? prepareAutopilotWorktree(root, runId) : { ok: false };
+  const workCwd = wtInfo.ok
+    ? wtInfo.worktreePath
+    : (ticket?.worktreePath ? resolve(root, ticket.worktreePath) : root);
+  if (wtInfo.ok) {
+    cp.sandboxWorktree = { active: true, status: 'running', worktreePath: wtInfo.relWorktreePath, branchName: wtInfo.branchName };
+    saveAutopilotCheckpoint(root, cp);
+  }
+
+  const abortWithBreaker = (exitCode, code, nodeId, reason) => {
+    cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, 'ABORTED', runId);
+    tripAutopilotBreaker(root, cp, { code, nodeId, reason });
+    logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine, targetNodeId: nodeId } });
+    return { ok: false, exitCode, code, state: cp.state, runId, breaker: cp.breaker, sandboxWorktree: cp.sandboxWorktree, checkpoint: cp };
+  };
+
   const wfEnv = buildWorkflowDepEnv(root, pack.id || 'default');
+  const useCache = hooks.useFingerprintCache === true;
   const nodesById = new Map(pack.nodes.map((n) => [n.id, n]));
   const links = Array.isArray(pack.links) ? pack.links : [];
   const incomingCount = new Map(pack.nodes.map((n) => [n.id, 0]));
@@ -139,6 +182,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   let lastDiag = '';
   let passedGates = Number(cp.passedGates || 0);
   let totalGates = Number(cp.totalGates || 0);
+  let cacheHits = 0;
   const maxEnvFaults = Number(hooks.maxConsecEnvFaults || 2);
   let stepGuard = 0;
 
@@ -156,6 +200,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
 
     if (isHumanGateNode(current) && !(cp.approvedGates && cp.approvedGates[current.id])) {
       cp.state = AUTOPILOT_STATES.SUSPENDED_HUMAN_GATE;
+      cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, 'SUSPENDED', runId);
       cp.pendingHumanGate = {
         nodeId: current.id,
         title: current.title || current.id,
@@ -165,7 +210,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       saveAutopilotCheckpoint(root, cp);
       logEvent({ type: 'human_gate_suspended', nodeId: current.id, title: current.title });
       logEvent({ type: 'dock_item', item: { id: runId, kind: 'question', tone: 'warn', title: cp.morningSummaryLine, targetNodeId: current.id, approveRunId: runId, approveNodeId: current.id } });
-      return { ok: true, suspended: true, exitCode: 0, state: cp.state, runId, pendingHumanGate: cp.pendingHumanGate, checkpoint: cp };
+      return { ok: true, suspended: true, exitCode: 0, state: cp.state, runId, pendingHumanGate: cp.pendingHumanGate, sandboxWorktree: cp.sandboxWorktree, checkpoint: cp };
     }
 
     const round = (loopCounters.get(current.id) || 0) + 1;
@@ -181,11 +226,8 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       if (matchedLink.maxLoops) {
         const used = (loopCounters.get(matchedLink.id) || 0) + 1;
         if (used > matchedLink.maxLoops) {
-          lastExitCode = 1;
           cp.loopCounts = Object.fromEntries(loopCounters);
-          tripAutopilotBreaker(root, cp, { code: 'MAX_LOOPS_EXCEEDED', nodeId: current.id, reason: `单判据连续回跳已达上限 (${matchedLink.maxLoops} 次) 仍未过关，自动熔断防空烧 Token` });
-          logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine, targetNodeId: current.id } });
-          return { ok: false, exitCode: 1, code: 'MAX_LOOPS_EXCEEDED', state: cp.state, runId, breaker: cp.breaker, checkpoint: cp };
+          return abortWithBreaker(1, 'MAX_LOOPS_EXCEEDED', current.id, `单判据连续回跳已达上限 (${matchedLink.maxLoops} 次) 仍未过关，自动熔断防空烧 Token`);
         }
         loopCounters.set(matchedLink.id, used);
         cp.loopCounts = Object.fromEntries(loopCounters);
@@ -201,34 +243,46 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       logEvent({ type: 'human_gate_passed', nodeId: current.id, approvedBy: cp.approvedGates[current.id]?.by || '业主' });
       lastExitCode = 0;
     } else if (isAgent && typeof hooks.runAgentStep === 'function') {
-      const res = await hooks.runAgentStep({ node: current, round, handoff: lastDiag.slice(0, 16384), ticket });
+      const t0 = Date.now();
+      const res = await hooks.runAgentStep({ node: current, round, handoff: lastDiag.slice(0, 16384), ticket, workCwd });
       lastDiag = String(res?.summary || '');
+      logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: Date.now() - t0, diagSummary: lastDiag.slice(0, 240) });
     } else if (!isAgent) {
       totalGates++;
       const args = Array.isArray(current.exec?.nodeArgs) ? current.exec.nodeArgs : [join(root, 'skill', 'check-module-integrity.mjs'), '--root', workCwd];
-      const r = spawnSync(process.execPath, args, { cwd: workCwd, env: wfEnv, encoding: 'utf8', timeout: 120000 });
-      lastExitCode = typeof r.status === 'number' ? r.status : 2;
-      lastDiag = normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim();
-      if (lastExitCode === 0) { passedGates++; cp.consecEnvFaults = 0; }
-      else if (lastExitCode >= 2) {
-        cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
-        if (cp.consecEnvFaults >= maxEnvFaults) {
-          cp.totalGates = totalGates; cp.passedGates = passedGates; cp.lastExitCode = lastExitCode;
-          tripAutopilotBreaker(root, cp, { code: 'ENV_OR_PROTOCOL_FAULT', nodeId: current.id, reason: `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${lastExitCode})，已自动熔断停机` });
-          logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine, targetNodeId: current.id } });
-          return { ok: false, exitCode: lastExitCode, code: 'ENV_OR_PROTOCOL_FAULT', state: cp.state, runId, breaker: cp.breaker, checkpoint: cp };
+      const cacheRes = (useCache && current.cacheable !== false) ? lookupFingerprintCache(root, workCwd, current, args) : { hit: false, fp: null };
+      if (cacheRes.hit) {
+        lastExitCode = 0;
+        lastDiag = cacheRes.entry.diagSummary || '命中材料指纹缓存免跑通过';
+        passedGates++;
+        cacheHits++;
+        cp.consecEnvFaults = 0;
+        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: 0, cacheHit: true, diagSummary: `⚡ 命中指纹缓存免跑 (${cacheRes.fp.watchedCount} 文件未变)` });
+      } else {
+        const t0 = Date.now();
+        const r = spawnSync(process.execPath, args, { cwd: workCwd, env: cleanGitEnv(wfEnv), encoding: 'utf8', timeout: 120000 });
+        const durationMs = Date.now() - t0;
+        lastExitCode = typeof r.status === 'number' ? r.status : 2;
+        lastDiag = normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+        if (lastExitCode === 0) {
+          passedGates++;
+          cp.consecEnvFaults = 0;
+          if (useCache && cacheRes.fp) recordFingerprintCache(root, cacheRes.fp, { durationMs, diagSummary: lastDiag });
+        } else if (lastExitCode >= 2) {
+          cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
+          if (cp.consecEnvFaults >= maxEnvFaults) {
+            cp.totalGates = totalGates; cp.passedGates = passedGates; cp.lastExitCode = lastExitCode;
+            return abortWithBreaker(lastExitCode, 'ENV_OR_PROTOCOL_FAULT', current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${lastExitCode})，已自动熔断停机`);
+          }
         }
+        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: lastExitCode, durationMs, cacheHit: false, diagSummary: lastDiag.slice(0, 240) });
       }
-      logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: lastExitCode, diagSummary: lastDiag.slice(0, 240) });
     }
 
     const stepDiff = collectGitDiffStats(workCwd);
     const stepScope = checkWriteScopeMandate(stepDiff.files, ticket?.mandate?.allowedWriteScopes || cp.ticket?.allowedWriteScopes);
     if (!stepScope.ok) {
-      lastExitCode = 2;
-      tripAutopilotBreaker(root, cp, { code: 'WRITE_SCOPE_VIOLATION', nodeId: current.id, reason: `越界修改了未授权范围文件：${stepScope.violated.join(', ')}` });
-      logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine, targetNodeId: current.id } });
-      return { ok: false, exitCode: 2, code: 'WRITE_SCOPE_VIOLATION', state: cp.state, runId, breaker: cp.breaker, checkpoint: cp };
+      return abortWithBreaker(2, 'WRITE_SCOPE_VIOLATION', current.id, `越界修改了未授权范围文件：${stepScope.violated.join(', ')}`);
     }
 
     const selfLoop = lastExitCode !== 0 && links.find((l) => l.fromNode === current.id && l.toNode === current.id && l.maxLoops);
@@ -244,9 +298,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       }
       cp.loopCounts = Object.fromEntries(loopCounters);
       cp.lastExitCode = lastExitCode; cp.passedGates = passedGates; cp.totalGates = totalGates;
-      tripAutopilotBreaker(root, cp, { code: 'MAX_LOOPS_EXCEEDED', nodeId: current.id, reason: `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机` });
-      logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine, targetNodeId: current.id } });
-      return { ok: false, exitCode: lastExitCode, code: 'MAX_LOOPS_EXCEEDED', state: cp.state, runId, breaker: cp.breaker, checkpoint: cp };
+      return abortWithBreaker(lastExitCode, 'MAX_LOOPS_EXCEEDED', current.id, `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机`);
     }
 
     cp.completedNodes.push({ nodeId: current.id, title: current.title || current.id, exitCode: lastExitCode, at: new Date().toISOString() });
@@ -263,6 +315,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   }
 
   const diff = collectGitDiffStats(workCwd);
+  cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, lastExitCode === 0 ? 'COMPLETED' : 'ABORTED', runId);
   cp.state = AUTOPILOT_STATES.COMPLETED;
   cp.cursorNodeId = null;
   saveAutopilotCheckpoint(root, cp);
@@ -276,5 +329,5 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   logEvent({ type: 'micro_card_ready', card });
   logEvent({ type: 'dock_item', item: { id: runId, kind: 'summary', tone: card.tone, title: `${card.headline} · ${card.gateBadge} · ${card.diffBadge}`, card } });
   const savedLog = existsSync(journalPath) ? readFileSync(journalPath, 'utf8').trim().split('\n').length : 0;
-  return { ok: lastExitCode === 0, exitCode: lastExitCode, state: cp.state, runId, card, checkpoint: cp, eventCount: savedLog };
+  return { ok: lastExitCode === 0, exitCode: lastExitCode, state: cp.state, runId, cacheHits, sandboxWorktree: cp.sandboxWorktree, card, checkpoint: cp, eventCount: savedLog };
 }

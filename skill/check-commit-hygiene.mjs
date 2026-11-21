@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// 提交前小模型防翻车硬门禁（融合 red-green-mode 逐 diff 反作弊 + vibeguard v2 行数上限 + AI-Slop/懒惰省略拦截 + C5 新文件认领与隔离箱）
+// 提交前小模型防翻车硬门禁（融合 red-green-mode 逐 diff 反作弊 + 智能有效代码行与 V8 函数粒度双层预算 + 反机械字母切片 + C5 认领与隔离箱）
 //
 // 为什么专为小模型设这一层：
 //   小模型一旦单轮改动过大或注意力衰减，高频出现五类翻车：
-//   ① 单轮狂改十几个文件或把单个文件堆过 700 行导致括号错位（C1 量级预算）；
+//   ① 单轮狂改十几个文件或把单个文件堆出超长有效代码行导致括号错位（C1 智能有效代码行预算：剥离注释与空行，600 软预警 / 850 硬顶）；
 //   ② 删断言、加 .skip / .only、写 expect(true).toBe(true) 或加 linter 豁免凑绿（C2 测试反作弊）；
 //   ③ 留下 TODO / Not implemented 空壳、空 catch {}、冲突标记，或最致命的「// ... existing code ...」静默删空真实逻辑（C3 反空壳与防省略截断）；
-//   ④ 乱丢 .bak / _v2 平行草稿，或同日新增无序号决策记录搞乱门 0.2 字典序（C4 命名卫生）；
+//   ④ 乱丢 .bak / _v2 平行草稿、机械按字母切碎 foo-a..z.mjs，或同日新增无序号决策记录搞乱门 0.2 字典序（C4 命名与语义内聚卫生）；
 //   ⑤ 在根目录私建 _gh-docs/ 等野文件夹，或新建未挂入任何契约 scope[] 的野生源码文件遗留成垃圾（C5 契约认领与 quarantine 隔离箱）。
 //
 // 用法：
@@ -27,7 +27,10 @@ import { readJsonStrict } from './io.mjs';
 export const DEFAULT_HYGIENE_BUDGETS = {
   maxCommitCodeLines: 300,
   maxCommitFiles: 8,
-  maxFileLines: 700
+  warnEffectiveFileLines: 600,
+  maxEffectiveFileLines: 850,
+  maxFileLines: 1200,
+  warnFunctionLines: 160
 };
 
 const CODE_EXT_RE = /\.(mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i;
@@ -35,6 +38,7 @@ const TEST_FILE_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|(
 const FIXTURE_OR_PILOT_RE = /(^|\/)(tests\/|skill\/pilot-|.*-fixtures\.mjs$|skill\/check-commit-hygiene\.mjs$|skill\/check-ai-habits\.mjs$|skill\/check-escapes\.mjs$|skill\/check-module-integrity\.mjs$|skill\/install-hooks\.mjs$)/i;
 const ROGUE_ROOT_DIR_RE = /^(?:_[A-Za-z0-9_-]+|tmp|temp|scratch|bak|backup|old|drafts?|playground)$/i;
 const ROOT_CONFIG_FILE_RE = /^[^/]+\.(?:config|rc)\.[a-z0-9]+$/i;
+const MECHANICAL_SHARD_RE = /(?:[-_](?:part|chunk|slice|shard)\d*|[-_][a-z])\.(?:mjs|cjs|js|ts|tsx|jsx|py)$/i;
 
 // C2：测试与门禁 diff 新增行禁止出现的作弊模式
 const TEST_CHEAT_PATTERNS = [
@@ -61,6 +65,55 @@ const CONFLICT_MARKER_RE = /^(?:<{7}\s|={7}\s*$|>{7}\s)/;
 const ASSERT_TOKEN_RE = /\b(?:expect\s*\(|assert(?:\.[a-zA-Z]+)?\s*\(|c\.check\s*\()/;
 const ALLOW_MARKER_RE = /(?:\/\/|#)\s*dg-allow\s*:(.*)$/;
 
+/**
+ * 统计有效代码行数（剥离空行、单行注释与块注释）与最大顶层函数有效行数（对齐 V8 TurboFan 函数级 JIT 内联边界）
+ */
+export function countEffectiveCodeLines(text) {
+  const rawLines = String(text || '').split(/\r?\n/);
+  let effectiveLines = 0;
+  let inBlockComment = false;
+  let curFnLines = -1;
+  let fnDepth = 0;
+  let maxFnLines = 0;
+
+  for (const raw of rawLines) {
+    let t = raw.trim();
+    if (!t) continue;
+    if (inBlockComment) {
+      const endIdx = t.indexOf('*/');
+      if (endIdx < 0) continue;
+      inBlockComment = false;
+      t = t.slice(endIdx + 2).trim();
+      if (!t) continue;
+    }
+    if (t.startsWith('//') || (t.startsWith('#') && !t.startsWith('#!'))) continue;
+    if (t.startsWith('/*')) {
+      const endIdx = t.indexOf('*/', 2);
+      if (endIdx < 0) { inBlockComment = true; continue; }
+      t = t.slice(endIdx + 2).trim();
+      if (!t) continue;
+    }
+    effectiveLines++;
+
+    if (curFnLines < 0 && /^(?:export\s+)?(?:async\s+)?function\s+[A-Za-z0-9_$]+\s*\(/.test(t)) {
+      curFnLines = 0;
+      fnDepth = 0;
+    }
+    if (curFnLines >= 0) {
+      curFnLines++;
+      for (let i = 0; i < t.length; i++) {
+        if (t[i] === '{') fnDepth++;
+        else if (t[i] === '}') fnDepth--;
+      }
+      if (fnDepth <= 0 && curFnLines > 1) {
+        if (curFnLines > maxFnLines) maxFnLines = curFnLines;
+        curFnLines = -1;
+      }
+    }
+  }
+  return { rawLines: rawLines.length, effectiveLines, maxFnLines };
+}
+
 function loadBudgets(projectRoot) {
   const p = join(projectRoot, 'thresholds.json');
   if (!existsSync(p)) return { ...DEFAULT_HYGIENE_BUDGETS, allowedRootDirs: [], bannedPatterns: [] };
@@ -69,7 +122,10 @@ function loadBudgets(projectRoot) {
   return {
     maxCommitCodeLines: Number(r.value.maxCommitCodeLines) || DEFAULT_HYGIENE_BUDGETS.maxCommitCodeLines,
     maxCommitFiles: Number(r.value.maxCommitFiles) || DEFAULT_HYGIENE_BUDGETS.maxCommitFiles,
+    warnEffectiveFileLines: Number(r.value.warnEffectiveFileLines) || DEFAULT_HYGIENE_BUDGETS.warnEffectiveFileLines,
+    maxEffectiveFileLines: Number(r.value.maxEffectiveFileLines) || DEFAULT_HYGIENE_BUDGETS.maxEffectiveFileLines,
     maxFileLines: Number(r.value.maxFileLines) || DEFAULT_HYGIENE_BUDGETS.maxFileLines,
+    warnFunctionLines: Number(r.value.warnFunctionLines) || DEFAULT_HYGIENE_BUDGETS.warnFunctionLines,
     allowedRootDirs: Array.isArray(r.value.allowedRootDirs) ? r.value.allowedRootDirs.map(String) : [],
     bannedPatterns: Array.isArray(r.value.bannedPatterns) ? r.value.bannedPatterns : []
   };
@@ -153,12 +209,13 @@ export function quarantineUnclaimedFiles(projectRoot) {
 }
 
 function parseUnifiedDiff(diffText) {
-  const files = [];
+  const all = [];
   let cur = null;
   for (const rawLine of diffText.split(/\r?\n/)) {
     if (rawLine.startsWith('diff --git ')) {
-      cur = { path: null, isNew: false, isDeleted: false, isRename: false, added: [], removed: [] };
-      files.push(cur);
+      const m = rawLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      cur = { path: m ? m[2].trim() : null, isNew: false, isDeleted: false, isRename: false, added: [], removed: [] };
+      all.push(cur);
       continue;
     }
     if (!cur) continue;
@@ -171,7 +228,10 @@ function parseUnifiedDiff(diffText) {
     if (rawLine.startsWith('+')) cur.added.push(rawLine.slice(1));
     else if (rawLine.startsWith('-')) cur.removed.push(rawLine.slice(1));
   }
-  return files.filter((f) => f.path && !f.isDeleted);
+  return {
+    activeFiles: all.filter((f) => f.path && !f.isDeleted),
+    deletedFiles: all.filter((f) => f.path && f.isDeleted)
+  };
 }
 
 function checkAllowComment(line) {
@@ -191,15 +251,16 @@ export function auditCommitDiff(projectRoot, opts = {}) {
     : ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--cached', '--unified=0'];
   const diffR = spawnSync('git', gitArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   if (diffR.status !== 0) {
-    return { exitCode: 3, fails: [`无法读取 git diff (${mode})：${diffR.stderr || ''}`], bypasses: [] };
+    return { exitCode: 3, fails: [`无法读取 git diff (${mode})：${diffR.stderr || ''}`], warnings: [], bypasses: [] };
   }
 
   const budgets = { ...loadBudgets(projectRoot), ...(opts.budgets || {}) };
   const allowedRootSet = new Set(budgets.allowedRootDirs || []);
   const activeScopes = loadActiveContractScopes(projectRoot);
-  const files = parseUnifiedDiff(diffR.stdout || '');
+  const { activeFiles: files, deletedFiles } = parseUnifiedDiff(diffR.stdout || '');
 
   const fails = [];
+  const warnings = [];
   const abuses = [];
   const bypasses = [];
 
@@ -219,8 +280,6 @@ export function auditCommitDiff(projectRoot, opts = {}) {
     }
   }
 
-
-  // C5a（工作区未跟踪根级野目录巡检，仅在 staged 模式且未显式关闭时执行）
   if (mode === 'staged' && opts.checkUntracked !== false) {
     for (const u of listUntrackedFiles(projectRoot)) {
       const seg0 = u.includes('/') ? u.split('/')[0] : null;
@@ -231,11 +290,13 @@ export function auditCommitDiff(projectRoot, opts = {}) {
   }
 
   if (files.length === 0 && fails.length === 0) {
-    return { exitCode: 0, fails: [], bypasses: [], stats: { codeFiles: 0, codeAdded: 0 } };
+    return { exitCode: 0, fails: [], warnings: [], bypasses: [], stats: { codeFiles: 0, codeAdded: 0 } };
   }
 
   let codeFilesCount = 0;
   let codeAddedLines = 0;
+  const deletedCodeFiles = deletedFiles.filter((f) => CODE_EXT_RE.test(f.path.replace(/\\/g, '/')));
+  const deletedCodeLines = deletedCodeFiles.reduce((s, f) => s + f.removed.length, 0);
 
   const envBudgetBypass = typeof opts.budgetBypassReason === 'string'
     ? opts.budgetBypassReason
@@ -255,7 +316,6 @@ export function auditCommitDiff(projectRoot, opts = {}) {
     const p = f.path.replace(/\\/g, '/');
     const isFixture = FIXTURE_OR_PILOT_RE.test(p);
 
-    // C3c：全类型暂存文件合并冲突残留拦截
     if (!isFixture) {
       for (const line of f.added) {
         if (CONFLICT_MARKER_RE.test(line)) {
@@ -265,15 +325,16 @@ export function auditCommitDiff(projectRoot, opts = {}) {
       }
     }
 
-    // C4a：拦截临时备份与多版本后缀平行草稿
     if (/\.(bak|orig|tmp|swp)$/i.test(p) || /(?:_copy|-copy|_backup)\./i.test(p)) {
       fails.push(`C4 禁止提交临时或备份文件：${p}`);
     }
     if (!p.startsWith('归档/') && !p.startsWith('证据/') && /(?:[-_]v\d+|[-_]final|[-_]new)\.(?:md|mjs|js|ts|json)$/i.test(p) && f.isNew) {
       fails.push(`C4 禁止新建带版本号后缀的平行草稿文件（请直接迭代主文件或用 git mv 归档旧版）：${p}`);
     }
+    if (f.isNew && !isFixture && MECHANICAL_SHARD_RE.test(p)) {
+      fails.push(`C4 禁止机械按字母/序号切碎代码文件 (${p})：为规避行数限制强拆 foo-a..z 会拖慢 ESM 模块解析并破坏可读性，请按职责语义命名模块`);
+    }
 
-    // C4b：同日决策记录序号检查
     if (f.isNew && /^decisions\/[^/]+\.md$/.test(p)) {
       const base = p.split('/')[1];
       const dateMatch = base.match(/^(\d{4}-\d{2}-\d{2})-(.+)\.md$/);
@@ -292,7 +353,6 @@ export function auditCommitDiff(projectRoot, opts = {}) {
       }
     }
 
-    // C5a：禁止暂存根级野目录文件（_gh-docs / _patches / tmp / scratch 等）
     const seg0 = p.includes('/') ? p.split('/')[0] : null;
     if ((f.isNew || f.isRename) && seg0 && ROGUE_ROOT_DIR_RE.test(seg0) && !allowedRootSet.has(seg0)) {
       fails.push(`C5 禁止向仓库根级非标临时目录提交文件：${p}（正式文档请归入 docs/，一次性草稿请放入 .donegate/scratch/）`);
@@ -304,20 +364,23 @@ export function auditCommitDiff(projectRoot, opts = {}) {
 
     const isTestFile = TEST_FILE_RE.test(p);
 
-    // C5b：有活跃契约 scope 的项目，新建业务代码文件必须被至少一个契约认领
     if (f.isNew && activeScopes.length > 0 && !isTestFile && !ROOT_CONFIG_FILE_RE.test(p) && !budgetBypassed) {
-      // 同时检查本次暂存区是否刚更新了某份 contract.json 把它认领进去（loadActiveContractScopes 已读盘上最新值）
       if (!isClaimedByScopes(p, activeScopes)) {
         fails.push(`C5 新增代码文件未被任何活跃契约 scope[] 认领：${p}（正式模块请先写入 contracts/<id>/contract.json 的 scope；临时脚本请放 .donegate/scratch/ 或跑 --quarantine）`);
       }
     }
 
-    // C1c：单文件总行数上限
+    // C1c：智能有效代码行与 V8 单函数粒度检查（剥离注释与空行，不惩罚充分注释）
     const absFile = resolve(projectRoot, p);
-    if (existsSync(absFile) && !budgetBypassed) {
-      const curLines = readFileSync(absFile, 'utf8').split(/\r?\n/).length;
-      if (curLines > budgets.maxFileLines && (f.isNew || f.added.length > f.removed.length)) {
-        fails.push(`C1 单文件行数超限：${p} 当前 ${curLines} 行 > 上限 ${budgets.maxFileLines} 行（请先拆分子模块，勿继续往大文件塞代码）`);
+    if (existsSync(absFile) && !budgetBypassed && (f.isNew || f.added.length > f.removed.length)) {
+      const m = countEffectiveCodeLines(readFileSync(absFile, 'utf8'));
+      if (m.effectiveLines > budgets.maxEffectiveFileLines || m.rawLines > budgets.maxFileLines) {
+        fails.push(`C1 单文件规模超限：${p} 当前有效代码 ${m.effectiveLines} 行（总 ${m.rawLines} 行）> 上限 ${budgets.maxEffectiveFileLines} 有效行 / ${budgets.maxFileLines} 总行（请按职责语义拆分子模块，禁止机械按字母切片）`);
+      } else if (m.effectiveLines > budgets.warnEffectiveFileLines) {
+        warnings.push(`C1 软预警：${p} 有效代码 ${m.effectiveLines} 行（已超 ${budgets.warnEffectiveFileLines} 舒适区，后续新增职责建议按业务域分模块）`);
+      }
+      if (m.maxFnLines > budgets.warnFunctionLines) {
+        warnings.push(`V8 内联预警：${p} 存在 ${m.maxFnLines} 行的超长单函数（> ${budgets.warnFunctionLines} 行会阻碍 V8 TurboFan 函数内联优化，建议提取语义子函数）`);
       }
     }
 
@@ -348,8 +411,7 @@ export function auditCommitDiff(projectRoot, opts = {}) {
       }
     }
 
-
-    // C6：防绕过公共库手搓硬门禁（内置适配器/哈希防线 + 用户项目 thresholds.json bannedPatterns）
+    // C6：防绕过公共库手搓硬门禁
     if (!isFixture) {
       const isConcreteAdapter = /^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(p);
       if (isConcreteAdapter && existsSync(absFile)) {
@@ -401,7 +463,10 @@ export function auditCommitDiff(projectRoot, opts = {}) {
     }
   }
 
-  if (!budgetBypassed) {
+  // 若本次提交删除了 >= 2 个旧碎片文件且净新增代码 <= maxCommitCodeLines，视为纯模块归并重构，不误伤
+  const isPureConsolidation = deletedCodeFiles.length >= 2 && (codeAddedLines - deletedCodeLines) <= budgets.maxCommitCodeLines;
+
+  if (!budgetBypassed && !isPureConsolidation) {
     if (codeAddedLines > budgets.maxCommitCodeLines) {
       fails.push(`C1 单次提交代码加行数超预算：本次新增 ${codeAddedLines} 行代码 > 上限 ${budgets.maxCommitCodeLines} 行（请按小步快跑拆分为多次可验证提交）`);
     }
@@ -411,7 +476,7 @@ export function auditCommitDiff(projectRoot, opts = {}) {
   }
 
   if (abuses.length > 0) {
-    return { exitCode: 2, fails: [...abuses, ...fails], bypasses, stats: { codeFiles: codeFilesCount, codeAdded: codeAddedLines } };
+    return { exitCode: 2, fails: [...abuses, ...fails], warnings, bypasses, stats: { codeFiles: codeFilesCount, codeAdded: codeAddedLines } };
   }
 
   if (fails.length === 0 && bypasses.length > 0 && opts.recordBypasses !== false) {
@@ -426,6 +491,7 @@ export function auditCommitDiff(projectRoot, opts = {}) {
   return {
     exitCode: fails.length > 0 ? 1 : 0,
     fails,
+    warnings,
     bypasses,
     stats: { codeFiles: codeFilesCount, codeAdded: codeAddedLines }
   };
@@ -462,10 +528,14 @@ function runRedSelfTest() {
 
   try {
     const dGood = makeRepo('good', true);
-    writeFileSync(join(dGood, 'src/app.mjs'), 'export const run = (x) => x + 1;\nexport const twice = (x) => x * 2;\n');
+    const richComments = Array.from({ length: 520 }, (_, i) => `// 详尽设计注释第 ${i} 行（不计入有效代码行上限）`).join('\n');
+    writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\n');
+    spawnSync('git', ['-C', dGood, 'add', '.']);
+    spawnSync('git', ['-C', dGood, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed-doc']);
+    writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\nexport const nextApi = (x) => x + 3;\n');
     spawnSync('git', ['-C', dGood, 'add', '.']);
     const rGood = auditCommitDiff(dGood, { recordBypasses: false, budgetBypassReason: '' });
-    t('好样本：小步干净提交（契约 scope 内 +1 行代码）→ 退 0', rGood.exitCode === 0, rGood.fails.join('；'));
+    t('好样本：有效代码行智能剥离 520 行注释（总 523 行但仅 2 有效行）→ 退 0 不误伤', rGood.exitCode === 0, rGood.fails.join('；'));
 
     const dBig = makeRepo('big');
     writeFileSync(join(dBig, 'src/huge.mjs'), Array.from({ length: 320 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
@@ -503,10 +573,11 @@ function runRedSelfTest() {
     const dMess = makeRepo('mess');
     writeFileSync(join(dMess, 'decisions/2026-11-21-无序号补记.md'), '# bad order\n');
     writeFileSync(join(dMess, 'src/plan_v2.md'), '# draft\n');
+    writeFileSync(join(dMess, 'src/logic-a.mjs'), 'export const sliceA = 1;\n');
     spawnSync('git', ['-C', dMess, 'add', '.']);
     const rMess = auditCommitDiff(dMess, { budgetBypassReason: '' });
-    t('必红样本 6 (C4)：同日无序号决策记录与 _v2 平行草稿 → 必红退 1',
-      rMess.exitCode === 1 && rMess.fails.some((f) => f.includes('必须加序号前缀')) && rMess.fails.some((f) => f.includes('版本号后缀')));
+    t('必红样本 6 (C4)：同日无序号决策记录、_v2 平行草稿与 logic-a.mjs 机械字母切片 → 必红退 1',
+      rMess.exitCode === 1 && rMess.fails.some((f) => f.includes('必须加序号前缀')) && rMess.fails.some((f) => f.includes('版本号后缀')) && rMess.fails.some((f) => f.includes('禁止机械按字母')));
 
     const dUnclaimed = makeRepo('unclaimed', true);
     mkdirSync(join(dUnclaimed, '_gh-docs'), { recursive: true });
@@ -518,7 +589,6 @@ function runRedSelfTest() {
     t('必红样本 7 (C5)：根级野目录 _gh-docs 与未被契约 scope 认领的新源码 → 必红退 1',
       rUnclaimed.exitCode === 1 && rUnclaimed.fails.some((f) => f.includes('野目录')) && rUnclaimed.fails.some((f) => f.includes('未被任何活跃契约')));
 
-    // 验证 --quarantine 隔离箱（移走 _gh-docs/draft.md 并留 manifest.jsonl，绝不丢文件）与 --clean-scratch
     const qRes = quarantineUnclaimedFiles(dUnclaimed);
     mkdirSync(join(dUnclaimed, '.donegate/scratch'), { recursive: true });
     writeFileSync(join(dUnclaimed, '.donegate/scratch/probe.mjs'), 'console.log(1);\n');
@@ -598,6 +668,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const range = rangeIdx >= 0 && argv[rangeIdx + 1] ? argv[rangeIdx + 1] : null;
   if (argv.includes('--staged') || range) {
     const res = auditCommitDiff(root, { range });
+    if (res.warnings && res.warnings.length > 0) {
+      for (const w of res.warnings) console.warn('  ⚠ ' + w);
+    }
     if (res.exitCode === 0) {
       const bpNote = res.bypasses.length > 0 ? `（含 ${res.bypasses.length} 处已留痕 dg-allow 豁免）` : '';
       console.log(`✓ 提交前门禁通过：改动代码文件 ${res.stats.codeFiles} 个，新增代码 ${res.stats.codeAdded} 行${bpNote}`);
@@ -605,7 +678,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     console.error('✗ 提交已被 DoneGate 提交前门禁拦截（防止超量改动、懒惰省略删码、改测试凑绿或乱丢未认领文件）：');
     for (const f of res.fails) console.error('  - ' + f);
-    console.error('修复建议：拆小单次提交（≤300 行代码 / ≤8 个文件），补齐真实实现与契约 scope 登记，或用 --quarantine 隔离野文件后再 git commit。');
+    console.error('修复建议：拆小单次提交（≤300 行净新增代码 / ≤8 个文件），按语义职责建模块（勿按字母切碎），或用 --quarantine 隔离野文件后再 git commit。');
     process.exit(res.exitCode);
   }
 

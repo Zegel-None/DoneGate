@@ -1,7 +1,8 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 255 行）
+// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包打包/裁决、工作流导入导出与实时节点遥测）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
+import { cmdVerifyApply, cmdVerifyPack } from '../core/cmd-handover-verify.mjs';
 import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
 import { resolveSafeWorkspaceFolders } from '../atlas/serve-atlas.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-protocol.mjs';
@@ -19,14 +20,14 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function readJsonBody(req, maxBytes = 1024 * 1024) {
+function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   return new Promise((resolveBody, rejectBody) => {
     const chunks = [];
     let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > maxBytes) {
-        rejectBody(new Error('请求体超出 1MB 限制'));
+        rejectBody(new Error('请求体超出 2MB 限制'));
         req.destroy();
         return;
       }
@@ -54,7 +55,14 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive'
       });
-      res.write(`data: ${JSON.stringify({ type: 'connected', ts: Date.now(), dockItems: hub.dockItems, cards: [...hub.activeCards.values()], autopilot: loadAutopilotCheckpoint(root) })}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        type: 'connected',
+        ts: Date.now(),
+        dockItems: hub.dockItems,
+        cards: [...hub.activeCards.values()],
+        nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
+        autopilot: loadAutopilotCheckpoint(root)
+      })}\n\n`);
       const onEvt = (evt) => {
         try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch (err) { void err; }
       };
@@ -70,6 +78,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         atlas: buildDashboardPayload(root),
         state: readSavedWorkbenchState(root),
         autopilot: loadAutopilotCheckpoint(root),
+        nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
         dockItems: hub.dockItems,
         cards: [...hub.activeCards.values()]
       });
@@ -93,7 +102,9 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       };
       const out = await executeDeterministicWorkflowRun(root, ticket, pack, {
         resumeRunId: body.resumeRunId || null,
-        requireCleanGit: body.requireCleanGit === true
+        requireCleanGit: body.requireCleanGit === true,
+        useWorktreeSandbox: body.useWorktreeSandbox !== false,
+        useFingerprintCache: body.useFingerprintCache !== false
       });
       sendJson(res, 200, out);
       return true;
@@ -109,11 +120,144 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       });
       if (!app.ok) { sendJson(res, 400, app); return true; }
       if (body.pack && Array.isArray(body.pack.nodes)) {
-        const resumed = await executeDeterministicWorkflowRun(root, app.checkpoint.ticket || {}, body.pack, { resumeRunId: app.runId });
+        const resumed = await executeDeterministicWorkflowRun(root, app.checkpoint.ticket || {}, body.pack, {
+          resumeRunId: app.runId,
+          useFingerprintCache: body.useFingerprintCache !== false
+        });
         sendJson(res, 200, resumed);
         return true;
       }
       sendJson(res, 200, app);
+      return true;
+    }
+
+    // #09 门 5 盲判复核包工作台一键生成与裁决回填接口
+    if (cleanPath === '/judge/pack' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const cid = String(body.contractId || '').trim();
+      const resPack = cmdVerifyPack(root, { id: cid, base: body.base, head: body.head, out: body.out });
+      const relPackDir = resPack.packDir ? normalizeSlashes(relative(root, resPack.packDir)) : null;
+      const judgePrompt = relPackDir ? `/donegate-judge 请对盲判复核包 ${relPackDir} 执行 V1–V5 独立盲审并给出 pass/fail/unknown 裁决` : '';
+      hub.emit({
+        type: 'dock_item',
+        item: {
+          id: `judge-${Date.now()}`,
+          kind: resPack.exitCode === 0 ? 'summary' : 'question',
+          tone: resPack.exitCode === 0 ? 'ok' : 'warn',
+          title: resPack.exitCode === 0
+            ? `⚖️ 契约「${cid}」门 5 盲判包已生成：${relPackDir}`
+            : `⚖️ 契约「${cid}」盲判打包未就绪（exit ${resPack.exitCode}）：${String(resPack.stderr || '').split('\n')[0]}`
+        }
+      });
+      sendJson(res, 200, {
+        ok: resPack.exitCode === 0,
+        exitCode: resPack.exitCode,
+        contractId: cid,
+        packDir: resPack.packDir || null,
+        relPackDir,
+        packageHash: resPack.packageHash || null,
+        judgePrompt,
+        stdout: resPack.stdout || '',
+        stderr: resPack.stderr || ''
+      });
+      return true;
+    }
+
+    if (cleanPath === '/judge/apply' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      let vPath = body.verdictPath || null;
+      if (!vPath && body.verdict && typeof body.verdict === 'object') {
+        const vDir = join(root, '.donegate', 'verify');
+        mkdirSync(vDir, { recursive: true });
+        vPath = join(vDir, `verdict-${Date.now()}.json`);
+        writeFileSync(vPath, JSON.stringify(body.verdict, null, 2) + '\n', 'utf8');
+      }
+      const resApply = cmdVerifyApply(root, { packDir: body.packDir, verdict: vPath });
+      hub.emit({
+        type: 'dock_item',
+        item: {
+          id: `japply-${Date.now()}`,
+          kind: resApply.exitCode === 0 ? 'summary' : 'blocked',
+          tone: resApply.exitCode === 0 ? 'ok' : 'bad',
+          title: resApply.exitCode === 0 ? '⚖️ 门 5 盲判裁决已验真并写入哈希链' : `⚖️ 门 5 盲判裁决未通过（exit ${resApply.exitCode}）`
+        }
+      });
+      sendJson(res, 200, {
+        ok: resApply.exitCode === 0,
+        exitCode: resApply.exitCode,
+        stdout: resApply.stdout || '',
+        stderr: resApply.stderr || ''
+      });
+      return true;
+    }
+
+    // #05 类 ComfyUI 开发流 .workflow.json 导入落盘与持久化接口
+    if (cleanPath === '/workflow-pack/save' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const pack = body.pack;
+      if (!pack || !pack.id || !Array.isArray(pack.nodes)) {
+        sendJson(res, 400, { ok: false, error: '无效的 .workflow.json：缺少 id 或 nodes 数组' });
+        return true;
+      }
+      const safeId = String(pack.id).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'custom-workflow';
+      const normalized = {
+        schemaVersion: pack.schemaVersion || '1.0',
+        id: safeId,
+        name: pack.name || safeId,
+        group: pack.group || '项目声明式开发流',
+        tip: pack.tip || '工作台导入/保存的声明式开发流',
+        deps: Array.isArray(pack.deps) ? pack.deps : [],
+        nodes: pack.nodes,
+        links: Array.isArray(pack.links) ? pack.links : [],
+        groups: Array.isArray(pack.groups) ? pack.groups : []
+      };
+      const st = readSavedWorkbenchState(root);
+      st.customPacks = { ...(st.customPacks || {}), [safeId]: normalized };
+      st.updatedAt = new Date().toISOString();
+      mkdirSync(join(root, '.donegate'), { recursive: true });
+      writeFileSync(join(root, '.donegate', 'workbench-state.json'), JSON.stringify(st, null, 2) + '\n', 'utf8');
+      let wfRelPath = null;
+      if (body.writeToWorkflowsDir !== false) {
+        mkdirSync(join(root, 'workflows'), { recursive: true });
+        wfRelPath = `workflows/${safeId}.workflow.json`;
+        writeFileSync(join(root, wfRelPath), JSON.stringify(normalized, null, 2) + '\n', 'utf8');
+      }
+      hub.emit({ type: 'workflow_pack_saved', packId: safeId, filePath: wfRelPath });
+      sendJson(res, 200, { ok: true, packId: safeId, pack: normalized, filePath: wfRelPath });
+      return true;
+    }
+
+    // #04 卡片点击直看适配器 observation.json / claim.json 或最近节点遥测输出
+    if (cleanPath === '/observation-preview' && req.method === 'GET') {
+      const u = new URL(req.url || '/', 'http://127.0.0.1');
+      const tool = String(u.searchParams.get('tool') || '').replace(/[^a-zA-Z0-9._-]/g, '');
+      const nodeId = String(u.searchParams.get('nodeId') || '');
+      const tel = nodeId ? (hub.nodeTelemetry.get(nodeId) || null) : null;
+      const candidates = tool
+        ? [`.donegate/adapters/${tool}/observation.json`, `.donegate/adapters/${tool}/claim.json`, `bricks/${tool}/capabilities.json`]
+        : [];
+      for (const rel of candidates) {
+        const abs = join(root, rel);
+        if (existsSync(abs)) {
+          sendJson(res, 200, { ok: true, sourcePath: rel, content: readFileSync(abs, 'utf8').slice(0, 65536), telemetry: tel });
+          return true;
+        }
+      }
+      if (tel) {
+        sendJson(res, 200, {
+          ok: true,
+          sourcePath: `.donegate/runs/telemetry/${nodeId}.json`,
+          content: JSON.stringify(tel, null, 2),
+          telemetry: tel
+        });
+        return true;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        sourcePath: tool ? `.donegate/adapters/${tool}/observation.json` : '尚未生成运行观测',
+        content: '// 该积木当前尚无本地运行观测产物；点击顶栏「▶ 运行检查」或「🌙 挂机」后即可在此实时检视结构化观测 JSON 与门禁输出。',
+        telemetry: null
+      });
       return true;
     }
 
@@ -188,7 +332,9 @@ export function createDoneGateWebRouteHandler(projectRoot) {
           headline: body.headline || '',
           mandate: { allowedWriteScopes: targets.flatMap((t) => t.scopes || []) }
         };
-        const out = await executeDeterministicWorkflowRun(root, ticket, body.pack);
+        const out = await executeDeterministicWorkflowRun(root, ticket, body.pack, {
+          useFingerprintCache: body.useFingerprintCache !== false
+        });
         sendJson(res, 200, out);
         return true;
       }

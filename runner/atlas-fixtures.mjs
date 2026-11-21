@@ -183,6 +183,10 @@ try {
     html.includes('openWorkflowPackContextMenu') &&
     html.includes('一键补齐此开发流依赖') &&
     html.includes('triggerProvisionWorkflowDeps') &&
+    html.includes('dg-card-telemetry') &&
+    html.includes('exportActiveWorkflowJson') &&
+    html.includes('importWorkflowJsonText') &&
+    html.includes('triggerJudgePackForCard') &&
     html.includes('在文件夹中打开') &&
     html.includes('data-sel-text') &&
     existsSync(join(proj, '.donegate/atlas.json')) &&
@@ -253,6 +257,31 @@ try {
         provJson.depsDir === 'workflows/.deps/pack-stage-01' &&
         provJson.missingCount === 1 &&
         existsSync(join(proj, 'workflows/.deps/pack-stage-01/PROVISION-PLAN.json'))
+      ));
+
+    const wfSaveResp = await fetch(`${srvInfo.url}donegate/api/workflow-pack/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pack: { id: "shared-comfy-flow", name: "跨团队共享开发流", group: "项目声明式开发流", nodes: [{ id: "n1", title: "静态体检", tplId: "tpl-adp-biome" }], links: [] }
+      })
+    });
+    const wfSaveJson = await wfSaveResp.json();
+    mkdirSync(join(proj, ".donegate/adapters/biome"), { recursive: true });
+    writeFileSync(join(proj, ".donegate/adapters/biome/observation.json"), JSON.stringify({ errors: 0, checkedFiles: 12 }, null, 2));
+    const obsPrevResp = await fetch(`${srvInfo.url}donegate/api/observation-preview?tool=biome&nodeId=n1`);
+    const obsPrevJson = await obsPrevResp.json();
+    const judgePreResp = await fetch(`${srvInfo.url}donegate/api/judge/pack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contractId: "non-existent" })
+    });
+    const judgePreJson = await judgePreResp.json();
+    c.check("开发流 .workflow.json 导入落盘、积木 observation.json 直看与门 5 盲判打包接口全链路联通",
+      Boolean(
+        wfSaveResp.ok && wfSaveJson.ok && existsSync(join(proj, "workflows/shared-comfy-flow.workflow.json")) &&
+        obsPrevResp.ok && obsPrevJson.ok && obsPrevJson.content.includes('"checkedFiles": 12') &&
+        judgePreResp.ok && judgePreJson.exitCode === 3
       ));
 
     const folderResp = await fetch(`${srvInfo.url}api/workbench/open-folder`, {

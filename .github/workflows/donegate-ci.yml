@@ -1,0 +1,51 @@
+name: DoneGate Cross-Platform Gatekeeper
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Gatekeeper (${{ matrix.os }} / Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install optional devDependencies (Vitest)
+        run: npm install --no-audit --no-fund
+
+      - name: Configure local Git identity for E2E sandbox fixtures
+        run: |
+          git config --global user.name "DoneGate CI"
+          git config --global user.email "ci@donegate.local"
+
+      - name: Run DoneGate Full Self-Check Suites
+        run: node skill/check-escapes.mjs --self-check
+
+      - name: Run Zero-Dependency Verdict Core Self-Test
+        run: node runner/self-test.mjs
+
+      - name: Run DSH Web, Autopilot & Windows Path E2E Fixtures
+        run: node runner/dsh-fixtures.mjs
+
+      - name: Run ATLAS Infinite Canvas Workbench E2E Fixtures
+        run: node runner/atlas-fixtures.mjs
+
+      - name: Run Vitest Unit Test Suite
+        run: npx vitest run

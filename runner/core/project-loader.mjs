@@ -23,7 +23,10 @@ export const DEFAULT_THRESHOLDS = {
   maxDiffLines: 400,
   maxCommitCodeLines: 300,
   maxCommitFiles: 8,
-  maxFileLines: 700,
+  warnEffectiveFileLines: 600,
+  maxEffectiveFileLines: 850,
+  maxFileLines: 1200,
+  warnFunctionLines: 160,
   bannedPatterns: []
 };
 

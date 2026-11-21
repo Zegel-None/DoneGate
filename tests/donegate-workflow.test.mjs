@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dispatchCommand } from '../runner/donegate.mjs';
+import { computeProjectStatus } from '../runner/core/state-calc.mjs';
+import { countEffectiveCodeLines } from '../skill/check-commit-hygiene.mjs';
 import { buildPreCommitScript, resolveSkillPrefix } from '../skill/install-hooks.mjs';
 
 describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与跨盘符钩子', () => {
@@ -185,6 +187,71 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(ho.stdout).toContain('1. 项目与红线：本项目核心目标是');
       expect(ho.stdout).toContain('3. 本轮唯一目标：请接手契约');
       expect(ho.stdout).toContain('.donegate/dashboard.html');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("智能有效代码行剥离注释空行，且契约显式生命周期状态机 (DRAFT -> FROZEN -> IMPLEMENTED) 精确推演", () => {
+    const sample = [
+      "// 顶部模块说明注释",
+      "/* 多行块注释第一行",
+      " * 多行块注释第二行 */",
+      "",
+      "export function calcTotal(items) {",
+      "  // 内部行注释不计入有效代码上限",
+      "  return items.reduce((s, x) => s + x, 0);",
+      "}"
+    ].join("\n");
+    const m = countEffectiveCodeLines(sample);
+    expect(m.rawLines).toBe(8);
+    expect(m.effectiveLines).toBe(3);
+    expect(m.maxFnLines).toBe(3);
+
+    const dir = mkdtempSync(join(tmpdir(), "dg-lifecycle-"));
+    try {
+      dispatchCommand(["init", "."], dir);
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src/core.mjs"), "export const ok = () => true;\n");
+      dispatchCommand(["contract", "new", "auth-flow", "--title", "认证闭环", "--scope", "src/"], dir);
+
+      let st = computeProjectStatus(dir);
+      let cs = st.contractSummaries.find((x) => x.id === "auth-flow");
+      expect(cs.lifecycleState).toBe("DRAFT");
+      expect(cs.nextCommand).toContain("contract freeze auth-flow");
+
+      const cPath = join(dir, "contracts/auth-flow/contract.json");
+      const cDoc = JSON.parse(readFileSync(cPath, "utf8"));
+      cDoc.obligations = [{
+        id: "ob-pass",
+        kind: "command",
+        command: "node -e \"process.exit(0)\"",
+        expect: { exitCode: 0 },
+        scopeAck: { by: "业主", at: "2026-11-21T00:00:00Z" }
+      }];
+      writeFileSync(cPath, JSON.stringify(cDoc, null, 2));
+      spawnSync("git", ["-C", dir, "init", "-q"]);
+      spawnSync("git", ["-C", dir, "config", "user.email", "t@local"]);
+      spawnSync("git", ["-C", dir, "config", "user.name", "T"]);
+      spawnSync("git", ["-C", dir, "add", "."]);
+      spawnSync("git", ["-C", dir, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]);
+
+      const frz = dispatchCommand(["contract", "freeze", "auth-flow", "--by", "业主"], dir);
+      expect(frz.exitCode).toBe(0);
+      spawnSync("git", ["-C", dir, "add", "."]);
+      spawnSync("git", ["-C", dir, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "freeze"]);
+
+      st = computeProjectStatus(dir);
+      cs = st.contractSummaries.find((x) => x.id === "auth-flow");
+      expect(cs.lifecycleState).toBe("FROZEN");
+      expect(cs.nextCommand).toContain("check auth-flow");
+
+      const chk = dispatchCommand(["check", "auth-flow", "--skip-gates"], dir);
+      expect(chk.exitCode).toBe(0);
+      st = computeProjectStatus(dir);
+      cs = st.contractSummaries.find((x) => x.id === "auth-flow");
+      expect(cs.lifecycleState).toBe("IMPLEMENTED");
+      expect(cs.nextCommand).toContain("teeth auth-flow ob-pass");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

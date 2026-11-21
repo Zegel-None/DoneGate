@@ -2,8 +2,12 @@
 // DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八，多一条都不加）
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
+import Module from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+try { Module.enableCompileCache?.(); } catch (err) { void err; }
+
 import { cmdInit, cmdContractNew, cmdContractFreeze, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
 import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply } from './core/commands-b.mjs';
 

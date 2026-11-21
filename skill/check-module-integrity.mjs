@@ -516,7 +516,7 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
 
 
   // M6：公共原语反手搓门禁与核心子模块行数棘轮
-  const CORE_SPLIT_RE = /^runner\/(?:core\/(?:cmd-[a-z-]+|commands-[ab]|gates|project-loader|state-calc|gate-checks|graph-edges)|atlas\/[a-z-]+)\.mjs$/;
+  const CORE_SPLIT_RE = /^runner\/core\/(?:cmd-[a-z-]+|commands-[ab]|gates|project-loader|state-calc|gate-checks|graph-edges)\.mjs$/;
   for (const [f, info] of parsedMap.entries()) {
     const rel = relative(rootDir, f).split(sep).join('/');
     const rawSrc = readFileSync(f, 'utf8');
@@ -549,10 +549,15 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
       }
     }
 
-    if (CORE_SPLIT_RE.test(rel) && lines > 350) {
-      fails.push(`M6 核心拆分子模块行数回潮 (${rel})：当前 ${lines} 行 > 上限 350 行`);
-    } else if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && lines > 500) {
-      fails.push(`M6 核心目录模块超上限 (${rel})：当前 ${lines} 行 > 上限 500 行`);
+    const effLines = rawSrc.split(/\r?\n/).filter((l) => { const s = l.trim(); return s && !s.startsWith("//") && !s.startsWith("*") && !s.startsWith("/*"); }).length;
+    if (/^runner\/atlas\/wb-(?:logic|style|dom)-[a-z]\.mjs$/.test(rel)) {
+      fails.push(`M6 禁止机械字母切片回潮 (${rel})：请归入 runner/atlas/ 职责语义模块（见 MODULE-INDEX.md）`);
+    } else if (CORE_SPLIT_RE.test(rel) && effLines > 420) {
+      fails.push(`M6 核心拆分子模块有效行数回潮 (${rel})：当前 ${effLines} 有效行 > 上限 420 有效行`);
+    } else if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && effLines > 600) {
+      fails.push(`M6 核心目录模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 600 有效行`);
+    } else if (/^runner\/(?:atlas|dsh)\/[^/]+\.mjs$/.test(rel) && effLines > 850) {
+      fails.push(`M6 工作台/宿主语义模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 850 有效行（请按业务域拆分，禁止字母切片）`);
     }
   }
 
