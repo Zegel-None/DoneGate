@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// DSH Web 原生插件包、dsh-doc 规范、Windows (win32) 跨平台路径与浏览器端插槽 VM 端到端自检夹具（<= 225 行）
+// DSH Web 原生插件包、dsh-doc 规范、Windows (win32) 跨平台路径与浏览器端插槽 VM 端到端自检夹具（<= 270 行）
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,9 @@ import {
 import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
 } from './dsh/workflow-runner.mjs';
+import {
+  buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps
+} from './dsh/workflow-deps.mjs';
 import {
   buildDshBundleDirectory, installDshWebBundle, uninstallDshWebBundle
 } from './dsh/install-dsh-web.mjs';
@@ -207,6 +210,61 @@ export async function runAllDshChecks() {
       assert.equal(runRes.ok, true);
       assert.equal(runRes.exitCode, 0);
       assert.equal(runRes.card.tone, 'ok');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  await check('6. 类 ComfyUI 开发流缺依赖硬阻断、workflows/.deps/<id>/ 隔离补齐与 PATH 自动注入闭环', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'dg-wf-deps-'));
+    try {
+      const pack = {
+        id: 'stage-sec-demo',
+        name: '供应链漏洞核验流',
+        deps: [{
+          id: 'mock-sec-cli',
+          title: 'MockSec 开源扫描器',
+          repo: 'acme/mock-sec-cli',
+          version: 'v1.2.0',
+          kind: 'binary',
+          bin: 'mock-sec-cli-never-installed',
+          allowHostEnv: false
+        }],
+        nodes: [{
+          id: 'n-sec',
+          title: 'MockSec 扫描卡',
+          exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'if (!process.env.DG_WORKFLOW_DEPS_DIR) process.exit(2); process.exit(0);'] }
+        }],
+        links: []
+      };
+
+      const blocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-1' }, pack);
+      assert.equal(blocked.ok, false);
+      assert.equal(blocked.exitCode, 3);
+      assert.equal(blocked.code, 'MISSING_WORKFLOW_DEPS');
+      assert.equal(blocked.depsDir, 'workflows/.deps/stage-sec-demo');
+      assert.equal(blocked.missingDeps.length, 1);
+
+      const prov1 = provisionWorkflowDeps(tmp, pack);
+      assert.equal(prov1.ready, false);
+      assert.ok(prov1.agentPrompt.includes('workflows/.deps/stage-sec-demo/'));
+      assert.ok(existsSync(join(tmp, 'workflows', '.deps', 'stage-sec-demo', 'PROVISION-PLAN.json')));
+
+      const binFile = join(tmp, 'workflows', '.deps', 'stage-sec-demo', '.bin', 'mock-sec-cli-never-installed');
+      writeFileSync(binFile, '#!/bin/sh\necho 1.2.0\n', 'utf8');
+      try { chmodSync(binFile, 0o755); } catch (err) { void err; }
+
+      const afterInspect = inspectWorkflowDeps(tmp, pack);
+      assert.equal(afterInspect.ready, true);
+      assert.equal(afterInspect.missingCount, 0);
+      assert.equal(afterInspect.items[0].resolvedVia, 'workflow-deps');
+
+      const wfEnv = buildWorkflowDepEnv(tmp, pack.id, { PATH: '/usr/bin' });
+      assert.ok(wfEnv.PATH.includes(join('workflows', '.deps', 'stage-sec-demo', '.bin')));
+
+      const unblocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-2' }, pack);
+      assert.equal(unblocked.ok, true);
+      assert.equal(unblocked.exitCode, 0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

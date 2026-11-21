@@ -30,8 +30,6 @@ export function resolveSkillPrefix(projectRoot, dgRoot = DG_ROOT, pathApi = path
     ? normProject.toLowerCase() === normDg.toLowerCase()
     : normProject === normDg;
   if (sameRoot) return 'skill';
-  // 任何外部项目（含 Windows 跨盘符如 C: 临时目录指向 D: DoneGate 仓，以及 DoneGate 的父目录）
-  // 一律写入绝对正斜杠路径，杜绝跨盘符误退化或大小写差异导致本仓误写本机绝对路径。
   return dgSkill.replace(/\\/g, '/');
 }
 
@@ -101,13 +99,11 @@ function runRedSelfTest() {
     const inst = installGitHooks(tmp);
     check('安装 .githooks/pre-commit 并激活 git core.hooksPath', inst.activated && existsSync(inst.hookPath));
 
-    // 负样本：小模型塞 TODO 空壳后直接 git commit → 必须被 pre-commit 钩子真拦截（status !== 0）
     writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TODO: 以后再写\n  return 1;\n}\n');
     spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs']);
     const rBlocked = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'bad slop commit'], { encoding: 'utf8' });
     check('必红样本：含 TODO 空壳代码的 git commit 被 pre-commit 钩子当场拦截', rBlocked.status !== 0 && /未完成占位符/.test((rBlocked.stderr || '') + (rBlocked.stdout || '')));
 
-    // 修复为真实代码后重新 git commit → 必须放行（status === 0）
     writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() {\n  return 2;\n}\n');
     spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs']);
     const rPass = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'clean small commit'], { encoding: 'utf8' });

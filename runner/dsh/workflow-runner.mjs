@@ -1,9 +1,10 @@
-// 完结门开发流确定性运行引擎与脉冲事件总线（对齐 DSH workflow/ralph 与完结门 INV-01/INV-10，<= 200 行）
+// 完结门开发流确定性运行引擎与脉冲事件总线（对齐 DSH workflow/ralph、类 ComfyUI 缺依赖禁跑与完结门 INV-01/INV-10，<= 245 行）
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
 import { normalizeLf, normalizeSlashes } from './win-paths.mjs';
+import { buildWorkflowDepEnv, inspectWorkflowDeps } from './workflow-deps.mjs';
 
 const HUB_MAP = new Map();
 
@@ -42,18 +43,35 @@ export function getRunEventHub(projectRoot) {
   return HUB_MAP.get(key);
 }
 
-export function preflightWorkflowPack(pack) {
+export function preflightWorkflowPack(pack, opts = {}) {
   if (!pack || !Array.isArray(pack.nodes) || pack.nodes.length === 0) {
-    return { ok: false, exitCode: 3, reason: '工作流为空或缺少节点定义' };
+    return { ok: false, exitCode: 3, code: 'EMPTY_WORKFLOW', reason: '工作流为空或缺少节点定义' };
   }
   const blankNode = pack.nodes.find((n) => (n.isBlank || n.tplId === 'tpl-blank') && !n.bypassed);
   if (blankNode) {
     return {
       ok: false,
       exitCode: 3,
+      code: 'BLANK_NODE',
       nodeId: blankNode.id,
       reason: `节点「${blankNode.title || blankNode.id}」仍是空白待定节点，请先绑定积木或开启跳过`
     };
+  }
+  if (opts.enforceDeps !== false) {
+    const depReport = inspectWorkflowDeps(opts.projectRoot || process.cwd(), pack);
+    if (!depReport.ready) {
+      const names = depReport.missing.slice(0, 4).map((x) => x.title || x.id).join('、');
+      return {
+        ok: false,
+        exitCode: 3,
+        code: 'MISSING_WORKFLOW_DEPS',
+        nodeId: depReport.missing[0]?.nodeIds?.[0] || null,
+        depsDir: depReport.depsDir,
+        missingDeps: depReport.missing,
+        agentPrompt: depReport.agentPrompt,
+        reason: `开发流缺少 ${depReport.missingCount} 项开源/环境依赖（${names}），无法运行；请先点击开发流旁「补齐依赖」安装至 ${depReport.depsDir}`
+      };
+    }
   }
   return { ok: true, exitCode: 0 };
 }
@@ -97,12 +115,31 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     return rec;
   };
 
-  const pre = preflightWorkflowPack(pack);
+  const pre = preflightWorkflowPack(pack, { projectRoot: root, enforceDeps: hooks.enforceDeps });
   if (!pre.ok) {
-    logEvent({ type: 'dock_item', item: { id: runId, kind: 'question', tone: 'warn', title: pre.reason, targetNodeId: pre.nodeId || null } });
-    return { ok: false, exitCode: pre.exitCode, reason: pre.reason, runId };
+    logEvent({
+      type: 'dock_item',
+      item: {
+        id: runId,
+        kind: 'question',
+        tone: 'warn',
+        title: pre.reason,
+        targetNodeId: pre.nodeId || null,
+        provisionPackId: pre.code === 'MISSING_WORKFLOW_DEPS' ? (pack.id || 'default') : null
+      }
+    });
+    return {
+      ok: false,
+      exitCode: pre.exitCode,
+      code: pre.code,
+      reason: pre.reason,
+      missingDeps: pre.missingDeps || [],
+      depsDir: pre.depsDir || null,
+      runId
+    };
   }
 
+  const wfEnv = buildWorkflowDepEnv(root, pack.id || 'default');
   const nodesById = new Map(pack.nodes.map((n) => [n.id, n]));
   const links = Array.isArray(pack.links) ? pack.links : [];
   const incomingCount = new Map(pack.nodes.map((n) => [n.id, 0]));
@@ -165,7 +202,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       const args = Array.isArray(current.exec?.nodeArgs)
         ? current.exec.nodeArgs
         : [join(root, 'skill', 'check-module-integrity.mjs'), '--root', workCwd];
-      const r = spawnSync(process.execPath, args, { cwd: workCwd, encoding: 'utf8', timeout: 120000 });
+      const r = spawnSync(process.execPath, args, { cwd: workCwd, env: wfEnv, encoding: 'utf8', timeout: 120000 });
       lastExitCode = typeof r.status === 'number' ? r.status : 2;
       lastDiag = normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim();
       if (lastExitCode === 0) passedGates++;

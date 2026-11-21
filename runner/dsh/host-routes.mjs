@@ -1,4 +1,4 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 150 行）
+// DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 215 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
@@ -7,6 +7,7 @@ import { resolveSafeWorkspaceFolders } from '../atlas/serve-atlas.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
+import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -90,6 +91,43 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       writeFileSync(join(root, '.donegate', 'workbench-state.json'), JSON.stringify(next, null, 2) + '\n', 'utf8');
       hub.emit({ type: 'state_saved', updatedAt: next.updatedAt });
       sendJson(res, 200, { ok: true, updatedAt: next.updatedAt });
+      return true;
+    }
+
+    if (cleanPath === '/workflow-deps/inspect' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      if (body.packs && typeof body.packs === 'object') {
+        const reports = {};
+        for (const [k, pk] of Object.entries(body.packs)) {
+          reports[k] = inspectWorkflowDeps(root, pk);
+        }
+        sendJson(res, 200, { ok: true, reports });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, report: inspectWorkflowDeps(root, body.pack || {}) });
+      return true;
+    }
+
+    if (cleanPath === '/workflow-deps/provision' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const pack = body.pack || {};
+      const result = provisionWorkflowDeps(root, pack, {
+        runNpm: body.runNpm === true,
+        markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
+      });
+      const title = result.ready
+        ? `开发流「${result.packName}」全部 ${result.total} 项依赖已在 ${result.depsDir} 就位，可随时运行`
+        : `已建立专属环境目录 ${result.depsDir} 并派发后台补齐工单（待装 ${result.missingCount} 项）`;
+      hub.emit({
+        type: 'workflow_deps_updated',
+        packId: result.packId,
+        report: result
+      });
+      hub.emit({
+        type: 'dock_item',
+        item: { id: `wfdep-${Date.now()}`, kind: result.ready ? 'summary' : 'receipt', tone: result.ready ? 'ok' : 'warn', title }
+      });
+      sendJson(res, 200, result);
       return true;
     }
 
