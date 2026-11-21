@@ -19,6 +19,7 @@ const ROOT = resolve(HERE, '..');
 const SKILL_NAME = 'donegate-forge';
 const CARDS = [
   { file: '卡-选型调研.md', full: true },
+  { file: '卡-普适提取与卡片封装.md', full: true },
   { file: '卡-适配器实现.md', full: true },
   { file: '卡-三组必红夹具.md', full: true },
   { file: '卡-准入与登记.md', full: true },
@@ -147,6 +148,7 @@ function runRedSelfTest() {
     const made = {
       'SKILL.md': '---\nname: ' + SKILL_NAME + '\ndescription: >-\n  工坊。\n---\n\n# 工坊\n\n' + linkLines + '\n\n' + stepLines + '\n',
       'references/卡-选型调研.md': cardBody,
+      'references/卡-普适提取与卡片封装.md': cardBody,
       'references/卡-适配器实现.md': cardBody,
       'references/卡-三组必红夹具.md': cardBody,
       'references/卡-准入与登记.md': cardBody,
