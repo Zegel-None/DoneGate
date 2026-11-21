@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
 import { appendProgressNote, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from '../runner/core/progress.mjs';
 import { walkByExt } from './fs-walk.mjs';
+import { cleanScratchDir } from './check-commit-hygiene.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -105,16 +106,19 @@ export function auditEscapesFile(jsonlPath, execCwd, opts = {}) {
 // ── DoneGate 自身 E01–E06 真实回归门禁（把沙箱实测暴露的坑永久锁死） ──
 const BUILTIN_GATES = {
   E01() {
+    if (!existsSync(join(ROOT, 'skill/check-cards.mjs')) && !existsSync(join(ROOT, '设计'))) {
+      return { ok: true, detail: '公开运行版已剥离内部单卡与设计原稿，母仓构建期已核验' };
+    }
     const tmp = mkdtempSync(join(tmpdir(), 'dg-esc-e01-'));
     try {
-      for (const dir of ['donegate', 'donegate-judge', '设计', 'tools', '参考']) {
+      for (const dir of ['donegate', 'donegate-judge', 'donegate-forge', '设计', 'tools', '参考']) {
         if (existsSync(join(ROOT, dir))) cpSync(join(ROOT, dir), join(tmp, dir), { recursive: true });
       }
       mkdirSync(join(tmp, 'skill'), { recursive: true });
       for (const f of ['check-cards.mjs', 'check-skills.mjs', 'io.mjs', '10-规格缺口定论（技能版）.md']) {
         cpSync(join(ROOT, 'skill', f), join(tmp, 'skill', f));
       }
-      for (const s of ['donegate/SKILL.md', 'donegate-judge/SKILL.md']) {
+      for (const s of ['donegate/SKILL.md', 'donegate-judge/SKILL.md', 'donegate-forge/SKILL.md']) {
         const p = join(tmp, s);
         const crlf = readFileSync(p, 'utf8').replace(/\r?\n/g, '\r\n');
         writeFileSync(p, crlf, 'utf8');
@@ -235,6 +239,7 @@ const BUILTIN_GATES = {
         return `${label}: donegate/SKILL.md 仍指示用户跑不在包里的 skill/check-plan.mjs`;
       }
       for (const f of walkByExt(dir, ['.md'])) {
+        if (relative(dir, f).split(sep)[0] === '.donegate') continue;
         const t = readFileSync(f, 'utf8');
         if (t.includes('`标签（调研/评审材料')) return `${label}: ${relative(dir, f)} 反引号内链接示例被误降级`;
         for (const m of t.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
@@ -419,15 +424,36 @@ if (has('--self-check')) {
     ['skill/check-reviewpack.mjs', []],
     ['skill/check-declarations.mjs', []],
     ['skill/check-brick-liveness.mjs', []],
+    ['skill/check-forge-cards.mjs', []],
+    ['skill/check-brick-capabilities.mjs', []],
+    ['skill/check-decisions.mjs', []],
+    ['skill/check-ai-habits.mjs', ['--red-self-test']],
+    ['skill/check-commit-hygiene.mjs', ['--red-self-test']],
+    ['skill/check-module-integrity.mjs', ['--red-self-test']],
+    ['skill/install-hooks.mjs', ['--red-self-test']],
+    ['skill/new-adapter.mjs', ['--self-test']],
+    ['runner/atlas-fixtures.mjs', []],
+    ['skill/gen-feature-overview.mjs', ['--check']],
     ['skill/check-escapes.mjs', []],
     ['skill/check-escapes.mjs', ['--red-self-test']],
     ['runner/donegate.mjs', ['--help']]
   ];
   let bad = 0;
   console.log('=== DoneGate 自我核查（先扫自己，全绿才准提交生效） ===');
+  const isFullMotherRepo = existsSync(join(ROOT, '设计')) && existsSync(join(ROOT, 'decisions'));
+  const leanOptional = new Set([
+    'tools/check-package.mjs', 'tools/verify-spec.mjs', 'tools/check-rot.mjs',
+    'skill/check-cards.mjs', 'skill/check-brick-capabilities.mjs', 'skill/check-decisions.mjs',
+    'skill/check-ai-habits.mjs', 'skill/gen-feature-overview.mjs'
+  ]);
   for (const [script, sArgs] of suites) {
     const abs = join(ROOT, script);
-    if (!existsSync(abs)) { console.log(`  ✗ 缺核心门禁脚本：${script}`); bad++; continue; }
+    if (!existsSync(abs)) {
+      if (!isFullMotherRepo && leanOptional.has(script)) continue;
+      console.log(`  ✗ 缺核心门禁脚本：${script}`);
+      bad++;
+      continue;
+    }
     const r = spawnSync(process.execPath, [abs, ...sArgs], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
     if (r.error || r.status !== 0) {
       bad++;
@@ -471,6 +497,9 @@ if (has('--self-check')) {
     }
     process.exit(1);
   }
+  const targetCleanupRoot = projOpt ? resolve(projOpt) : ROOT;
+  const scCleaned = cleanScratchDir(targetCleanupRoot);
+  if (scCleaned.cleaned > 0) console.log(`  ✓ 已自动清空 .donegate/scratch/ 一次性草稿 ${scCleaned.cleaned} 项`);
   console.log('RESULT: PASS 自我核查全绿，可安全提交生效');
   if (projOpt && existsSync(join(resolve(projOpt), 'INTENT.md')) && existsSync(join(resolve(projOpt), '.donegate', 'chain.jsonl'))) {
     console.log('\n' + renderProgressBlock(resolve(projOpt), { headline: '✅ 自我核查全绿（可安全提交生效） · 总进度 {{PCT}}' }));

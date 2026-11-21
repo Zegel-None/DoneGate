@@ -65,7 +65,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(res.error === 'parse' ? 2 : 3);
   }
   const errs = validateContractSchema(res.value, { full: !argv.includes('--runner') });
-  if (errs.length) { errs.forEach((e) => console.error('  ✗ ' + e)); console.log('RESULT: FAIL schema 校验不通过（退 2）'); process.exit(2); }
+  if (errs.length) { errs.forEach((e) => { console.error('  ✗ ' + e); }); console.log('RESULT: FAIL schema 校验不通过（退 2）'); process.exit(2); }
   console.log('RESULT: PASS schema 校验通过');
   process.exit(0);
 }

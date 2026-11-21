@@ -1,6 +1,13 @@
-# DoneGate（完工门）0.3.0
+# DoneGate（完工门）0.4.0
 
 **一句话**：用 AI 做项目时，把「AI 嘴上说做完了」变成**「从前期规划到后期维护，每一步都有硬门禁拦着、有真凭实据给你看」**。
+
+**它是两层，不是一个包：**
+
+- **底座 · 防伪裁判**：零依赖的判定核只认冻结的判据与真实运行证据，外部工具一律只能「上交观测」、无权下结论。这一层管的是**不许假绿**。
+- **工坊 · 搭积木**：遇到长尾技术栈（iOS / Rust / 嵌入式 / 桌面端），`donegate-forge` 带你按固定六步把外部开源工具造成一块能入网、能淘汰的砖：调研选型 → 按协议写适配器 → 三组必红夹具 → 登记与 3 批淘汰。这一层管的是**你自己就能扩展它，不用改判定核一行代码**。
+
+**与同类「AI 工程技能包」的差别，说清楚**：它们大多本质是 Markdown 剧本——强在广度，弱在无法判定「到底做完没有」。DoneGate 不跟它们比广度，**比的是两件它们给不了的事**：① 每一句「做完了」都要过一次真实运行与冻结判据；② 这套判定核是**可插拔**的，任何人能按协议往里加砖，而不是只能等作者更新。
 
 ---
 
@@ -41,15 +48,15 @@ DoneGate 把「技能说明书 + 我们自研的零依赖检查内核与门禁�
 
 ### 方式一：让你的 AI Agent 帮你全自动装好（推荐）
 
-不用自己一行行敲命令。把下面这段话**原封不动发给你的 Agent**（DSH / Claude Code / Cursor 等），它会自动检查本机环境、克隆项目、挂载技能、安装所有需要的外部工具（「砖头」），最后跑通自检向你汇报：
+不用自己一行行敲命令。本项目深度绑定 **DeepSeek Harness (`dsh web`)** Web UI 生态（Windows 优先，无桌面端包袱）。把下面这段话**原封不动发给你的 DeepSeek Harness 会话**，它会自动检查本机环境、克隆项目、挂载技能、安装所有需要的外部工具（「砖头」），最后跑通自检向你汇报：
 
 > 请帮我完整安装并配置 **DoneGate**（仓库地址：`https://github.com/q862877400-ux/DoneGate.git`）：
 > 1. 检查本机 `node`（建议 v20+）、`git`、`npm`、`python` / `uv`、`go` 等基础环境是否就绪。
-> 2. 把 DoneGate 克隆到一个干净的技能目录（例如 `D:\skills\DoneGate` 或 `~/skills/DoneGate`，注意不要多套一层目录，根目录必须直接看到 `donegate/` 和 `donegate-judge/`）。
-> 3. 如果我在用 DSH，把该目录加到 `%DSH_HOME%\profiles\web\cordis.patch.yml` 的 `skill.config.customSkillDirs` 中（其他宿主请按对应技能目录规范挂载）。
+> 2. 把 DoneGate 克隆到一个干净的技能目录（例如 `D:\skills\DoneGate` 或 `~/skills/DoneGate`，注意不要多套一层目录，根目录必须直接看到 `donegate/`、`donegate-judge/`、`donegate-forge/`）。
+> 3. 运行仓库根目录的 `install-dsh-web.cmd`（或 `node runner/dsh/install-dsh-web.mjs`）一键生成符合 DSH 创造模式（`dsh-doc`）规范的 `@local/dsh-donegate` Web 插件包并挂载到 `web` Profile（也可在 DSH Web 左栏「插件 > 添加插件」直接选择 `.donegate/dsh-bundle/dsh-donegate` 本地目录安装）。
 > 4. 进入克隆好的 DoneGate 目录，按需运行 `npm install`（用于安装可选的 `vitest` 和 `stryker`）。
-> 5. 逐个检查并尽量帮我装好配套外部工具（「砖头」，按需用于全周期不同阶段）：`codegraph`、`dependency-cruiser`（`depcruise`）、`jscpd`、`knip`、`@fission-ai/openspec`、`gitleaks`、`osv-scanner`、`dotenv-linter`、`trivy`、`beads`（`bd`）、`srclight`、`schemathesis`、`playwright`、`maestro`、`fuck-u-code`（以及阶段 2 编码可选的 Context7 MCP）；遇到本机缺包管理器装不上的，如实列出原因和手动装法，不要假装装好。
-> 6. 最后在 DoneGate 目录下跑完 `node skill/check-escapes.mjs --self-check`（涵盖全套 11 项结构/规则/腐化/技能加载/回归/防撒谎自检）以及 `node skill/check-declarations.mjs --verify-adapters`，把每一项的实际结果汇报给我。
+> 5. 逐个检查并尽量帮我装好配套外部工具（「砖头」，按需用于全周期不同阶段）：`codegraph`、`dependency-cruiser`（`depcruise`）、`jscpd`、`knip`、`@fission-ai/openspec`、`gitleaks`、`osv-scanner`、`dotenv-linter`、`trivy`、`beads`（`bd`）、`srclight`、`schemathesis`、`playwright`、`maestro`、`fuck-u-code`、`@biomejs/biome`、`@ast-grep/cli`（以及阶段 2 编码可选的 Context7 MCP）；遇到本机缺包管理器装不上的，如实列出原因和手动装法，不要假装装好。
+> 6. 最后在 DoneGate 目录下跑完 `node skill/check-escapes.mjs --self-check`、`node runner/self-test.mjs` 与 `node runner/dsh-fixtures.mjs`，把每一项的实际结果汇报给我。
 
 ---
 
@@ -80,8 +87,8 @@ npm install
 DoneGate 的判定内核与全部门禁脚本都是**自研且零第三方依赖**的；下面这些是配套干苦力的开源外部工具，按你的系统和需求用一条命令装好即可：
 
 ```powershell
-# 1. Node / npm 生态一把装（架构边界 + 重复代码 + 死依赖清理 + 规格提案 + Web E2E）
-npm install -g dependency-cruiser jscpd knip @fission-ai/openspec playwright
+# 1. Node / npm 生态一把装（架构边界 + 重复代码 + 死依赖清理 + 规格提案 + Web E2E + 静态检查 + 结构搜索）
+npm install -g dependency-cruiser jscpd knip @fission-ai/openspec playwright @biomejs/biome @ast-grep/cli
 
 # 2. Windows 常用二进制（密钥扫描 + 漏洞扫描 + .env 体检 + 安全配置扫描；macOS 可改用 brew）
 winget install Gitleaks.Gitleaks
@@ -114,7 +121,8 @@ go install github.com/Done-0/fuck-u-code/cmd/fuck-u-code@latest
 - **立项 / 规划前**：「帮我把目标和绝对不能碰的底线先定下来」
 - **写功能前**：「帮我定一下这轮的验收标准并锁死」
 - **AI 说做完时**：「这轮做完了吗？」/「改这里影响了哪些老功能，都重新验了吗？」
-- **想找第二个 AI 复核时**：直接输入 `/donegate-judge`
+- **找第二个 AI 复核时**：直接输入 `/donegate-judge`
+- **想给新工具/新技术栈加砖时**：叫 **`donegate-forge`**——「把这个工具接进来」「帮我接 Rust / iOS / 嵌入式」；它会先调研值不值得接，再按协议写适配器、配三组必红夹具，最后登记入网并接受淘汰考核
 - **换新对话 / 收尾时**：「帮我做个交接，列出已通过和还没测的」
 
 命令行常用入口（在你的项目目录下调用）：
@@ -130,12 +138,10 @@ node <DoneGate路径>/runner/donegate.mjs --help   # 查看全部 12 条命令
 在 `DoneGate` 目录下运行下面几条命令，全部通过就说明文件完整、内核正常、AI 也能正常加载：
 
 ```text
-node tools/check-package.mjs               # 检查目录结构和文档链接
-node tools/verify-spec.mjs                 # 检查验收规则本身是否自洽
-node tools/check-rot.mjs                   # 检查文档描述有没有过期
-node skill/check-skills.mjs --root .       # 检查 AI 能不能正常加载这两个技能
-node skill/check-escapes.mjs               # 检查历史漏网 bug 的回归门禁是否全绿
-node runner/donegate.mjs --help            # 检查判定核命令是否可执行
+node skill/check-escapes.mjs --self-check  # 一键检查技能加载、模块完整性、工坊卡与回归门禁
+node runner/self-test.mjs                  # 检查零依赖判定核四值退出码与防撒谎哈希链
+node runner/dsh-fixtures.mjs               # 检查 DSH Web 插件包规范与 Windows 跨平台路径适配
+node runner/donegate.mjs --help            # 检查判定核 12 条命令是否可执行
 ```
 
 ---
@@ -172,10 +178,10 @@ node <DoneGate路径>/skill/check-escapes.mjs --report-template
 |---|---|
 | `donegate/` | 主技能：带 AI 走完定标准、防改坏、留证据、做交接的全流程 |
 | `donegate-judge/` | 独立复核技能：只用 `/donegate-judge` 触发，冷酷查账 |
+| `donegate-forge/` | 搭积木工坊：把外部开源工具造成能入网的砖（调研选型 → 按协议写适配器 → 三组必红夹具 → 登记与 3 批淘汰） |
 | `runner/` | **自研判定核**（零依赖 Node.js）：命令入口、状态计算、防篡改账本、隔离与越界拦截、交接与复核包生成 |
-| `skill/` | **自研硬门禁脚本**（复核包白名单、引用核查、阶段卡控、漏网闭环、防撒谎进度入口等）+ 16 个外部工具适配器（`adapters/`） |
-| `tools/` | 结构、规则、文档腐化自检脚本 |
-| `设计/`、`参考/` | 背后的规则原文与依据（供 AI 按需查阅，平时不用自己翻） |
+| `install-dsh-web.cmd` | **Windows 一键安装器**：免编译生成并挂载 `@local/dsh-donegate` Web 插件包 |
+| `skill/` | **自研硬门禁脚本**（提交前反作弊、模块完整性、复核包白名单、阶段卡控、漏网闭环等）+ 22 个外部工具适配器（`adapters/`） |
 | `adapters.registry.json`、`ledger.json`、`batches.jsonl`、`escapes.jsonl` | 外部工具适配器的注册表、砖头台账与历史漏网门禁台账 |
 | `README.md`、`CHANGELOG.md`、`VERSION`、`LICENSE` | 本说明、更新记录、版本号、MIT 开源协议 |
 
@@ -203,6 +209,8 @@ DoneGate 的全周期验收思路与配套工具链，站在下面这些优秀�
 - **[fuck-u-code](https://github.com/Done-0/fuck-u-code)** — 代码复杂度与坏味道体检工具。
 - **[Context7](https://github.com/upstash/context7)** — 编码期按库版本拉取真实 API 文档的 MCP 工具，减少接口幻觉。
 - **[Vitest](https://github.com/vitest-dev/vitest)** — 现代前端与 Node 测试运行器。
+- **[Biome](https://biomejs.dev)** — JS/TS 静态检查与格式化，给出「可疑写法」的机器读数（工坊首批示范砖之一）。
+- **[ast-grep](https://github.com/ast-grep/ast-grep)** — 按语法结构搜索代码，能表达「所有 console.log」这类形状（工坊首批示范砖之一）。
 
 同时也感谢 **[grill-me](https://github.com/mattpocock/skills)** 的决策树追问思路以及 **Elephant-Goldfish Model (EGM)** 的零上下文评审思路对前期设计与方案审查环节的启发。
 

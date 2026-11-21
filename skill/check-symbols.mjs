@@ -64,8 +64,7 @@ for (const [f, raw] of sources) {
   const defLines = new Set();
   for (const re of DEFS) {
     re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(s)) !== null) {
+    for (let m = re.exec(s); m !== null; m = re.exec(s)) {
       const line = s.slice(0, m.index).split('\n').length;
       if (defLines.has(line)) continue;
       defLines.add(line);

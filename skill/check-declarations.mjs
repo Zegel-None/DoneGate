@@ -1,12 +1,9 @@
 // 旁路检查层（按场景跑，不进十二条）：适配器九字段声明校验、核侧单进程哈希复算、契约查找与 --verify-adapters。
 // 用法：
-//   node skill/check-declarations.mjs                          默认：自带夹具自检
-//   node skill/check-declarations.mjs --verify-adapters        全量真跑 tests/adapters/*/verify.mjs
+//   node skill/check-declarations.mjs                                      默认：自带夹具自检
+//   node skill/check-declarations.mjs --verify-adapters [--offline]        真跑 tests/adapters/*/verify.mjs（--offline 仅跑离线必红夹具）
 //   node skill/check-declarations.mjs --claim <claim.json> [--root <项目根>] [--skip-contract-lookup]
-// 退出码（§八 四值）：0 通过 / 1 契约查找不匹配或缺 obligation / 2 协议违规或哈希不符 / 3 缺失或不可读。
-//
-// 诚实边界：核侧在单进程一次读入内存后复算 SHA-256 并只消费内存对象（防 TOCTOU）；
-//   单靠本脚本防不住「同一人同时篡改磁盘文件并重算 claim.json 哈希」的共谋（见 skill/17 §4.11）。
+// 退出码（§八 四值）：0 通过 / 1 契约查找不匹配或夹具失败 / 2 协议违规或哈希不符 / 3 缺失、不可读或外部二进制未装。
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -24,7 +21,7 @@ const HEX64_RE = /^[0-9a-f]{64}$/;
 function findForbiddenKeysDeep(val, prefix = '') {
   const hits = [];
   if (Array.isArray(val)) {
-    val.forEach((item, i) => hits.push(...findForbiddenKeysDeep(item, `${prefix}[${i}]`)));
+    val.forEach((item, i) => { hits.push(...findForbiddenKeysDeep(item, `${prefix}[${i}]`)); });
   } else if (val && typeof val === 'object') {
     for (const [k, v] of Object.entries(val)) {
       const p = prefix ? `${prefix}.${k}` : k;
@@ -145,21 +142,31 @@ export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
   return { exitCode: 0, claim, memFiles, unresolvedCount: claim.unresolved.length };
 }
 
-function runVerifyAdapters() {
+function runVerifyAdapters(offlineOnly = false) {
   const adpDir = join(DECL_REPO, 'tests', 'adapters');
   if (!existsSync(adpDir)) { console.error('没有 tests/adapters 目录'); return 3; }
   const suites = readdirSync(adpDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && existsSync(join(adpDir, e.name, 'verify.mjs')))
-    .map((e) => join(adpDir, e.name, 'verify.mjs'));
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((e) => ({ name: e.name, path: join(adpDir, e.name, 'verify.mjs') }));
   if (suites.length === 0) { console.error('tests/adapters 下没有任何 verify.mjs'); return 3; }
 
   let failedSuites = 0;
+  let accidentSuites = 0;
+  const missingBinTools = [];
+  const childArgs = offlineOnly ? ['--offline'] : [];
   for (const s of suites) {
-    console.log('>>> node ' + s);
-    const r = spawnSync(process.execPath, [s], { cwd: DECL_REPO, encoding: 'utf8' });
+    console.log('>>> node ' + s.path + (offlineOnly ? ' --offline' : ''));
+    const r = spawnSync(process.execPath, [s.path, ...childArgs], {
+      cwd: DECL_REPO,
+      env: offlineOnly ? { ...process.env, DONEGATE_OFFLINE_FIXTURES: '1' } : process.env,
+      encoding: 'utf8'
+    });
     process.stdout.write(r.stdout || '');
     process.stderr.write(r.stderr || '');
-    if (r.status !== 0) failedSuites++;
+    if (r.status === 2) accidentSuites++;
+    else if (r.status === 3) missingBinTools.push(s.name);
+    else if (r.status !== 0) failedSuites++;
   }
   const selfTest = join(adpDir, 'run-stage-self-test.mjs');
   if (existsSync(selfTest)) {
@@ -167,10 +174,26 @@ function runVerifyAdapters() {
     const rs = spawnSync(process.execPath, [selfTest], { cwd: DECL_REPO, encoding: 'utf8' });
     process.stdout.write(rs.stdout || '');
     process.stderr.write(rs.stderr || '');
-    if (rs.status !== 0) failedSuites++;
+    if (rs.status === 2) accidentSuites++;
+    else if (rs.status !== 0) failedSuites++;
   }
-  console.log(failedSuites === 0 ? '\nRESULT: PASS 全部适配器必红夹具与执行器反例通过' : `\nRESULT: FAIL ${failedSuites} 套夹具未过`);
-  return failedSuites === 0 ? 0 : 1;
+
+  if (accidentSuites > 0) {
+    console.log(`\nRESULT: FAIL ${accidentSuites} 套夹具触发协议事故（退 2）`);
+    return 2;
+  }
+  if (failedSuites > 0) {
+    console.log(`\nRESULT: FAIL ${failedSuites} 套夹具断言未过（退 1）`);
+    return 1;
+  }
+  if (missingBinTools.length > 0) {
+    console.log(`\nRESULT: 无法判断 离线必红夹具已全过，但本机缺少 ${missingBinTools.length} 个外部二进制（${missingBinTools.join(', ')}），按 §八 退 3`);
+    return 3;
+  }
+  console.log(offlineOnly
+    ? '\nRESULT: PASS 离线必红夹具与执行器反例全部通过'
+    : '\nRESULT: PASS 全部适配器必红夹具与执行器反例通过');
+  return 0;
 }
 
 function runDeclSelfTest() {
@@ -217,7 +240,7 @@ function runDeclSelfTest() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
-  if (argv.includes('--verify-adapters')) process.exit(runVerifyAdapters());
+  if (argv.includes('--verify-adapters')) process.exit(runVerifyAdapters(argv.includes('--offline')));
   const cIdx = argv.indexOf('--claim');
   if (cIdx >= 0) {
     const claimArg = argv[cIdx + 1];

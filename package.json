@@ -1,12 +1,16 @@
 {
   "name": "donegate-dev",
-  "version": "0.0.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "开发层依赖。只给「外部顾问」与变异测试用；十二条必跑判据仍是零依赖的 node 直跑脚本，不读这里。",
+  "description": "开发层依赖。只给「外部顾问」与变异测试用；十二条必跑判据与门禁脚本均为零依赖的 node 直跑脚本（Node >=18.20 即可运行，vitest/stryker 开发依赖需 Node >=22.12）。",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "test": "vitest run",
-    "mutate": "stryker run"
+    "mutate": "stryker run",
+    "selfcheck": "node skill/check-escapes.mjs --self-check"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^10.1.1",

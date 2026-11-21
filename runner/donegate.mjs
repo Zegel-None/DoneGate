@@ -9,7 +9,7 @@ import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyAppl
 
 const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
-  'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h'
+  'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h'
 ]);
 
 const HELP_TEXT = [
@@ -17,18 +17,18 @@ const HELP_TEXT = [
   '',
   '用法：node runner/donegate.mjs <命令> [参数] [--root <项目根>]',
   '  init [dir]                                      初始化项目骨架（已存在退 3）',
-  '  contract new <id> [--title --why --scope --owner --depends-on]',
-  '  contract freeze <id> --by <签字人> [--legacy] [--force-batch]',
-  '  contract freeze <id> --by <签字人> --signoff --attest <口头复述> [--opened-at <ISO>]',
-  '  check <id> [--criterion <oid>] [--allow-dirty] [--human-pass] [--skip-gates]',
-  '  teeth <id> <criterionId> [--tier A|B] [--claim <path>]',
-  '  status [--tree] [--flow] [--html <path>] [--pending <c1,c2>]',
+  '  contract new <id> [--title --why --scope --owner --depends-on]   新建契约骨架（标识重复或不合规退 1）',
+  '  contract freeze <id> --by <签字人> [--legacy] [--force-batch]   冻结判据并签字（有判据缺 expect 或 kind 退 1）',
+  '  contract freeze <id> --by <签字人> --signoff --attest <口头复述>   实现后裁方签收（记录复核包哈希与链上位置）',
+  '  check <id> [--criterion <oid>] [--allow-dirty] [--human-pass] [--skip-gates]   跑判据并落证据（有未通过退 1，跑不起来退 3）',
+  '  teeth <id> <criterionId> [--tier A|B] [--claim <path>]   有牙实验：改坏实现看判据红不红（无牙退 1，还原失败退 2，未知退 3）',
+  '  status [--tree] [--flow] [--html <path>] [--open] [--pending <c1,c2>]   现算五状态六栏总账（契约读不出退 3）',
   '  graph                                           输出覆盖率与三色依赖图',
   '  gaps [--json]                                   输出实时缺口清单',
   '  handover [--out <path>] [--receiver <name>]     生成六节交接包',
-  '  verify pack <id> [--base <rev>] [--head <rev>] [--out <dir>]',
-  '  verify apply <packDir> --verdict <verdict.json>',
-  '  retire <id> --reason <理由>'
+  '  verify pack <id> [--base <rev>] [--head <rev>] [--out <dir>]   生成判方复核包（证据不全退 3）',
+  '  verify apply <packDir> --verdict <verdict.json>   记录门 5 裁决（不过退 1，材料被篡改退 2，材料不全退 3）',
+  '  retire <id> --reason <理由>                      退役契约（理由为空退 1）'
 ].join('\n');
 
 function parseCliArgs(argv) {
@@ -83,7 +83,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   }
   if (cmd === 'status') {
     const pendingSet = typeof flags.pending === 'string' ? new Set(flags.pending.split(',').filter(Boolean)) : new Set();
-    return cmdStatus(root, { tree: Boolean(flags.tree), flow: Boolean(flags.flow), html: flags.html, pendingContracts: pendingSet });
+    return cmdStatus(root, { tree: Boolean(flags.tree), flow: Boolean(flags.flow), html: flags.html, open: Boolean(flags.open), serve: Boolean(flags.serve), pendingContracts: pendingSet });
   }
   if (cmd === 'graph') return cmdGraph(root);
   if (cmd === 'gaps') return cmdGaps(root, { json: Boolean(flags.json) });

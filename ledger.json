@@ -1,19 +1,21 @@
 {
   "protocolVersion": "1.1",
-  "说明": "砖头入网台账（3 批硬淘汰制）。每条 { brick, wiredAtBatch, actionsChanged }；连续 3 批 actionsChanged === 0 强制拔除接线。见 skill/17 §五。",
+  "说明": "砖头入网台账（3 批硬淘汰制）。每条 { brick, registryId, wiredAtBatch, actionsChanged, evidenceRef?, note }；未接成判据（advisory）的砖头严禁虚报 actionsChanged > 0；连续 3 批 actionsChanged === 0 强制拔除接线。见 skill/17 §五。",
   "bricks": [
     {
       "brick": "stryker",
       "registryId": "stryker@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
-      "note": "在 skill/hash.mjs materialFingerprintOf 捕获 11 个存活变异体并推动补齐测试（变异分 83.82%→95.00%）"
+      "evidenceRef": "tests/hash.test.mjs",
+      "note": "在 skill/hash.mjs materialFingerprintOf 捕获存活变异体并推动补齐 tests/hash.test.mjs 断言"
     },
     {
       "brick": "codegraph",
       "registryId": "codegraph@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
+      "evidenceRef": "runner/core/gates.mjs",
       "note": "补齐循环依赖检出（D09）并与 runner/engine.mjs 联动输出 pending-recheck 与受影响场景"
     },
     {
@@ -21,98 +23,145 @@
       "registryId": "gitleaks@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
-      "note": "接入静态密钥扫描声明（hard）"
+      "evidenceRef": "contracts/brick-observations/contract.json#gitleaks-no-secrets",
+      "note": "接入静态密钥零容忍判据（brick-observations/gitleaks-no-secrets）"
     },
     {
       "brick": "osv-scanner",
       "registryId": "osv-scanner@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
-      "note": "实跑 package-lock.json 检出 5 条 dev 依赖 Medium CVE（hard）"
+      "evidenceRef": "contracts/brick-observations/contract.json#osv-no-high-severity",
+      "note": "实跑 package-lock.json 并将 HIGH/CRITICAL/UNKNOWN 零容忍接入 brick-observations/osv-no-high-severity"
     },
     {
       "brick": "depcruise",
       "registryId": "depcruise@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
-      "note": "接入架构依赖巡航声明，0 模块防空跑退 3（hard）"
+      "evidenceRef": ".dependency-cruiser.cjs",
+      "note": "促成落地 .dependency-cruiser.cjs 四条模块边界规则并接入 brick-observations/depcruise-no-violations"
     },
     {
       "brick": "beads",
       "registryId": "beads@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "只读接入 bd ready 依赖排序建议（soft）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 .beads 任务库，暂未改变本仓动作，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "fuck-u-code",
       "registryId": "fuck-u-code@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入结构复杂度观测声明（soft），实跑修正 v2.2.2 metrics 解析"
+      "actionsChanged": 0,
+      "note": "advisory（复杂度热点建议，不作硬判据，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "jscpd",
       "registryId": "jscpd@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入跨文件克隆对观测声明（soft），实跑 runner/ 检出 3 处微克隆"
+      "actionsChanged": 0,
+      "note": "advisory（克隆对重构建议，不作硬判据，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "openspec",
       "registryId": "openspec@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 OpenSpec 规格校验声明（soft）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 openspec/ 目录，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "srclight",
       "registryId": "srclight@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 srclight 代码索引新鲜度声明（soft）"
+      "actionsChanged": 0,
+      "note": "advisory（代码索引新鲜度前置辅助，不作验收判据，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "knip",
       "registryId": "knip@stage4",
       "wiredAtBatch": 1,
       "actionsChanged": 1,
-      "note": "接入 Knip 死文件与无用依赖观测声明（soft）"
+      "evidenceRef": "contracts/brick-observations/contract.json#knip-no-unlisted-deps",
+      "note": "将未声明依赖零容忍接入 brick-observations/knip-no-unlisted-deps"
     },
     {
       "brick": "dotenv-linter",
       "registryId": "dotenv-linter@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 dotenv-linter 环境变量校验与键对齐观测（soft）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 .env 主体，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "playwright",
       "registryId": "playwright@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 Playwright Web 真实浏览器 E2E 观测声明（hard）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无浏览器 E2E 用例，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "maestro",
       "registryId": "maestro@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 Maestro 本地 App 模拟器 UI 流程观测声明（hard）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无移动端 App 与模拟器流程，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "schemathesis",
       "registryId": "schemathesis@stage4",
       "wiredAtBatch": 1,
-      "actionsChanged": 1,
-      "note": "接入 Schemathesis OpenAPI 接口边界模糊测试观测声明（hard）"
+      "actionsChanged": 0,
+      "note": "advisory（本仓无运行中 HTTP OpenAPI 服务，接受 3 批硬淘汰考核）"
     },
     {
       "brick": "trivy",
       "registryId": "trivy@stage4",
       "wiredAtBatch": 1,
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 Dockerfile/IaC 清单，接受 3 批硬淘汰考核）"
+    },
+    {
+      "brick": "biome",
+      "registryId": "biome@stage4",
+      "wiredAtBatch": 2,
       "actionsChanged": 1,
-      "note": "接入 Trivy Dockerfile/IaC 安全配置与文件系统扫描观测声明（hard）"
+      "evidenceRef": "skill/check-brick-observations.mjs",
+      "note": "实跑清理仓内 lint error 并将 BIOME_ERRORS_MAX=0 接入 brick-observations/biome-no-errors"
+    },
+    {
+      "brick": "ast-grep",
+      "registryId": "ast-grep@stage4",
+      "wiredAtBatch": 2,
+      "actionsChanged": 0,
+      "note": "advisory（模式由调用方按需指定，暂未固化为本仓判据，接受 3 批硬淘汰考核）"
+    },
+    {
+      "brick": "ruff",
+      "registryId": "ruff@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 Python 业务主体；供 Python 用户项目拦截小模型 F821 未定义名与语法截断，接受 3 批硬淘汰考核）"
+    },
+    {
+      "brick": "pyright",
+      "registryId": "pyright@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 Python 业务主体；供 Python 用户项目拦截小模型跨文件属性幻觉与参数类型失配，接受 3 批硬淘汰考核）"
+    },
+    {
+      "brick": "typos",
+      "registryId": "typos@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（未配本仓专属 _typos.toml 缩写白名单前作旁注观测，防小模型标识符拼写滑移，接受 3 批硬淘汰考核）"
+    },
+    {
+      "brick": "actionlint",
+      "registryId": "actionlint@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（本仓无 .github/workflows 目录；供含 CI 的项目拦截小模型编造 Action 参数与表达式错误，接受 3 批硬淘汰考核）"
     }
   ]
 }

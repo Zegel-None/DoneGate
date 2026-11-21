@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 import { computeProjectStatus } from './gates.mjs';
 import { checkCommandBans } from './isolation.mjs';
+import { exportDashboardHtml } from './dashboard.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readMaybe } from '../../skill/io.mjs';
 
@@ -313,6 +314,7 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
   return {
     totalPct,
     bar: makeBar(totalPct),
+    statusData: st,
     hasInit,
     s1Item1,
     s1Item2,
@@ -373,7 +375,18 @@ export function renderProgressBlock(projectRoot, opts = {}) {
     lines.push(`阶段 2：功能开发与验收（✅ ${cDoneCount}/${cTotal} 模块检查全绿）`);
   } else {
     lines.push(`阶段 2：功能开发与验收（${cDoneCount === cTotal ? '✅' : '🔄'} ${cDoneCount}/${cTotal} 模块全绿）`);
-    snap.contractProgress.forEach((c, idx) => {
+    const LARGE_LIMIT = 6;
+    const isLarge = cTotal > LARGE_LIMIT;
+    let displayList = snap.contractProgress.map((c, idx) => ({ c, idx }));
+    if (isLarge) {
+      if (opts.focusContractId) {
+        displayList = displayList.filter((x) => x.c.id === opts.focusContractId);
+      } else {
+        const unfinished = displayList.filter((x) => !(x.c.totalObs > 0 && x.c.passedClean === x.c.totalObs && x.c.frozen));
+        displayList = (unfinished.length > 0 ? unfinished : displayList).slice(0, 3);
+      }
+    }
+    for (const { c, idx } of displayList) {
       const icon = c.totalObs > 0 && c.passedClean === c.totalObs && c.frozen
         ? '✅'
         : (c.obligations.some((o) => o.state === '未通过' || o.state === '无法判断') ? '⚠️' : (c.frozen || c.passedClean > 0 ? '🔄' : '⏳'));
@@ -387,7 +400,10 @@ export function renderProgressBlock(projectRoot, opts = {}) {
           lines.push(`    2-${idx + 1}.${j + 1} ${oIcon} ${summarizeObligationLabel(o)}`);
         });
       }
-    });
+    }
+    if (isLarge && displayList.length < cTotal) {
+      lines.push(`  … 其余 ${cTotal - displayList.length} 个模块已自动折叠，完整列表与依赖图见下方全景看板`);
+    }
     appendStageNotes(lines, 2, customNotes);
   }
 
@@ -419,6 +435,15 @@ export function renderProgressBlock(projectRoot, opts = {}) {
     appendStageNotes(lines, 4, customNotes);
   }
 
+  if (existsSync(join(projectRoot, '.donegate'))) {
+    const dashOut = join(projectRoot, '.donegate', 'dashboard.html');
+    const dr = exportDashboardHtml(projectRoot, dashOut, { statusData: snap.statusData, totalPct: snap.totalPct });
+    if (dr.ok) {
+      const hash = opts.focusContractId ? `#focus=${opts.focusContractId}` : '';
+      lines.push(`全景看板：.donegate/dashboard.html${hash}（双击用浏览器打开：大白话查看全部功能、前后配合与支线进度）`);
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -429,8 +454,9 @@ export function renderWorryBlock(projectRoot, opts = {}) {
   const icon = exitCode === 2 ? '🚨' : (exitCode === 3 ? '⚠️' : '❌');
   const levelLabel = exitCode === 2 ? '严重事故（立即停下核查）' : (exitCode === 3 ? '阻断提醒（前置未备齐，进度已暂停）' : '检查未通过（需修复后重跑）');
   let pctLine = '░░░░░░░░░░ 0%';
+  let snap = null;
   try {
-    const snap = computeProgressSnapshot(projectRoot);
+    snap = computeProgressSnapshot(projectRoot);
     pctLine = `${snap.bar} ${snap.totalPct}%`;
   } catch { /* ignore if project uninitialized or corrupt */ }
 
@@ -441,5 +467,13 @@ export function renderWorryBlock(projectRoot, opts = {}) {
   ];
   if (opts.reason) out.push(`  原因：${opts.reason}`);
   if (opts.action) out.push(`  下一步：${opts.action}`);
+  if (existsSync(join(projectRoot, '.donegate'))) {
+    const dashOut = join(projectRoot, '.donegate', 'dashboard.html');
+    const dr = exportDashboardHtml(projectRoot, dashOut, { statusData: snap?.statusData || null, totalPct: snap?.totalPct });
+    if (dr.ok) {
+      const hash = opts.focusContractId ? `#focus=${opts.focusContractId}` : '';
+      out.push(`全景看板：.donegate/dashboard.html${hash}（可打开定位受阻模块）`);
+    }
+  }
   return out.join('\n');
 }

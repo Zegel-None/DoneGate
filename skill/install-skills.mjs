@@ -20,7 +20,7 @@ const shaShort = (v) => sha256Short(v, 12);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const DEST_ROOT = join(ROOT, '.dsh', 'skills');
-const SKILLS = ['donegate', 'donegate-judge'];
+const SKILLS = ['donegate', 'donegate-judge', 'donegate-forge'];
 const VALIDATOR = join(process.env.DSH_HOME || join(process.env.USERPROFILE || '', '.dsh'), 'skills',
   'dsh-skill-authoring', 'scripts', 'validate-skill.mjs');
 

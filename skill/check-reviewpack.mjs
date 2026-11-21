@@ -125,8 +125,7 @@ function auditPack(packRoot) {
   for (let i = 0; i < rels.length; i++) {
     fre.lastIndex = 0;
     const src = rels[i] + '\n' + (bodies[i] === null ? '' : bodies[i]);
-    let m;
-    while ((m = fre.exec(src))) if (m[1] !== own) { 越界.push(rels[i] + '→' + m[0]); break; }
+    for (let m = fre.exec(src); m; m = fre.exec(src)) { if (m[1] !== own) { 越界.push(rels[i] + '→' + m[0]); break; } }
   }
   rows['无越界材料'] = 越界.length === 0;
   if (越界.length) why['无越界材料'] = 越界.slice(0, 3).join('；');
@@ -334,6 +333,14 @@ try {
   const legRogue = auditPack(legRoot);
   if (!legRogue.rows['无第六类']) ok('合法业务包中塞入叙述文档 notes.md（含思路/计划）依然必红');
   else bad('合法业务包中塞入叙述文档 notes.md 漏报第六类');
+
+  // Harness² 防泄漏绊线：塞入 verdict/参考答案或作者私有绝对路径必须被拦
+  rmSync(join(legRoot, 'notes.md'), { force: true });
+  writeFileSync(join(legRoot, 'verdict.json'), '{"V1":"pass","V2":"pass","V3":"pass","V4":"pass","V5":"pass"}\n');
+  writeFileSync(join(legRoot, 'MANIFEST.txt'), [...legFiles.keys(), 'verdict.json'].map((k) => sha256(readFileSync(join(legRoot, k))) + '  ' + k).join('\n') + '\n');
+  const leakRes = auditPack(legRoot);
+  if (!leakRes.rows['无第六类']) ok('Harness² 防泄漏绊线：复核包夹带 verdict.json 答案文件必红');
+  else bad('Harness² 防泄漏绊线漏放了 verdict.json');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
@@ -351,7 +358,10 @@ function checkSixthCategory(own, rels, bodies) {
     /^(criterion|diff)\//i.test(r) ||
     /^evidence\/.*\/(start|report|end)\.json$/i.test(r) ||
     /^(contract-scope-why\.md|完成声称\.md|MANIFEST\.txt)$/i.test(r);
+  const LEAK_FILE_RE = /(?:^|\/)(?:verdict\.json|answer-key|reference-answer|writer-draft|solutions?\/)/i;
+  const LEAK_BODY_RE = /(?:\b[A-Za-z]:(?:\\\\|\\|\/)(?:Users|home)|(?:^|\s)\/(?:Users|home)\/[A-Za-z0-9._-]+|DSH-(?:ZegelUI|DoneGate))/;
   const hitNames = rels.filter((r) => {
+    if (LEAK_FILE_RE.test(r)) return true;
     if (isStructuralCarrier(r)) {
       return !/^(criterion|diff|evidence)\//i.test(r) && 第六类名.test(r.replace(domainRe, ''));
     }
@@ -359,6 +369,7 @@ function checkSixthCategory(own, rels, bodies) {
   });
   const hitBodies = rels.filter((r, i) => {
     if (bodies[i] === null) return false;
+    if (LEAK_BODY_RE.test(bodies[i]) && !/^diff\//i.test(r)) return true;
     if (判据原文形状(bodies[i])) return false;
     if (/^(diff\/|evidence\/.*\/(start|report|end)\.json$|MANIFEST\.txt$)/i.test(r)) return false;
     const cleaned = /^(contract-scope-why\.md|完成声称\.md)$/i.test(r) ? bodies[i].replace(domainRe, '') : bodies[i];

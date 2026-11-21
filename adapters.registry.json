@@ -7,7 +7,7 @@
       "tool": "stryker",
       "stage": 4,
       "role": "hard",
-      "checkedBy": "c01/crit-hash-teeth",
+      "checkedBy": "brick-observations/stryker-no-survivors",
       "entry": "skill/adapters/stryker-teeth.mjs",
       "protocolVersion": "1.1",
       "testedToolRange": ">=10.1.0 <11.0.0",
@@ -22,8 +22,8 @@
       "stage": 4,
       "role": "hard",
       "checkedBy": [
-        "c01/crit-impact-recheck",
-        "c01/crit-no-cycles"
+        "brick-observations/codegraph-no-cycles",
+        "brick-observations/codegraph-impact-exists"
       ],
       "entry": "skill/adapters/codegraph-impact.mjs",
       "protocolVersion": "1.1",
@@ -37,7 +37,7 @@
       "tool": "gitleaks",
       "stage": 4,
       "role": "hard",
-      "checkedBy": "c01/crit-no-secrets",
+      "checkedBy": "brick-observations/gitleaks-no-secrets",
       "entry": "skill/adapters/gitleaks-scan.mjs",
       "protocolVersion": "1.1",
       "testedToolRange": ">=8.30.0 <9.0.0",
@@ -50,7 +50,7 @@
       "tool": "osv-scanner",
       "stage": 4,
       "role": "hard",
-      "checkedBy": "c01/crit-no-cves",
+      "checkedBy": "brick-observations/osv-no-high-severity",
       "entry": "skill/adapters/osv-vuln.mjs",
       "protocolVersion": "1.1",
       "testedToolRange": ">=2.7.0 <3.0.0",
@@ -63,7 +63,7 @@
       "tool": "depcruise",
       "stage": 4,
       "role": "hard",
-      "checkedBy": "c01/crit-dep-rules",
+      "checkedBy": "brick-observations/depcruise-no-violations",
       "entry": "skill/adapters/depcruise-arch.mjs",
       "protocolVersion": "1.1",
       "testedToolRange": ">=18.8.0 <19.0.0",
@@ -141,7 +141,7 @@
       "tool": "knip",
       "stage": 4,
       "role": "soft",
-      "checkedBy": "c01/crit-no-dead-deps",
+      "checkedBy": "brick-observations/knip-no-unlisted-deps",
       "entry": "skill/adapters/knip-prune.mjs",
       "protocolVersion": "1.1",
       "testedToolRange": ">=6.0.0 <7.0.0",
@@ -212,6 +212,84 @@
       "testedToolRange": ">=0.70.0 <1.0.0",
       "blindSpots": [
         "默认仅启用 misconfig 离线规则；启用 vuln 扫描依赖本机漏洞库更新且不覆盖零日漏洞"
+      ]
+    },
+    {
+      "id": "biome@stage4",
+      "tool": "biome",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "brick-observations/biome-no-errors",
+      "entry": "skill/adapters/biome-lint.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.6.0 <3.0.0",
+      "blindSpots": [
+        "只覆盖 JS/TS 语法与可疑写法，不判断业务正确性；不替代测试与变异实验"
+      ]
+    },
+    {
+      "id": "ast-grep@stage4",
+      "tool": "ast-grep",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-structural-pattern",
+      "entry": "skill/adapters/ast-grep-scan.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.51.0 <1.0.0",
+      "blindSpots": [
+        "只检出任一给定模式的结构匹配，不判断该模式是否代表缺陷；不覆盖未指定语言"
+      ]
+    },
+    {
+      "id": "ruff@stage4",
+      "tool": "ruff",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-python-lint",
+      "entry": "skill/adapters/ruff-lint.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.15.0 <1.0.0",
+      "blindSpots": [
+        "只覆盖单文件 Python AST 静态规则，不覆盖跨文件参数类型失配与运行时逻辑错误"
+      ]
+    },
+    {
+      "id": "pyright@stage4",
+      "tool": "pyright",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-python-types",
+      "entry": "skill/adapters/pyright-types.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.1.350 <2.0.0",
+      "blindSpots": [
+        "未加类型注解的动态反射调用与 Any 透传无法静态检出类型错误"
+      ]
+    },
+    {
+      "id": "typos@stage4",
+      "tool": "typos",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-no-typos",
+      "entry": "skill/adapters/typos-check.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.20.0 <2.0.0",
+      "blindSpots": [
+        "仅识别已知常见拼写错词表，无法检出拼写成另一个合法英文单词的语义错用"
+      ]
+    },
+    {
+      "id": "actionlint@stage4",
+      "tool": "actionlint",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-workflow-valid",
+      "entry": "skill/adapters/actionlint-ci.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.7.0 <2.0.0",
+      "blindSpots": [
+        "仅静态校验工作流语法、内置上下文类型与公开 Action 元数据，不验证远端 Runner 真实密钥与网络连通性"
       ]
     }
   ]

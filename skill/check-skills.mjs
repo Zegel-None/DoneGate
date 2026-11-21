@@ -19,8 +19,8 @@ import { tmpdir } from 'node:os';
 const argv = process.argv.slice(2);
 const rootIdx = argv.indexOf('--root');
 const ROOT = resolve(rootIdx >= 0 ? argv[rootIdx + 1] : '.');
-// 发布物里两个技能的名字是固定的：写在常量里，免得「目录改名了但这里没改」也悄悄放过
-const EXPECTED = ['donegate', 'donegate-judge'];
+// 发布物里三个技能的名字是固定的：写在常量里，免得「目录改名了但这里没改」也悄悄放过
+const EXPECTED = ['donegate', 'donegate-judge', 'donegate-forge'];
 
 const parseFrontmatter = (text) => {
   if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) return { error: '首行不是 `---`（可能是 BOM、空行或注释开头）' };
