@@ -1,4 +1,4 @@
-// DSH 三分屏夺舍外壳装配、Alt+单击拾取监听、悬停折叠回执扁条与派工闭环（零外网依赖，<= 296 行）
+// DSH 三分屏夺舍外壳装配、Alt+单击拾取监听、聊天框顶部悬停弹出对话窗口与派工闭环（零外网依赖，<= 320 行）
 export function buildWbDshShell() {
   const fn = function initDoneGateDshIntegration() {
     document.body.classList.add(IS_DSH_EMBED ? 'is-dsh-embed' : 'has-dsh-dock');
@@ -35,7 +35,7 @@ export function buildWbDshShell() {
       const shell = document.createElement('footer');
       shell.id = 'dsh-composer-shell';
       shell.innerHTML = [
-        '<div id="dsh-input-dock" class="hidden"></div>',
+        '<div id="dsh-input-dock"></div>',
         '<div class="rounded-2xl border px-3 py-2 flex flex-col gap-1.5" style="background:var(--surface-soft);border-color:var(--border-strong);">',
         '  <div id="dsh-quote-row" class="flex flex-wrap items-center gap-1.5"></div>',
         '  <div class="flex items-center gap-2">',
@@ -50,7 +50,13 @@ export function buildWbDshShell() {
     window.renderDshStandaloneShell = function renderDshStandaloneShell() {
       if (IS_DSH_EMBED) {
         if (window.parent && window.parent !== window) {
-          window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:dock-sync', items: dshRuntime.dockItems }, '*');
+          window.parent.postMessage({
+            source: 'donegate-canvas',
+            sessionId: DSH_SESSION_ID,
+            type: 'dg:dock-sync',
+            items: dshRuntime.dockItems,
+            messages: dshRuntime.chatHistory
+          }, '*');
         }
         return;
       }
@@ -64,28 +70,41 @@ export function buildWbDshShell() {
       }
       const dock = document.getElementById('dsh-input-dock');
       if (dock) {
-        if (!dshRuntime.dockItems.length) {
-          dock.className = 'hidden';
-          dock.innerHTML = '';
-        } else {
-          const top = dshRuntime.dockItems[0];
-          const isQ = top.kind === 'question' || top.kind === 'blocked';
-          const exp = Boolean(dshRuntime.dockExpanded || isQ);
-          dock.className = (exp ? 'is-expanded ' : '') + (isQ ? 'is-question' : '');
-          const moreHtml = exp && dshRuntime.dockItems.length > 1
-            ? '<div class="mt-1.5 pt-1 border-t text-[11px]" style="border-color:var(--border-subtle);color:var(--text-muted);">' +
-              dshRuntime.dockItems.slice(1, 4).map((it) => '<div>· ' + esc(it.title) + '</div>').join('') + '</div>'
-            : '';
-          dock.innerHTML = '<div class="flex items-center justify-between gap-2">' +
-            '<div class="' + (exp ? '' : 'truncate ') + 'flex-1"><b style="color:var(--primary);margin-right:6px;">' +
-            (isQ ? '❓ 待你拍板' : '⚡ 完结门回执') + '</b>' + esc(top.title) + '</div>' +
-            '<div class="flex items-center gap-1.5 shrink-0">' +
-            (top.approveRunId ? '<button type="button" class="dg-micro-btn" data-action="approve-autopilot-gate" data-run="' + esc(top.approveRunId) + '" data-node="' + esc(top.approveNodeId || '') + '">✓ 批准并续跑</button>' : '') +
-            (top.confirmBlankNodeId ? '<button type="button" class="dg-micro-btn" data-dock-confirm-blank="' + esc(top.confirmBlankNodeId) + '">套用门禁模块并继续</button>' : '') +
-            (top.targetNodeId ? '<button type="button" class="dg-micro-btn" data-dock-fly="' + esc(top.targetNodeId) + '">🎯 飞去节点</button>' : '') +
-            '<button type="button" class="dg-micro-btn" data-dock-dismiss="1">×</button>' +
-            '</div></div>' + moreHtml;
-        }
+        const top = dshRuntime.dockItems[0] || null;
+        const lastMsg = dshRuntime.chatHistory[dshRuntime.chatHistory.length - 1] || null;
+        const isQ = Boolean(top && (top.kind === 'question' || top.kind === 'blocked'));
+        const exp = Boolean(dshRuntime.dockExpanded || isQ);
+        dock.className = (exp ? 'is-expanded ' : '') + (isQ ? 'is-question' : '');
+        const barTitle = top
+          ? esc(top.title)
+          : (lastMsg ? esc((lastMsg.role === 'user' ? '你：' : 'Agent：') + lastMsg.text) : '鼠标移入展开对话记录与门禁回执 · 移开自动回到工作台');
+        const popoutHtml = exp
+          ? '<div id="dsh-chat-popout" class="dsh-chat-popout">' +
+            '<div class="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b text-[11px]" style="border-color:var(--border-subtle);">' +
+            '<b style="color:var(--primary);">💬 对话记录与门禁回执（移开鼠标自动收起回工作台）</b>' +
+            '<span style="color:var(--text-muted);">共 ' + dshRuntime.chatHistory.length + ' 条消息</span></div>' +
+            '<div class="flex flex-col gap-1.5">' +
+            dshRuntime.chatHistory.slice(-14).map((m) => (
+              '<div class="dsh-chat-bubble ' + (m.role === 'user' ? 'is-user' : 'is-agent') + '">' +
+              '<b class="mr-1.5">' + (m.role === 'user' ? '你' : 'Agent') + '</b>' + esc(m.text) + '</div>'
+            )).join('') +
+            '</div>' +
+            (dshRuntime.dockItems.length
+              ? '<div class="mt-2 pt-1.5 border-t text-[11px] flex flex-col gap-1" style="border-color:var(--border-subtle);color:var(--text-secondary);">' +
+                dshRuntime.dockItems.slice(0, 5).map((it) => '<div>⚡ ' + esc(it.title) + '</div>').join('') + '</div>'
+              : '') +
+            '</div>'
+          : '';
+        dock.innerHTML = popoutHtml +
+          '<div class="flex items-center justify-between gap-2">' +
+          '<div class="truncate flex-1"><b style="color:var(--primary);margin-right:6px;">' +
+          (top ? (isQ ? '❓ 待你拍板' : '⚡ 完结门回执') : '💬 聊天记录栏') + '</b>' + barTitle + '</div>' +
+          '<div class="flex items-center gap-1.5 shrink-0">' +
+          (top && top.approveRunId ? '<button type="button" class="dg-micro-btn" data-action="approve-autopilot-gate" data-run="' + esc(top.approveRunId) + '" data-node="' + esc(top.approveNodeId || '') + '">✓ 批准并续跑</button>' : '') +
+          (top && top.confirmBlankNodeId ? '<button type="button" class="dg-micro-btn" data-dock-confirm-blank="' + esc(top.confirmBlankNodeId) + '">套用门禁模块并继续</button>' : '') +
+          (top && top.targetNodeId ? '<button type="button" class="dg-micro-btn" data-dock-fly="' + esc(top.targetNodeId) + '">🎯 飞去节点</button>' : '') +
+          (top ? '<button type="button" class="dg-micro-btn" data-dock-dismiss="1">×</button>' : '<span class="text-[10.5px]" style="color:var(--text-muted);">▲ 悬停看对话</span>') +
+          '</div></div>';
       }
       const rp = document.getElementById('dsh-right-preview');
       if (rp) {
@@ -103,15 +122,20 @@ export function buildWbDshShell() {
       const prompt = String(rawPrompt || '').trim();
       if (!prompt && !dshRuntime.quotes.length) return;
       const targets = dshRuntime.quotes.slice();
+      const quoteTagStr = targets.map((t) => t.summary.label).join(' ');
+      dshRuntime.chatHistory.push({
+        id: 'u-' + Date.now(),
+        role: 'user',
+        text: (quoteTagStr ? quoteTagStr + ' ' : '') + (prompt || '执行改码与门禁验真')
+      });
       dshRuntime.quotes = [];
       const inp = document.getElementById('dsh-sim-input');
       if (inp) inp.value = '';
       if (!targets.length) {
-        dshRuntime.dockItems.unshift({
-          id: 'dk-' + Date.now(),
-          kind: 'receipt',
-          title: '全局回执：已扫描当前「' + (state.page === 'workshop' ? WORKFLOW_PACKS[state.activePackId].name : REPO_SANDBOXES[state.viewingRepoId].name) + '」（鼠标悬停展开详情，移开自动折成一行）'
-        });
+        const scopeTitle = state.page === 'workshop' ? WORKFLOW_PACKS[state.activePackId].name : (state.page === 'uiboard' ? 'UI 看板实时舞台' : REPO_SANDBOXES[state.viewingRepoId].name);
+        const reply = '已扫描当前「' + scopeTitle + '」并对齐确定性门禁状态。';
+        dshRuntime.chatHistory.push({ id: 'a-' + Date.now(), role: 'assistant', text: reply });
+        dshRuntime.dockItems.unshift({ id: 'dk-' + Date.now(), kind: 'receipt', title: '全局回执：' + reply });
         renderDshStandaloneShell();
         return;
       }
@@ -153,6 +177,13 @@ export function buildWbDshShell() {
           });
           renderDshCanvasAnchors();
         }, 380);
+      });
+      dshRuntime.chatHistory.push({
+        id: 'a-' + Date.now(),
+        role: 'assistant',
+        text: isAsk
+          ? '已在对应元素上方挂出契约与职责解释微卡。'
+          : '已指派工兵对 ' + targets.map((t) => '「' + t.title + '」').join('、') + ' 完成改码并通过确定性门禁验真。'
       });
       if (targets.length > 1) {
         dshRuntime.dockItems.unshift({

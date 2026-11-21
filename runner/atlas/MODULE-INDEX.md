@@ -35,3 +35,4 @@
 | `wb-history.mjs` | `buildWbHistoryScript` | 100 步快照撤销/重做栈与自动防抖落盘 |
 | `ui-views.mjs` / `ui-shell.mjs` | `buildViewsScript` / `buildShellScript` | 四标签活体全景体检弹窗、实时 SSE 水合刷新与过夜挂机触发入口 |
 | `wb-dsh-bridge.mjs` / `wb-dsh-shell.mjs` | `buildWbDshBridge` / `buildWbDshShell` | DeepSeek Harness Web `postMessage` 引用胶囊桥接、悬停扁条与两行验真微卡 |
+| `wb-uiboard.mjs` | `buildWbUiBoardScript` | Agent Native UI 看板控制器：编辑/测试双模切换、多套美学方案秒切与锁定、JSON 积木拖拽、语音改 UI 与真后端接线台 |

@@ -15,6 +15,7 @@ import { buildWbEventsActions } from './wb-events-actions.mjs';
 import { buildWbHistoryScript } from './wb-history.mjs';
 import { buildViewsScript } from './ui-views.mjs';
 import { buildWbDshBridge } from './wb-dsh-bridge.mjs';
+import { buildWbUiBoardScript } from './wb-uiboard.mjs';
 import { buildShellScript } from './ui-shell.mjs';
 import { buildWbDshShell } from './wb-dsh-shell.mjs';
 
@@ -48,6 +49,7 @@ export function renderAtlasWorkbenchHtml(atlas) {
     buildWbHistoryScript(),
     buildViewsScript(),
     buildWbDshBridge(),
+    buildWbUiBoardScript(),
     buildShellScript(),
     buildWbDshShell()
   ].join('\n');

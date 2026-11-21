@@ -10,6 +10,7 @@ import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplo
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
 import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
+import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -48,6 +49,9 @@ export function createDoneGateWebRouteHandler(projectRoot) {
 
   return async function handleDoneGateRoute(req, res, subPath) {
     const cleanPath = String(subPath || '/').split('?')[0];
+    if (cleanPath.startsWith('/uiboard/')) {
+      return handleUiBoardSubRoute(req, res, cleanPath, root, hub, readJsonBody);
+    }
 
     if (cleanPath === '/events' && req.method === 'GET') {
       res.writeHead(200, {

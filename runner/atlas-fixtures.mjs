@@ -1,5 +1,6 @@
 import { runAllDshChecks } from './dsh-fixtures.mjs';
 // 全栈项目活体全景工作台（开发流 + 项目看板 + 无界画布 + 100步撤销重做 + 全元素点选 + 实时服务）端到端自检夹具
+import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -187,6 +188,8 @@ try {
     html.includes('exportActiveWorkflowJson') &&
     html.includes('importWorkflowJsonText') &&
     html.includes('triggerJudgePackForCard') &&
+    html.includes('id="uiboard-stage"') &&
+    html.includes('renderUiBoardDrawer') &&
     html.includes('在文件夹中打开') &&
     html.includes('data-sel-text') &&
     existsSync(join(proj, '.donegate/atlas.json')) &&
@@ -283,6 +286,52 @@ try {
         obsPrevResp.ok && obsPrevJson.ok && obsPrevJson.content.includes('"checkedFiles": 12') &&
         judgePreResp.ok && judgePreJson.exitCode === 3
       ));
+
+    // 真测三阶段 Agent Native UI 看板全套接口（含本地 DevServer 同源注入代理与 SSRF 拦截）
+    const mockDevSrv = createServer((mReq, mRes) => {
+      mRes.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      mRes.end('<!DOCTYPE html><html><head><title>DevApp</title></head><body><button data-insp-path="apps/web/PayBtn.tsx:19:5">立即付款</button></body></html>');
+    });
+    await new Promise((r) => mockDevSrv.listen(0, '127.0.0.1', r));
+    const devPort = mockDevSrv.address().port;
+    try {
+      const uibSt = await (await fetch(`${srvInfo.url}donegate/api/uiboard/status`)).json();
+      const bridgeTxt = await (await fetch(`${srvInfo.url}donegate/api/uiboard/bridge.js`)).text();
+      const proxyHtml = await (await fetch(`${srvInfo.url}donegate/api/uiboard/proxy?url=` + encodeURIComponent(`http://127.0.0.1:${devPort}/`))).text();
+      const ssrfResp = await fetch(`${srvInfo.url}donegate/api/uiboard/proxy?url=` + encodeURIComponent('https://example.com/'));
+      const lockRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/theme-lock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId: 'industrial-dark', projectName: 'DemoApp' })
+      })).json();
+      const layRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/layout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op: 'add', blockType: 'confirm_modal_trigger' })
+      })).json();
+      const spRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/self-play`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      })).json();
+      const wireRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/wire-backend`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionIds: ['act-create-order'], markWired: true })
+      })).json();
+      const uibProv = await (await fetch(`${srvInfo.url}donegate/api/uiboard/provision`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      })).json();
+      c.check('UI 看板三阶段闭环：同源代理注入桥（防 SSRF）、多套美学锁 MASTER.md、JSON 拖拽加块、Agent 自测与假动作转真后端全通',
+        Boolean(
+          uibSt.ok && uibSt.uiboard.proposals.length === 3 &&
+          bridgeTxt.includes('dg-ui:element-selected') && bridgeTxt.includes('dg-ui:set-mode') &&
+          proxyHtml.includes('PayBtn.tsx:19:5') && proxyHtml.includes('/donegate/api/uiboard/bridge.js') &&
+          ssrfResp.status === 400 &&
+          lockRes.ok && existsSync(join(proj, 'design-system/MASTER.md')) &&
+          layRes.ok && layRes.layout.content.length === 5 &&
+          spRes.ok && spRes.checkedControls >= 5 && spRes.aestheticsPass === true &&
+          wireRes.ok && wireRes.targetCount === 1 && wireRes.uiboard.wiring.actions.find((a) => a.actionId === 'act-create-order')?.status === 'wired' &&
+          uibProv.ok && uibProv.depsDir === 'workflows/.deps/uiboard'
+        ));
+    } finally {
+      mockDevSrv.close();
+    }
 
     const folderResp = await fetch(`${srvInfo.url}api/workbench/open-folder`, {
       method: 'POST',

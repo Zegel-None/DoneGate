@@ -1,4 +1,4 @@
-// DSH 原生引用胶囊编码、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥（零外网依赖，<= 255 行）
+// DSH 原生引用胶囊编码、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥（零外网依赖，<= 268 行）
 export function buildWbDshBridge() {
   return `
 const DSH_URL_PARAMS = (() => {
@@ -11,6 +11,9 @@ const dshRuntime = {
   quotes: [],
   anchors: new Map(),
   dockItems: [],
+  chatHistory: [
+    { id: 'welcome-1', role: 'assistant', text: '工作台已就绪：点选任意卡片、UI 元素或连线累加蓝色引用胶囊，在下方输入框发话即可驱动改码验真；鼠标移入顶部窄栏随时查看完整对话记录，移开即刻回到工作台。' }
+  ],
   dockExpanded: false,
   rightPreview: { open: false, title: '', path: '', diffText: '' }
 };
@@ -42,7 +45,8 @@ function buildDshQuoteTarget(rawTarget) {
     group: '组合框',
     wire: '连线',
     text: '文本',
-    button: '按钮'
+    button: '按钮',
+    ui: 'UI元素'
   };
   const kindCn = kindMap[rawTarget.kind] || '元素';
   const shortName = clipLabelText(rawTarget.title, 18);
@@ -53,7 +57,7 @@ function buildDshQuoteTarget(rawTarget) {
   const summary = {
     label: chipLabel,
     title: uri,
-    detail: scopes !== '-' ? \`契约范围: \${scopes}\` : \`\${state.page === 'workshop' ? '开发流画布' : '项目看板'}\`,
+    detail: scopes !== '-' ? \`契约范围: \${scopes}\` : \`\${state.page === 'workshop' ? '开发流画布' : (state.page === 'uiboard' ? 'UI看板' : '项目看板')}\`,
     body: rawTarget.desc || \`\${kindCn}「\${rawTarget.title}」\`
   };
   const text = \`[DG-TARGET uri=\${uri} | kind=\${rawTarget.kind} | id=\${rawTarget.id} | label=\${shortName} | contracts=\${contracts} | scopes=\${scopes}]\`;

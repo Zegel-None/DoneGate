@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { dispatchCommand } from '../runner/donegate.mjs';
 import { computeProjectStatus } from '../runner/core/state-calc.mjs';
 import { countEffectiveCodeLines } from '../skill/check-commit-hygiene.mjs';
+import { auditHtmlAntiAiSlop, recommendAestheticProposals } from '../runner/dsh/ui-aesthetics.mjs';
 import { buildPreCommitScript, resolveSkillPrefix } from '../skill/install-hooks.mjs';
 
 describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与跨盘符钩子', () => {
@@ -255,6 +256,20 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('UI 看板美学引擎精准拦截紫粉渐变/纯 Emoji 反模式并按行业推荐 3 套差异化方案', () => {
+    const badSlop = '<div style="background: linear-gradient(90deg, #8b5cf6, #ec4899)"><button>🚀</button></div>';
+    const badAudit = auditHtmlAntiAiSlop(badSlop);
+    expect(badAudit.pass).toBe(false);
+    expect(badAudit.warnings.length).toBe(2);
+
+    const cleanUi = '<div style="background: var(--ui-surface)"><button class="ui-btn">新建工单</button></div>';
+    expect(auditHtmlAntiAiSlop(cleanUi).pass).toBe(true);
+
+    const props = recommendAestheticProposals('企业安全合规监控与审批台账', 3);
+    expect(props.length).toBe(3);
+    expect(new Set(props.map((p) => p.id)).size).toBe(3);
   });
 
   it('install-hooks 兼顾 Windows 盘符大小写、跨盘符绝对路径与 0.4.0 精简公开仓自检钩子', () => {
