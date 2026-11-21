@@ -1,4 +1,4 @@
-// DSH 三分屏夺舍外壳装配、Alt+单击拾取监听、悬停折叠回执扁条与派工闭环（零外网依赖，<= 245 行）
+// DSH 三分屏夺舍外壳装配、Alt+单击拾取监听、悬停折叠回执扁条与派工闭环（零外网依赖，<= 296 行）
 export function buildWbDshShell() {
   const fn = function initDoneGateDshIntegration() {
     document.body.classList.add(IS_DSH_EMBED ? 'is-dsh-embed' : 'has-dsh-dock');
@@ -69,7 +69,7 @@ export function buildWbDshShell() {
           dock.innerHTML = '';
         } else {
           const top = dshRuntime.dockItems[0];
-          const isQ = top.kind === 'question';
+          const isQ = top.kind === 'question' || top.kind === 'blocked';
           const exp = Boolean(dshRuntime.dockExpanded || isQ);
           dock.className = (exp ? 'is-expanded ' : '') + (isQ ? 'is-question' : '');
           const moreHtml = exp && dshRuntime.dockItems.length > 1
@@ -80,6 +80,7 @@ export function buildWbDshShell() {
             '<div class="' + (exp ? '' : 'truncate ') + 'flex-1"><b style="color:var(--primary);margin-right:6px;">' +
             (isQ ? '❓ 待你拍板' : '⚡ 完结门回执') + '</b>' + esc(top.title) + '</div>' +
             '<div class="flex items-center gap-1.5 shrink-0">' +
+            (top.approveRunId ? '<button type="button" class="dg-micro-btn" data-action="approve-autopilot-gate" data-run="' + esc(top.approveRunId) + '" data-node="' + esc(top.approveNodeId || '') + '">✓ 批准并续跑</button>' : '') +
             (top.confirmBlankNodeId ? '<button type="button" class="dg-micro-btn" data-dock-confirm-blank="' + esc(top.confirmBlankNodeId) + '">套用门禁模块并继续</button>' : '') +
             (top.targetNodeId ? '<button type="button" class="dg-micro-btn" data-dock-fly="' + esc(top.targetNodeId) + '">🎯 飞去节点</button>' : '') +
             '<button type="button" class="dg-micro-btn" data-dock-dismiss="1">×</button>' +
