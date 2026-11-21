@@ -19,7 +19,7 @@ import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
 } from './dsh/workflow-runner.mjs';
 import {
-  buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps
+  buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps, runNpmPrefixInstall
 } from './dsh/workflow-deps.mjs';
 import {
   AUTOPILOT_STATES, approveAutopilotHumanGate, loadAutopilotCheckpoint
@@ -49,9 +49,14 @@ export async function runAllDshChecks() {
     const mockRoot = win32.join('D:', 'Agent-Studio', 'DoneGate');
     const resUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join(mockRoot, 'runner', 'dsh', 'workflow-runner.mjs'));
     assert.equal(resUri, 'dsh-resource://file/session/sess-01/runner/dsh/workflow-runner.mjs');
+    const lowerDriveUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join('d:', 'agent-studio', 'donegate', 'runner', 'dsh', 'workflow-runner.mjs'));
+    assert.equal(lowerDriveUri, 'dsh-resource://file/session/sess-01/runner/dsh/workflow-runner.mjs');
     const cmdBytes = readFileSync(join(ROOT, 'install-dsh-web.cmd'), 'utf8');
     assert.ok(cmdBytes.includes('\r\n'), 'install-dsh-web.cmd 必须保持 Windows CRLF 换行');
     assert.ok(cmdBytes.includes('chcp 65001'), 'install-dsh-web.cmd 必须切换 UTF-8 代码页');
+    assert.ok(cmdBytes.includes('"%~1"'), 'install-dsh-web.cmd 必须使用 %~1 兼容带引号参数');
+    const gitAttrs = readFileSync(join(ROOT, '.gitattributes'), 'utf8');
+    assert.ok(gitAttrs.includes('*.cmd text eol=crlf') && gitAttrs.includes('* text=auto eol=lf'));
   });
 
   await check('2. DSH 原生蓝色引用胶囊多元素累加（卡片 + 连线 + 按钮）与两行验真微卡协议', () => {
@@ -208,11 +213,20 @@ export async function runAllDshChecks() {
       const binFile = join(tmp, 'workflows', '.deps', 'stage-sec-demo', '.bin', 'mock-sec-cli-never-installed');
       writeFileSync(binFile, '#!/bin/sh\necho 1.2.0\n', 'utf8');
       try { chmodSync(binFile, 0o755); } catch (err) { void err; }
+      assert.equal(inspectWorkflowDeps(tmp, pack, { platform: 'win32' }).ready, false, 'Windows 下严禁误把无扩展名 POSIX shell 包装脚本判为可执行');
+
+      writeFileSync(binFile + '.cmd', '@echo off\r\necho 1.2.0\r\n', 'utf8');
+      assert.equal(inspectWorkflowDeps(tmp, pack, { platform: 'win32' }).ready, true, 'Windows 下补齐 .cmd 入口后就位探针通过');
 
       const afterInspect = inspectWorkflowDeps(tmp, pack);
       assert.equal(afterInspect.ready, true);
       const wfEnv = buildWorkflowDepEnv(tmp, pack.id, { PATH: '/usr/bin' });
       assert.ok(wfEnv.PATH.includes(join('workflows', '.deps', 'stage-sec-demo', '.bin')));
+      const sys32 = win32.join('C:', 'Windows', 'System32');
+      const wfWinEnv = buildWorkflowDepEnv(tmp, pack.id, { Path: sys32 }, 'win32');
+      assert.equal('Path' in wfWinEnv, false, 'Windows 环境变量对象不得并存 Path 与 PATH 双键');
+      assert.ok(wfWinEnv.PATH.endsWith(';' + sys32));
+      assert.equal(runNpmPrefixInstall(tmp, 'bad;echo', tmp, 'win32').status, 2);
 
       const unblocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-2' }, pack);
       assert.equal(unblocked.ok, true);
