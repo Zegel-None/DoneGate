@@ -1,6 +1,6 @@
 // DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 255 行）
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
 import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
 import { resolveSafeWorkspaceFolders } from '../atlas/serve-atlas.mjs';
@@ -215,7 +215,13 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
       const rel = normalizeSlashes(u.searchParams.get('path') || '').replace(/^\/+/, '');
       const full = resolve(root, rel);
-      if (!normalizeSlashes(full).startsWith(normalizeSlashes(root)) || !existsSync(full)) {
+      const rawRel = relative(root, full);
+      const relCheck = normalizeSlashes(rawRel);
+      let isRegFile = false;
+      if (relCheck && !isAbsolute(rawRel) && !/^[A-Za-z]:/.test(relCheck) && !relCheck.startsWith('..') && existsSync(full)) {
+        try { isRegFile = statSync(full).isFile(); } catch (err) { void err; }
+      }
+      if (!isRegFile) {
         sendJson(res, 404, { ok: false, error: '文件不存在或越界' });
         return true;
       }

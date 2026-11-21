@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
-import { normalizeLf, normalizeSlashes } from './win-paths.mjs';
+import { normalizeLf, normalizeSlashes, normalizeWinDriveKey } from './win-paths.mjs';
 import { buildWorkflowDepEnv, inspectWorkflowDeps } from './workflow-deps.mjs';
 import {
   AUTOPILOT_STATES, createInitialCheckpoint, isHumanGateNode,
@@ -13,7 +13,7 @@ import {
 const HUB_MAP = new Map();
 
 export function getRunEventHub(projectRoot) {
-  const key = normalizeSlashes(resolve(projectRoot));
+  const key = normalizeWinDriveKey(resolve(projectRoot));
   if (!HUB_MAP.has(key)) {
     const listeners = new Set();
     const recentEvents = [];
@@ -63,8 +63,8 @@ export function preflightWorkflowPack(pack, opts = {}) {
   return { ok: true, exitCode: 0 };
 }
 
-function collectGitDiffStats(cwd) {
-  const r = spawnSync('git', ['-C', cwd, 'diff', '--numstat'], { encoding: 'utf8' });
+export function collectGitDiffStats(cwd) {
+  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'diff', '--numstat'], { encoding: 'utf8', windowsHide: true });
   if (r.status !== 0) return { files: [], added: 0, removed: 0 };
   const files = [];
   let added = 0;
@@ -79,11 +79,15 @@ function collectGitDiffStats(cwd) {
   return { files, added, removed };
 }
 
-function checkWriteScopeMandate(files, allowedScopes) {
+export function checkWriteScopeMandate(files, allowedScopes, platform = process.platform) {
   if (!Array.isArray(allowedScopes) || allowedScopes.length === 0) return { ok: true, violated: [] };
-  const cleanScopes = allowedScopes.map((s) => normalizeSlashes(s).replace(/^\.\//, ''));
+  const fold = (s) => (platform === 'win32' ? s.toLowerCase() : s);
+  const cleanScopes = allowedScopes.map((s) => fold(normalizeSlashes(s).replace(/^\.\//, '')));
   if (cleanScopes.includes('') || cleanScopes.includes('./')) return { ok: true, violated: [] };
-  const violated = files.filter((f) => !cleanScopes.some((s) => (s.endsWith('/') ? f.startsWith(s) : (f === s || f.startsWith(s + '/')))));
+  const violated = files.filter((rawFile) => {
+    const f = fold(normalizeSlashes(rawFile).replace(/^\.\//, ''));
+    return !cleanScopes.some((s) => (s.endsWith('/') ? f.startsWith(s) : (f === s || f.startsWith(s + '/'))));
+  });
   return { ok: violated.length === 0, violated };
 }
 

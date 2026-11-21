@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import path, { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../skill/hash.mjs';
 import { exportDashboardHtml, openInSystemBrowser } from '../core/dashboard.mjs';
@@ -50,18 +50,19 @@ function readReqJson(req, maxBytes = 2 * 1024 * 1024) {
   });
 }
 
-export function resolveSafeWorkspaceFolders(projectRoot, requestedPaths) {
-  const root = resolve(projectRoot);
-  const workspaceParent = dirname(root);
+export function resolveSafeWorkspaceFolders(projectRoot, requestedPaths, pathMod = path) {
+  const root = pathMod.resolve(projectRoot);
+  const workspaceParent = pathMod.dirname(root);
   const list = Array.isArray(requestedPaths) ? requestedPaths : [];
   const resolved = [];
 
   for (const raw of list.slice(0, 16)) {
     const clean = String(raw || '').trim().replace(/\\/g, '/');
     if (!clean) continue;
-    const candidate = resolve(root, clean);
-    const relToParent = relative(workspaceParent, candidate).replace(/\\/g, '/');
-    if (relToParent.startsWith('..') || relToParent.includes('/../')) {
+    const candidate = pathMod.resolve(root, clean);
+    const rawRel = pathMod.relative(workspaceParent, candidate);
+    const relToParent = rawRel.replace(/\\/g, '/');
+    if (!relToParent || pathMod.isAbsolute(rawRel) || /^[A-Za-z]:/.test(relToParent) || relToParent.startsWith('..') || relToParent.includes('/../')) {
       resolved.push({ requested: clean, absPath: null, exists: false, blocked: true });
       continue;
     }
@@ -69,10 +70,10 @@ export function resolveSafeWorkspaceFolders(projectRoot, requestedPaths) {
     let exists = existsSync(candidate);
     if (exists) {
       try {
-        if (!statSync(candidate).isDirectory()) targetDir = dirname(candidate);
+        if (!statSync(candidate).isDirectory()) targetDir = pathMod.dirname(candidate);
       } catch (err) { void err; }
-    } else if (existsSync(dirname(candidate))) {
-      targetDir = dirname(candidate);
+    } else if (existsSync(pathMod.dirname(candidate))) {
+      targetDir = pathMod.dirname(candidate);
       exists = true;
     }
     resolved.push({ requested: clean, absPath: targetDir, exists, blocked: false });
@@ -208,7 +209,7 @@ export async function ensureBackgroundAtlasServer(projectRoot) {
   if (await isUp()) return { ok: true, port, url: `http://127.0.0.1:${port}/`, reused: true };
   try {
     mkdirSync(join(root, '.donegate'), { recursive: true });
-    const child = spawn(process.execPath, [THIS_FILE, '--root', root, '--port', String(port)], { detached: true, stdio: 'ignore' });
+    const child = spawn(process.execPath, [THIS_FILE, '--root', root, '--port', String(port)], { detached: true, stdio: 'ignore', windowsHide: true });
     child.unref();
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 75));
