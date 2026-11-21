@@ -8,7 +8,6 @@ Desktop.ini
 
 # 技能与 DSH 本地运行态副本（由 install-skills.mjs / dsh-fixtures.mjs 生成）
 .dsh/
-.githooks/
 
 # arch-grower 的状态目录（graph.json / 看板 / shadow git，不进版本库）
 .arch/
@@ -32,6 +31,8 @@ node_modules/
 .stryker-tmp/
 reports/
 coverage/
+# 开发流按需拉取的外部开源项目与专属隔离运行环境（类 ComfyUI 模型目录，不随仓库打包）
+workflows/.deps/
 # V4 adapter & evidence runtime outputs (Mortar Protocol v1.1)
 .node-contract/adapters/
 .donegate/adapters/
@@ -49,4 +50,5 @@ coverage/
 .donegate/workbench-state.json
 .donegate/quarantine/
 .donegate/scratch/
+.donegate/runs/
 .donegate/dsh-bundle/
