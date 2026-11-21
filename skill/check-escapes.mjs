@@ -239,7 +239,7 @@ const BUILTIN_GATES = {
         return `${label}: donegate/SKILL.md 仍指示用户跑不在包里的 skill/check-plan.mjs`;
       }
       for (const f of walkByExt(dir, ['.md'])) {
-        if (relative(dir, f).split(sep)[0] === '.donegate') continue;
+        if (relative(dir, f).split(sep)[0].startsWith('.')) continue;
         const t = readFileSync(f, 'utf8');
         if (t.includes('`标签（调研/评审材料')) return `${label}: ${relative(dir, f)} 反引号内链接示例被误降级`;
         for (const m of t.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {

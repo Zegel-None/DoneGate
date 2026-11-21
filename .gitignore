@@ -1,0 +1,50 @@
+# Windows / macOS 资源管理器垃圾
+Thumbs.db
+Desktop.ini
+.DS_Store
+# 临时文件
+*.tmp
+~$*
+
+# 技能版部署副本（由 skill/install-skills.mjs 生成，源在 node-contract*/）
+.dsh/skills/
+
+# arch-grower 的状态目录（graph.json / 看板 / shadow git，不进版本库）
+.arch/
+
+# 每轮改动前的仓库快照（备份不进版本库）
+_备份/
+
+# 外部工具的本地状态目录（CodeGraph / AOCI-CODE，见 skill/11；只在本机用，不进版本库）
+.codegraph/
+.aoci/
+aoci.txt
+aoci.meta.txt
+aoci.code.txt
+
+# 分发包构建产物（skill/build-dist.mjs 生成，默认打到仓库外 ../_dist/，不入库）
+dist/
+_dist/
+
+# 开发层依赖与变异测试产物（2026-11-20 接 Stryker 时加；十二条判据不读这些）
+node_modules/
+.stryker-tmp/
+reports/
+coverage/
+# V4 adapter & evidence runtime outputs (Mortar Protocol v1.1)
+.node-contract/adapters/
+.donegate/adapters/
+.donegate/evidence/
+.donegate/runner.json
+.donegate/verify/
+.donegate/chain.jsonl
+.donegate/dashboard.html
+.donegate/notes.jsonl
+.donegate/hygiene-bypasses.jsonl
+.donegate/atlas.json
+.donegate/PROJECT-MAP.md
+.donegate/project.c4
+.donegate/atlas-server.json
+.donegate/workbench-state.json
+.donegate/quarantine/
+.donegate/scratch/
