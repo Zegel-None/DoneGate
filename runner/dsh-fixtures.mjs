@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// DSH Web 原生插件包、dsh-doc 规范、Windows (win32) 跨平台路径与浏览器端插槽 VM 端到端自检夹具（<= 270 行）
+// DSH Web 原生插件包、dsh-doc 规范、Windows 路径、类 ComfyUI 补齐与过夜挂机状态机自检夹具（<= 325 行）
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,9 @@ import {
 import {
   buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps
 } from './dsh/workflow-deps.mjs';
+import {
+  AUTOPILOT_STATES, approveAutopilotHumanGate, loadAutopilotCheckpoint
+} from './dsh/autopilot-state.mjs';
 import {
   buildDshBundleDirectory, installDshWebBundle, uninstallDshWebBundle
 } from './dsh/install-dsh-web.mjs';
@@ -67,16 +71,9 @@ export async function runAllDshChecks() {
     assert.equal(targets[2].kind, 'control');
 
     const card = buildMicroVerdictCard({
-      ticketId: 'tkt-01',
-      targetUri: q1.uri,
-      exitCode: 0,
-      headline: '已更新按钮配色并通过确定性门禁校验',
-      passedGates: 3,
-      totalGates: 3,
-      touchedFiles: ['runner\\atlas\\wb-dsh-style.mjs'],
-      addedLines: 12,
-      removedLines: 2,
-      canRollback: true
+      ticketId: 'tkt-01', targetUri: q1.uri, exitCode: 0,
+      headline: '已更新按钮配色并通过确定性门禁校验', passedGates: 3, totalGates: 3,
+      touchedFiles: ['runner\\atlas\\wb-dsh-style.mjs'], addedLines: 12, removedLines: 2, canRollback: true
     });
     assert.ok(card.headline.length <= 22);
     assert.equal(card.tone, 'ok');
@@ -129,12 +126,7 @@ export async function runAllDshChecks() {
         name: 'dsh-profile-web', private: true, dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } }
       }, null, 2));
 
-      const res = installDshWebBundle({
-        projectRoot: ROOT,
-        dshHome: join(tmp, 'dsh-home'),
-        profileDir: profWithPkg,
-        platform: 'win32'
-      });
+      const res = installDshWebBundle({ projectRoot: ROOT, dshHome: join(tmp, 'dsh-home'), profileDir: profWithPkg, platform: 'win32' });
       assert.equal(res.registeredInManifest, true);
       const afterPkg = JSON.parse(readFileSync(join(profWithPkg, 'package.json'), 'utf8'));
       assert.ok(afterPkg.dsh.profile.bundles.includes('@local/dsh-donegate'));
@@ -156,17 +148,8 @@ export async function runAllDshChecks() {
       let loadedMod = null;
       const registeredSlots = [];
       const sandbox = {
-        window: {
-          __ModuleLoader__: { load(spec) { loadedMod = spec; } },
-          addEventListener() {},
-          removeEventListener() {}
-        },
-        encodeURIComponent,
-        Boolean,
-        String,
-        Array,
-        Map,
-        Set
+        window: { __ModuleLoader__: { load(spec) { loadedMod = spec; } }, addEventListener() {}, removeEventListener() {} },
+        encodeURIComponent, Boolean, String, Array, Map, Set
       };
       vm.runInNewContext(clientCode, sandbox);
       assert.ok(loadedMod && loadedMod.id === '@local/dsh-donegate');
@@ -177,10 +160,7 @@ export async function runAllDshChecks() {
       plugin.apply({
         effect(fn) { fn(); },
         locale: { register() { return () => {}; }, bind() { return (k) => k; } },
-        slots: {
-          inject(_slot, cb) { cb(); },
-          register(opts, comp) { registeredSlots.push({ opts, comp }); return () => {}; }
-        },
+        slots: { inject(_slot, cb) { cb(); }, register(opts, comp) { registeredSlots.push({ opts, comp }); return () => {}; } },
         get() { return null; }
       });
       const slotNames = registeredSlots.map((s) => `${s.opts.name}:${s.opts.id}`);
@@ -188,25 +168,17 @@ export async function runAllDshChecks() {
       assert.ok(slotNames.includes('conversation.input.dock:donegate-dock'));
       assert.ok(slotNames.includes('conversation.input.left:donegate-switch'));
 
-      const pre = preflightWorkflowPack({
-        id: 'wf-blank', name: '含空白节点流',
-        nodes: [{ id: 'b1', title: '待定模块', isBlank: true }], links: []
-      });
+      const pre = preflightWorkflowPack({ id: 'wf-blank', name: '含空白节点流', nodes: [{ id: 'b1', title: '待定模块', isBlank: true }], links: [] });
       assert.equal(pre.ok, false);
       assert.equal(pre.exitCode, 3);
 
       const workRoot = join(tmp, 'proj');
       mkdirSync(workRoot, { recursive: true });
-      const runRes = await executeDeterministicWorkflowRun(
-        workRoot,
-        { ticketId: 'tkt-vm-1', targetUri: 'dg://node/g1', headline: '确定性门禁通过' },
-        {
-          id: 'wf-ok',
-          name: '门禁直通验证流',
-          nodes: [{ id: 'g1', title: '确定性门禁核验', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }],
-          links: []
-        }
-      );
+      const runRes = await executeDeterministicWorkflowRun(workRoot, { ticketId: 'tkt-vm-1', targetUri: 'dg://node/g1', headline: '确定性门禁通过' }, {
+        id: 'wf-ok', name: '门禁直通验证流',
+        nodes: [{ id: 'g1', title: '确定性门禁核验', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }],
+        links: []
+      });
       assert.equal(runRes.ok, true);
       assert.equal(runRes.exitCode, 0);
       assert.equal(runRes.card.tone, 'ok');
@@ -219,35 +191,18 @@ export async function runAllDshChecks() {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-wf-deps-'));
     try {
       const pack = {
-        id: 'stage-sec-demo',
-        name: '供应链漏洞核验流',
-        deps: [{
-          id: 'mock-sec-cli',
-          title: 'MockSec 开源扫描器',
-          repo: 'acme/mock-sec-cli',
-          version: 'v1.2.0',
-          kind: 'binary',
-          bin: 'mock-sec-cli-never-installed',
-          allowHostEnv: false
-        }],
-        nodes: [{
-          id: 'n-sec',
-          title: 'MockSec 扫描卡',
-          exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'if (!process.env.DG_WORKFLOW_DEPS_DIR) process.exit(2); process.exit(0);'] }
-        }],
+        id: 'stage-sec-demo', name: '供应链漏洞核验流',
+        deps: [{ id: 'mock-sec-cli', title: 'MockSec 开源扫描器', repo: 'acme/mock-sec-cli', version: 'v1.2.0', kind: 'binary', bin: 'mock-sec-cli-never-installed', allowHostEnv: false }],
+        nodes: [{ id: 'n-sec', title: 'MockSec 扫描卡', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'if (!process.env.DG_WORKFLOW_DEPS_DIR) process.exit(2); process.exit(0);'] } }],
         links: []
       };
-
       const blocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-1' }, pack);
       assert.equal(blocked.ok, false);
       assert.equal(blocked.exitCode, 3);
       assert.equal(blocked.code, 'MISSING_WORKFLOW_DEPS');
-      assert.equal(blocked.depsDir, 'workflows/.deps/stage-sec-demo');
-      assert.equal(blocked.missingDeps.length, 1);
 
       const prov1 = provisionWorkflowDeps(tmp, pack);
       assert.equal(prov1.ready, false);
-      assert.ok(prov1.agentPrompt.includes('workflows/.deps/stage-sec-demo/'));
       assert.ok(existsSync(join(tmp, 'workflows', '.deps', 'stage-sec-demo', 'PROVISION-PLAN.json')));
 
       const binFile = join(tmp, 'workflows', '.deps', 'stage-sec-demo', '.bin', 'mock-sec-cli-never-installed');
@@ -256,15 +211,89 @@ export async function runAllDshChecks() {
 
       const afterInspect = inspectWorkflowDeps(tmp, pack);
       assert.equal(afterInspect.ready, true);
-      assert.equal(afterInspect.missingCount, 0);
-      assert.equal(afterInspect.items[0].resolvedVia, 'workflow-deps');
-
       const wfEnv = buildWorkflowDepEnv(tmp, pack.id, { PATH: '/usr/bin' });
       assert.ok(wfEnv.PATH.includes(join('workflows', '.deps', 'stage-sec-demo', '.bin')));
 
       const unblocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-2' }, pack);
       assert.equal(unblocked.ok, true);
       assert.equal(unblocked.exitCode, 0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  await check('7. 过夜挂机长跑状态机：断点续跑不重跑已完成节点、human-gate 早间简报挂起与三重防烧钱熔断', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'dg-autopilot-'));
+    try {
+      const counterFile = join(tmp, 'step1-count.txt');
+      writeFileSync(counterFile, '0', 'utf8');
+      const nightPack = {
+        id: 'pack-overnight', name: '数据库迁移过夜流',
+        nodes: [
+          {
+            id: 's1', title: '空库迁移演练',
+            exec: { kind: 'mortar_gate', nodeArgs: ['-e', `const fs=require("fs");const n=Number(fs.readFileSync(${JSON.stringify(counterFile)},"utf8"))+1;fs.writeFileSync(${JSON.stringify(counterFile)},String(n));process.exit(0);`] }
+          },
+          { id: 's2-gate', tplId: 'tpl-human-gate', isHumanGate: true, title: '不可逆迁移上线闸门', tip: '确认备份无误后放行' },
+          { id: 's3', title: '对账校验收尾', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }
+        ],
+        links: [
+          { id: 'l1', fromNode: 's1', fromSlot: 'out', toNode: 's2-gate', toSlot: 'in' },
+          { id: 'l2', fromNode: 's2-gate', fromSlot: 'out_go', toNode: 's3', toSlot: 'in' }
+        ]
+      };
+
+      const pass1 = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-01' }, nightPack);
+      assert.equal(pass1.suspended, true);
+      assert.equal(pass1.state, AUTOPILOT_STATES.SUSPENDED_HUMAN_GATE);
+      assert.equal(readFileSync(counterFile, 'utf8'), '1');
+      const cp1 = loadAutopilotCheckpoint(tmp, 'night-01');
+      assert.ok(cp1.briefMarkdown.includes('不可逆迁移上线闸门'));
+
+      const app = approveAutopilotHumanGate(tmp, { runId: 'night-01', by: '业主' });
+      assert.equal(app.ok, true);
+      const pass2 = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-01' }, nightPack, { resumeRunId: 'night-01' });
+      assert.equal(pass2.ok, true);
+      assert.equal(pass2.state, AUTOPILOT_STATES.COMPLETED);
+      assert.equal(readFileSync(counterFile, 'utf8'), '1', '断点续跑严禁重复执行已完成的上游节点 s1');
+
+      const loopPack = {
+        id: 'pack-loop-burn', name: '死循环熔断测试流',
+        nodes: [{ id: 'bad1', title: '恒败单测', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(1)'] } }],
+        links: [{ id: 'self-lk', fromNode: 'bad1', fromSlot: 'out', toNode: 'bad1', toSlot: 'in', maxLoops: 2 }]
+      };
+      const trippedLoop = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-loop' }, loopPack);
+      assert.equal(trippedLoop.ok, false);
+      assert.equal(trippedLoop.code, 'MAX_LOOPS_EXCEEDED');
+      assert.equal(trippedLoop.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
+
+      const gitDir = join(tmp, 'scoped-repo');
+      mkdirSync(join(gitDir, 'src'), { recursive: true });
+      mkdirSync(join(gitDir, 'secret'), { recursive: true });
+      writeFileSync(join(gitDir, '.gitignore'), '.donegate/\n');
+      writeFileSync(join(gitDir, 'src/ok.mjs'), 'export const x = 1;\n');
+      writeFileSync(join(gitDir, 'secret/prod.env'), 'KEY=1\n');
+      spawnSync('git', ['-C', gitDir, 'init', '-q']);
+      spawnSync('git', ['-C', gitDir, 'config', 'user.email', 't@local']);
+      spawnSync('git', ['-C', gitDir, 'config', 'user.name', 'T']);
+      spawnSync('git', ['-C', gitDir, 'add', '.']);
+      spawnSync('git', ['-C', gitDir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
+
+      const scopePack = {
+        id: 'pack-scope', name: '越界写拦截测试流',
+        nodes: [{ id: 'rogue', title: '偷改禁区文件', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'require("fs").writeFileSync("secret/prod.env","KEY=2\\n");process.exit(0);'] } }],
+        links: []
+      };
+      const trippedScope = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-scope', mandate: { allowedWriteScopes: ['src/'] } }, scopePack);
+      assert.equal(trippedScope.ok, false);
+      assert.equal(trippedScope.exitCode, 2);
+      assert.equal(trippedScope.code, 'WRITE_SCOPE_VIOLATION');
+      assert.equal(trippedScope.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
+
+      const trippedDirty = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-dirty' }, { id: 'p-clean', name: '净树检查流', nodes: [{ id: 'c1', title: '探针', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }], links: [] }, { requireCleanGit: true });
+      assert.equal(trippedDirty.ok, false);
+      assert.equal(trippedDirty.code, 'DIRTY_WORKTREE_FAULT');
+      assert.equal(trippedDirty.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

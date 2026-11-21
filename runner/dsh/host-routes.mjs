@@ -1,4 +1,4 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 215 行）
+// DSH Web 同源路由与 SSE 脉冲流处理器（同时兼容 DSH ctx.webServer 与本地独立预览，<= 255 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
@@ -8,6 +8,7 @@ import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-pr
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
+import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -53,7 +54,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive'
       });
-      res.write(`data: ${JSON.stringify({ type: 'connected', ts: Date.now(), dockItems: hub.dockItems, cards: [...hub.activeCards.values()] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'connected', ts: Date.now(), dockItems: hub.dockItems, cards: [...hub.activeCards.values()], autopilot: loadAutopilotCheckpoint(root) })}\n\n`);
       const onEvt = (evt) => {
         try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch (err) { void err; }
       };
@@ -68,9 +69,51 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         platform: process.platform,
         atlas: buildDashboardPayload(root),
         state: readSavedWorkbenchState(root),
+        autopilot: loadAutopilotCheckpoint(root),
         dockItems: hub.dockItems,
         cards: [...hub.activeCards.values()]
       });
+      return true;
+    }
+
+    if (cleanPath === '/autopilot/status' && req.method === 'GET') {
+      const u = new URL(req.url || '/', 'http://127.0.0.1');
+      const cp = loadAutopilotCheckpoint(root, u.searchParams.get('runId') || null);
+      sendJson(res, 200, { ok: true, autopilot: cp });
+      return true;
+    }
+
+    if (cleanPath === '/autopilot/start' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const pack = body.pack || {};
+      const ticket = {
+        ticketId: body.runId || `night-${Date.now()}`,
+        headline: body.headline || '',
+        mandate: { allowedWriteScopes: Array.isArray(body.allowedWriteScopes) ? body.allowedWriteScopes : [] }
+      };
+      const out = await executeDeterministicWorkflowRun(root, ticket, pack, {
+        resumeRunId: body.resumeRunId || null,
+        requireCleanGit: body.requireCleanGit === true
+      });
+      sendJson(res, 200, out);
+      return true;
+    }
+
+    if (cleanPath === '/autopilot/approve' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const app = approveAutopilotHumanGate(root, {
+        runId: body.runId || null,
+        nodeId: body.nodeId || null,
+        by: body.by || '业主',
+        note: body.note || '早间人工确认放行'
+      });
+      if (!app.ok) { sendJson(res, 400, app); return true; }
+      if (body.pack && Array.isArray(body.pack.nodes)) {
+        const resumed = await executeDeterministicWorkflowRun(root, app.checkpoint.ticket || {}, body.pack, { resumeRunId: app.runId });
+        sendJson(res, 200, resumed);
+        return true;
+      }
+      sendJson(res, 200, app);
       return true;
     }
 
@@ -98,9 +141,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const body = await readJsonBody(req);
       if (body.packs && typeof body.packs === 'object') {
         const reports = {};
-        for (const [k, pk] of Object.entries(body.packs)) {
-          reports[k] = inspectWorkflowDeps(root, pk);
-        }
+        for (const [k, pk] of Object.entries(body.packs)) reports[k] = inspectWorkflowDeps(root, pk);
         sendJson(res, 200, { ok: true, reports });
         return true;
       }
@@ -110,23 +151,15 @@ export function createDoneGateWebRouteHandler(projectRoot) {
 
     if (cleanPath === '/workflow-deps/provision' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const pack = body.pack || {};
-      const result = provisionWorkflowDeps(root, pack, {
+      const result = provisionWorkflowDeps(root, body.pack || {}, {
         runNpm: body.runNpm === true,
         markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
       });
       const title = result.ready
         ? `开发流「${result.packName}」全部 ${result.total} 项依赖已在 ${result.depsDir} 就位，可随时运行`
         : `已建立专属环境目录 ${result.depsDir} 并派发后台补齐工单（待装 ${result.missingCount} 项）`;
-      hub.emit({
-        type: 'workflow_deps_updated',
-        packId: result.packId,
-        report: result
-      });
-      hub.emit({
-        type: 'dock_item',
-        item: { id: `wfdep-${Date.now()}`, kind: result.ready ? 'summary' : 'receipt', tone: result.ready ? 'ok' : 'warn', title }
-      });
+      hub.emit({ type: 'workflow_deps_updated', packId: result.packId, report: result });
+      hub.emit({ type: 'dock_item', item: { id: `wfdep-${Date.now()}`, kind: result.ready ? 'summary' : 'receipt', tone: result.ready ? 'ok' : 'warn', title } });
       sendJson(res, 200, result);
       return true;
     }
@@ -136,9 +169,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const resolved = resolveSafeWorkspaceFolders(root, body.paths);
       let openedCount = 0;
       if (body.openOs !== false) {
-        for (const r of resolved) {
-          if (r.exists && r.absPath && openInWindowsOrHostExplorer(r.absPath)) openedCount++;
-        }
+        for (const r of resolved) if (r.exists && r.absPath && openInWindowsOrHostExplorer(r.absPath)) openedCount++;
       }
       const dshResources = body.sessionId
         ? resolved.filter((r) => r.exists && r.requested).map((r) => buildDshFileResourceAddress(body.sessionId, root, r.requested))
@@ -149,9 +180,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
 
     if (cleanPath === '/dispatch' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const targets = Array.isArray(body.targets) && body.targets.length > 0
-        ? body.targets
-        : parseQuotedTargetsFromMessage(body.message || '');
+      const targets = Array.isArray(body.targets) && body.targets.length > 0 ? body.targets : parseQuotedTargetsFromMessage(body.message || '');
       if (body.pack && body.pack.nodes) {
         const ticket = {
           ticketId: body.ticketId || `tkt-${Date.now()}`,
@@ -165,12 +194,8 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       }
       const cards = targets.map((t, idx) => {
         const card = buildMicroVerdictCard({
-          ticketId: `tkt-${Date.now()}-${idx}`,
-          targetUri: t.uri,
-          exitCode: 0,
-          headline: `${t.name || t.id} 已同步处理`,
-          passedGates: 1,
-          totalGates: 1,
+          ticketId: `tkt-${Date.now()}-${idx}`, targetUri: t.uri, exitCode: 0,
+          headline: `${t.name || t.id} 已同步处理`, passedGates: 1, totalGates: 1,
           touchedFiles: (t.scopes || []).filter((s) => !s.endsWith('/'))
         });
         hub.emit({ type: 'micro_card_ready', card });
