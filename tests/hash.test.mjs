@@ -52,7 +52,7 @@ describe('sortKeysDeep：键名递归排序、数组保序、原始值与 null �
   });
 });
 
-describe('frozenHashOf：契约冻结哈希精确口径', () => {
+describe('frozenHashOf：G-09 的精确口径', () => {
   const base = { id: 'c01', claim: 'x', scope: 'y', required: true };
 
   it('键序不同、哈希相同', () => {
@@ -64,7 +64,7 @@ describe('frozenHashOf：契约冻结哈希精确口径', () => {
     const withMeta = { ...base, frozenHash: 'abc', teeth: { status: 'killed' }, signedBy: '业主' };
     expect(frozenHashOf(withMeta)).toBe(frozenHashOf(base));
   });
-  it('保留了 scopeAck（参与哈希）', () => {
+  it('保留了 scopeAck（G-10：它参与哈希）', () => {
     const withAck = { ...base, scopeAck: { by: '业主', at: '2026-11-19' } };
     expect(frozenHashOf(withAck)).not.toBe(frozenHashOf(base));
   });

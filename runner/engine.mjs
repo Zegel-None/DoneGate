@@ -113,7 +113,6 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
   const activeContracts = contracts.filter((c) => c && c.id && !c.retired);
   const byId = new Map(activeContracts.map((c) => [c.id, c]));
 
-  // 反向依赖图：上游 id -> 依赖它的下游 id 列表
   const revDeps = new Map();
   for (const c of activeContracts) {
     for (const dep of (Array.isArray(c.dependsOn) ? c.dependsOn : [])) {
@@ -123,9 +122,8 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
     }
   }
 
-  const effects = new Map(); // id -> { contractId, effect: 'expired'|'pending-recheck', reason, pendingRecheck, preservedStatus, subclass, countsInPassCount, historicalEvidencePreserved }
+  const effects = new Map();
 
-  // 1. 自身代码改动 → 过期（§11.1）
   const ownIds = [];
   for (const c of activeContracts) {
     if (changed.some((f) => scopeMatchesFile(c.scope, f))) {
@@ -144,7 +142,6 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
     }
   }
 
-  // 2. 直接依赖（1-hop）→ 过期（§11.1）
   const directDependIds = [];
   for (const id of ownIds) {
     for (const childId of (revDeps.get(id) || [])) {
@@ -164,7 +161,6 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
     }
   }
 
-  // 3. 传递依赖（≥2-hop）+ codegraph 影响面 → pending-recheck（不改既有「通过」主状态，不计入通过数，路由至 A4）
   const queue = [...directDependIds];
   const visited = new Set([...ownIds, ...directDependIds]);
   while (queue.length > 0) {
