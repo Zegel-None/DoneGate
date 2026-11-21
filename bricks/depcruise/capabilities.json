@@ -1,0 +1,47 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "depcruise",
+  "registryId": "depcruise@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "violationCount",
+      "from": "violationCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "四条边界规则的违例数",
+      "wired": true
+    },
+    {
+      "id": "modulesCount",
+      "from": "modulesCount",
+      "kind": "count",
+      "assertableAs": [
+        "min"
+      ],
+      "note": "巡航到的模块数；为 0 说明空跑，那个 0 不算数",
+      "wired": true
+    },
+    {
+      "id": "violations",
+      "from": "violations",
+      "kind": "list",
+      "assertableAs": [
+        "empty"
+      ],
+      "note": "与计数一致校验；明细供定位",
+      "wired": true
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "仅静态解析 import/require，不覆盖动态路径拼接、运行期 DI 与非 JS/TS 语言"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/depcruise-no-violations"
+  }
+}

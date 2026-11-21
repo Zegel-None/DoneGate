@@ -1,0 +1,37 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "jscpd",
+  "registryId": "jscpd@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "cloneCount",
+      "from": "cloneCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "克隆对属重构建议（当前 3 组微克隆），无「必须为 0」底线"
+    },
+    {
+      "id": "clonePairs",
+      "from": "clonePairs",
+      "kind": "list",
+      "assertableAs": [
+        "manual"
+      ],
+      "wired": false,
+      "reason": "明细供人看是否值得抽公共函数"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "仅检出语法近似的文本克隆对，无法检出同义异构的语义重复"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "克隆对数属重构建议（当前 3 组微克隆），没有「必须为 0」的业务底线；作为旁注给人看。"
+  }
+}

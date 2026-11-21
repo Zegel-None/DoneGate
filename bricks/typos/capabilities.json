@@ -1,0 +1,43 @@
+{
+  "说明": "砖头能力清单：typos 跨语言源码标识符与配置键拼写滑移检查。",
+  "tool": "typos",
+  "registryId": "typos@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "typoCount",
+      "from": "typoCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "需项目先建 _typos.toml 排除领域缩写专名后再接零容忍判据，避免误拦缩写词",
+      "note": "疑似拼写滑移总数"
+    },
+    {
+      "id": "filesWithTypos",
+      "from": "filesWithTypos",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "同上，未配项目词表前作旁注审查",
+      "note": "涉及文件数"
+    }
+  ],
+  "requiresProject": [
+    "任意文本源码仓库（建议配 _typos.toml 词表白名单）"
+  ],
+  "blindSpots": [
+    "仅识别已知常见拼写错词表，无法检出拼写成另一个合法英文单词的语义错用"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "未配置项目专属 _typos.toml 缩写白名单前先作旁注观测，防领域缩写误报；用户项目配齐词表后可接零容忍判据。"
+  }
+}

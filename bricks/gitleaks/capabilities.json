@@ -1,0 +1,47 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "gitleaks",
+  "registryId": "gitleaks@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "findingCount",
+      "from": "findingCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "密钥零容忍",
+      "wired": true
+    },
+    {
+      "id": "findings",
+      "from": "findings",
+      "kind": "list",
+      "assertableAs": [
+        "empty"
+      ],
+      "note": "与计数一致校验",
+      "wired": true
+    },
+    {
+      "id": "findings[].rule/entropy",
+      "from": "findings",
+      "kind": "list",
+      "assertableAs": [
+        "manual"
+      ],
+      "wired": false,
+      "reason": "命中详情供人判真假阳性，机器判不了"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "基于规则与熵值的静态密钥检测，无法识别自定义私有协议凭据或运行时注入的环境变量密钥"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/gitleaks-no-secrets"
+  }
+}

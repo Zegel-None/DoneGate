@@ -1,0 +1,39 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "srclight",
+  "registryId": "srclight@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "indexedFiles",
+      "from": "indexedFiles",
+      "kind": "count",
+      "assertableAs": [
+        "min"
+      ],
+      "wired": false,
+      "reason": "索引新鲜度是读代码的前置条件，不是验收结论"
+    },
+    {
+      "id": "statusDigest",
+      "from": "statusDigest",
+      "kind": "digest",
+      "assertableAs": [
+        "compare"
+      ],
+      "wired": false,
+      "reason": "同上，只用于诊断索引状态"
+    }
+  ],
+  "requiresProject": [
+    "srclight 索引服务"
+  ],
+  "blindSpots": [
+    "仅观测代码索引新鲜度，不校验语义正确性"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "索引新鲜度是读代码的前置条件，不是验收结论；由使用者在需要时跑。"
+  }
+}

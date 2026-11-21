@@ -1,0 +1,29 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "openspec",
+  "registryId": "openspec@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "invalidCount",
+      "from": "invalidCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有 openspec 规格目录，判据无对象"
+    }
+  ],
+  "requiresProject": [
+    "openspec/ 目录"
+  ],
+  "blindSpots": [
+    "只校 OpenSpec 格式合法性，不替代 DoneGate 契约冻结与有牙实验"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有 openspec 规格目录，规格格式校验对本仓无判据价值。"
+  }
+}

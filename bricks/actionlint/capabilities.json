@@ -1,0 +1,41 @@
+{
+  "说明": "砖头能力清单：actionlint GitHub Actions 工作流语法、表达式与 Action 参数静态检查。",
+  "tool": "actionlint",
+  "registryId": "actionlint@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓当前未启用 .github/workflows/，判据只能退 3；含 GitHub Actions 的项目可直接接零容忍判据",
+      "note": "工作流静态错误总数"
+    },
+    {
+      "id": "byKind",
+      "from": "byKind",
+      "kind": "map",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "分类计数供定位错误类别",
+      "note": "按 kind 聚合的错误分布"
+    }
+  ],
+  "requiresProject": [
+    "含 .github/workflows/*.yml 的仓库"
+  ],
+  "blindSpots": [
+    "仅静态校验工作流语法、内置上下文类型与公开 Action 元数据，不验证远端 Runner 真实密钥与网络连通性"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓当前无 .github/workflows 目录；供含 CI 工作流的用户项目拦截小模型编造 Action 参数与表达式错误。"
+  }
+}

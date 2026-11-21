@@ -1,0 +1,53 @@
+{
+  "说明": "砖头能力清单：Pyright 跨文件静态类型、属性与调用签名检查。",
+  "tool": "pyright",
+  "registryId": "pyright@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；Python 用户项目可在契约断言 errorCount === 0",
+      "note": "error 级类型与签名错误数"
+    },
+    {
+      "id": "warningCount",
+      "from": "warningCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "warning 属启发式提示，不直接作硬红线",
+      "note": "warning 级提示数"
+    },
+    {
+      "id": "filesAnalyzed",
+      "from": "filesAnalyzed",
+      "kind": "count",
+      "assertableAs": [
+        "min"
+      ],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码",
+      "note": "实际纳入分析的源码文件数（防空跑假绿）"
+    }
+  ],
+  "requiresProject": [
+    "含 .py 源码及 pyproject.toml / pyrightconfig.json 的 Python 项目"
+  ],
+  "blindSpots": [
+    "未加类型注解的动态反射调用与 Any 透传无法静态检出类型错误"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；供 Python 用户项目拦截小模型编造对象属性、传错参数个数与跨模块返回类型失配。"
+  }
+}

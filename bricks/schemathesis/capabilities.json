@@ -1,0 +1,40 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "schemathesis",
+  "registryId": "schemathesis@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "uniqueFailuresCount",
+      "from": "uniqueFailuresCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有运行中的 HTTP 服务可供压测"
+    },
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "同上（测试过程自身错误）"
+    }
+  ],
+  "requiresProject": [
+    "OpenAPI/GraphQL schema",
+    "运行中的服务"
+  ],
+  "blindSpots": [
+    "依赖 OpenAPI/GraphQL schema 声明完整性；不覆盖未在 schema 声明的隐藏路由或复杂多步业务鉴权时序"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有运行中的 HTTP 服务可供压测，判据无法产生证据。"
+  }
+}

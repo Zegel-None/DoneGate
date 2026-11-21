@@ -1,0 +1,60 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "codegraph",
+  "registryId": "codegraph@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "cycleCount",
+      "from": "cycleCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "循环依赖；与 depcruise 的 no-circular 互为独立实现",
+      "wired": true
+    },
+    {
+      "id": "cycles",
+      "from": "cycles",
+      "kind": "list",
+      "assertableAs": [
+        "empty"
+      ],
+      "note": "同上，判据同时要求与 cycleCount 一致",
+      "wired": true
+    },
+    {
+      "id": "impactedFiles",
+      "from": "impactedFiles",
+      "kind": "list",
+      "assertableAs": [
+        "subset-exists"
+      ],
+      "note": "受影响文件必须真实存在，否则 pendingRecheck 算到空气上",
+      "wired": true
+    },
+    {
+      "id": "changedFiles",
+      "from": "changedFiles",
+      "kind": "list",
+      "assertableAs": [
+        "non-empty"
+      ],
+      "wired": false,
+      "reason": "它是输入不是结论：没有变更文件时整次采证无意义"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "静态依赖图无法捕获动态 import(var)、拼接路径 require 与运行期反射注入"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": [
+      "brick-observations/codegraph-no-cycles",
+      "brick-observations/codegraph-impact-exists"
+    ]
+  }
+}

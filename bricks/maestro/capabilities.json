@@ -1,0 +1,40 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "maestro",
+  "registryId": "maestro@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "failureCount",
+      "from": "failureCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有移动端 App 与模拟器"
+    },
+    {
+      "id": "skippedCount",
+      "from": "skippedCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "同上；跳过数供人看覆盖是否缩水"
+    }
+  ],
+  "requiresProject": [
+    "Android/iOS 模拟器",
+    "flow YAML"
+  ],
+  "blindSpots": [
+    "依赖本地 Android 模拟器或 iOS Simulator 环境；仅检验已写入 YAML 流的关键路径"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有移动端 App 与模拟器，同上。"
+  }
+}

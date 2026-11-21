@@ -1,0 +1,39 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "beads",
+  "registryId": "beads@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "readyCount",
+      "from": "readyCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "只读排序建议；判它等于让外部工具推状态（撞 adr/002）"
+    },
+    {
+      "id": "readyQueue",
+      "from": "readyQueue",
+      "kind": "list",
+      "assertableAs": [
+        "manual"
+      ],
+      "wired": false,
+      "reason": "同上，供人挑下一件事"
+    }
+  ],
+  "requiresProject": [
+    "beads (.beads/) 任务图"
+  ],
+  "blindSpots": [
+    "仅作只读依赖排序建议输入，严禁回写或覆盖 DoneGate 核状态"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "只读排序建议，禁止回写核状态；把它变成判据等于让外部工具推状态（撞 adr/002）。"
+  }
+}

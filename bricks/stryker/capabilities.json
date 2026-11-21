@@ -1,0 +1,48 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "stryker",
+  "registryId": "stryker@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "countsByStatus.Survived",
+      "from": "countsByStatus.Survived",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "note": "存活变异体，测试有没有牙的核心读数",
+      "wired": true
+    },
+    {
+      "id": "countsByStatus.Pending/Timeout/NoCoverage/CompileError/RuntimeError",
+      "from": "countsByStatus",
+      "kind": "map",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "这些状态非 0 说明实验本身没跑成，不许算有牙",
+      "wired": true
+    },
+    {
+      "id": "countsByStatus.Ignored",
+      "from": "countsByStatus.Ignored",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "显式放弃的判据，属治理动作不是质量结论；单独列给人看"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "档 B（Stryker）无法判定 red-wrong-assertion（红灯是否命中目标 assertionId）",
+    "档 B（Stryker）在隔离副本执行变异，不产生 restore-failed 工作区还原哈希校验"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/stryker-no-survivors"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "biome",
+  "registryId": "biome@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errors",
+      "from": "errors",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "error 级诊断零容忍；扫描范围靠 .gitignore 排除生成物",
+      "wired": true
+    },
+    {
+      "id": "warnings",
+      "from": "warnings",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "warnings 是风格建议（当前 102 条），判红会恒红"
+    },
+    {
+      "id": "byCategory",
+      "from": "byCategory",
+      "kind": "map",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "分类计数供人选治理目标，本身不是底线"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "只覆盖 JS/TS 语法与可疑写法，不判断业务正确性；不替代测试与变异实验"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/biome-no-errors"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "dotenv-linter",
+  "registryId": "dotenv-linter@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "lintIssueCount",
+      "from": "lintIssueCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有 .env 主体；用户项目里有 .env 时可以接「语法零问题」"
+    },
+    {
+      "id": "diffIssueCount",
+      "from": "diffIssueCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "同上，且依赖 .env.example 存在"
+    }
+  ],
+  "requiresProject": [
+    ".env 文件"
+  ],
+  "blindSpots": [
+    "仅检查 .env 语法、重复键与与 .env.example 键集合对齐，不校验运行时环境变量实际值有效性"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有 .env 主体，跑出来的清单对判定无意义；使用者项目里由它自己的契约接。"
+  }
+}

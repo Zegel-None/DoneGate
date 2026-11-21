@@ -1,0 +1,40 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "playwright",
+  "registryId": "playwright@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "unexpectedCount",
+      "from": "unexpectedCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有 Web E2E 用例；有前端的项目里可接「零意外失败」"
+    },
+    {
+      "id": "flakyCount",
+      "from": "flakyCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "同上；flaky 属不稳定信号，应进「不稳定」栏而非判红"
+    }
+  ],
+  "requiresProject": [
+    "playwright.config.*",
+    "E2E 用例"
+  ],
+  "blindSpots": [
+    "仅检验已编写的 E2E 用例与断言，不覆盖未写进测试脚本的视觉美观与主观手感"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有 Web E2E 用例，判据只能恒为「无法判断」；有前端的用户项目里才有意义。"
+  }
+}

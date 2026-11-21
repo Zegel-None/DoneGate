@@ -1,0 +1,40 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "trivy",
+  "registryId": "trivy@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "misconfigCount",
+      "from": "misconfigCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓没有 Dockerfile/IaC 清单，扫描无对象"
+    },
+    {
+      "id": "vulnCount/secretCount",
+      "from": "vulnCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "同上；有容器/仓库的生死项目里才有意义"
+    }
+  ],
+  "requiresProject": [
+    "Dockerfile",
+    "IaC 清单"
+  ],
+  "blindSpots": [
+    "默认仅启用 misconfig 离线规则；启用 vuln 扫描依赖本机漏洞库更新且不覆盖零日漏洞"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓没有 Dockerfile/IaC 清单，misconfig 扫描无对象。"
+  }
+}

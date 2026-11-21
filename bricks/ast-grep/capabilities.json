@@ -1,0 +1,38 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "ast-grep",
+  "registryId": "ast-grep@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "matchCount",
+      "from": "matchCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "模式由调用方给定，没有固定业务含义；要判「不许出现某形状」应由那条判据自带模式"
+    },
+    {
+      "id": "sample[].line/text",
+      "from": "sample",
+      "kind": "list",
+      "assertableAs": [
+        "manual"
+      ],
+      "wired": false,
+      "reason": "命中样本供人核对是否误报"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "只检出任一给定模式的结构匹配，不判断该模式是否代表缺陷；不覆盖未指定语言"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "模式由调用方指定，没有固定业务含义；要判「不许出现某形状」时由那条判据自带模式。"
+  }
+}

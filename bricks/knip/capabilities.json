@@ -1,0 +1,37 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "knip",
+  "registryId": "knip@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "unlistedDepsCount",
+      "from": "unlistedDepsCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "用了但没声明的依赖＝换机器装不上",
+      "wired": true
+    },
+    {
+      "id": "unusedDepsCount/unusedFilesCount/unusedExportsCount",
+      "from": "unused*",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "死代码属重构建议，没有业务底线"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "仅覆盖 JS/TS 生态静态导入关系，无法捕获反射与运行时动态字符串 require"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/knip-no-unlisted-deps"
+  }
+}

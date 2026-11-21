@@ -1,0 +1,53 @@
+{
+  "说明": "砖头能力清单：Ruff Python 静态语法与未定义符号检查。",
+  "tool": "ruff",
+  "registryId": "ruff@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "violationCount",
+      "from": "violationCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；Python 用户项目可在自身契约对 violationCount 或 syntaxErrorCount 断言为 0",
+      "note": "全部违规总数"
+    },
+    {
+      "id": "syntaxErrorCount",
+      "from": "syntaxErrorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码",
+      "note": "Python 语法与缩进截断错误数（invalid-syntax / E999）"
+    },
+    {
+      "id": "undefinedNameCount",
+      "from": "undefinedNameCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码",
+      "note": "小模型高频幻觉未定义变量/函数数（F821-F823）"
+    }
+  ],
+  "requiresProject": [
+    "含 .py 源码的 Python 项目"
+  ],
+  "blindSpots": [
+    "只覆盖单文件 Python AST 静态规则，不覆盖跨文件参数类型失配与运行时逻辑错误"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；供 Python 用户项目拦截小模型缩进截断、F821 未定义符号与裸 except。"
+  }
+}

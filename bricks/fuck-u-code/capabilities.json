@@ -1,0 +1,37 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "fuck-u-code",
+  "registryId": "fuck-u-code@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "hotFiles[].complexity",
+      "from": "hotFiles",
+      "kind": "list",
+      "assertableAs": [
+        "manual"
+      ],
+      "wired": false,
+      "reason": "复杂度是结构性建议，不代表业务正确性"
+    },
+    {
+      "id": "filesAnalyzed",
+      "from": "filesAnalyzed",
+      "kind": "count",
+      "assertableAs": [
+        "min"
+      ],
+      "wired": false,
+      "reason": "只作上下文，不构成判据"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "复杂度静态指标仅作结构告警，不代表业务正确性"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "复杂度是结构性建议，不代表业务正确性；作为热点清单供人选重构目标。"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "说明": "砖头能力清单：这块砖能观测什么（与项目无关），以及本仓接了哪些、为什么。由 C-01 待办引出，2026-11-20 首次生成。",
+  "tool": "osv-scanner",
+  "registryId": "osv-scanner@stage4",
+  "role": "hard",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "severityCounts.HIGH/CRITICAL/UNKNOWN",
+      "from": "severityCounts",
+      "kind": "map",
+      "assertableAs": [
+        "zero"
+      ],
+      "note": "高危/严重零容忍；UNKNOWN 不许当低危",
+      "wired": true
+    },
+    {
+      "id": "severityCounts.MODERATE/LOW",
+      "from": "severityCounts",
+      "kind": "map",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "dev 依赖的 Medium 属可接受风险，判红会恒红"
+    },
+    {
+      "id": "vulnCount",
+      "from": "vulnCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "总数不是底线，分级才是；只作上下文"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "依赖漏洞库离线或网络不可用时直接退 3 拒判，不覆盖未披露零日漏洞"
+  ],
+  "disposition": {
+    "state": "wired",
+    "obligation": "brick-observations/osv-no-high-severity"
+  }
+}
