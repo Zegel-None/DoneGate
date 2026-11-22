@@ -182,7 +182,7 @@
       "registryId": "actionlint@stage4",
       "wiredAtBatch": 3,
       "actionsChanged": 0,
-      "note": "advisory（本仓无 .github/workflows 目录；供含 CI 的项目拦截小模型编造 Action 参数与表达式错误，接受 3 批硬淘汰考核）",
+      "note": "advisory（本仓单文件 donegate-ci.yml 已由双系统 CI 自验，暂作旁注观测供多流水线用户项目拦截 Action 表达式错误，接受 3 批硬淘汰考核）",
       "ecosystem": "cloud-devops"
     }
   ]

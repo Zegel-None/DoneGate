@@ -1,4 +1,4 @@
-// 开发流类 ComfyUI 依赖就位探针、专属隔离目录 (workflows/.deps/<id>/) 初始化与后台 Agent 补齐工单生成器（<= 225 行）
+// 开发流类 ComfyUI 依赖探针、跨连招共享底座池 (workflows/.deps/_shared/) 与按需补齐工单生成器
 import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { normalizeSlashes } from './win-paths.mjs';
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BUILTIN_ZERO_DEP_TPLS = new Set([
-  'tpl-blank', 'tpl-router-rule', 'tpl-router-ai', 'tpl-deai-polish', 'tpl-prompt-gen', 'tpl-anti-slop'
+  'tpl-blank', 'tpl-router-rule', 'tpl-router-ai', 'tpl-deai-polish', 'tpl-prompt-gen', 'tpl-anti-slop', 'tpl-human-gate'
 ]);
 const KNOWN_TEMPLATE_BINS = {
   'tpl-openspec': { id: 'openspec', bin: 'openspec', repo: 'Fission-AI/OpenSpec', kind: 'npm', pkg: '@fission-ai/openspec' },
@@ -35,6 +35,10 @@ export function getWorkflowDepsPaths(projectRoot, packId, platform = process.pla
     venvBinDir: platform === 'win32' ? join(absDir, 'venv', 'Scripts') : join(absDir, 'venv', 'bin'),
     reposDir: join(absDir, 'repos')
   };
+}
+
+export function getSharedWorkflowDepsPaths(projectRoot, platform = process.platform) {
+  return getWorkflowDepsPaths(projectRoot, '_shared', platform);
 }
 
 export function findExecutableInDirs(binName, searchDirs, platform = process.platform) {
@@ -123,19 +127,19 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
   return [...byId.values()];
 }
 
-function buildProvisionAgentPrompt(pack, relDepsDir, missing) {
+function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missing) {
   const name = (pack && pack.name) || (pack && pack.id) || '当前开发流';
-  if (!missing.length) return `开发流「${name}」所需的外部项目与环境依赖已全部就位（目录：${relDepsDir}）。`;
-  const lines = [`请为开发流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，统一安装到专属隔离目录 \`${relDepsDir}/\`：`];
+  if (!missing.length) return `开发流「${name}」所需的外部项目与环境依赖已全部就位（共享池：${sharedRelDir}，当前包：${relDepsDir}）。`;
+  const lines = [`请为开发流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，优先装入跨连招共享底座池 \`${sharedRelDir}/\`（一次安装供所有预置宏与节点级 JIT 派生连招复用）：`];
   for (const m of missing) {
     const ver = m.version ? ` (${m.version})` : '';
     const src = m.repoUrl ? ` · ${m.repoUrl}` : '';
     const hint = m.installCmd ? `执行 \`${m.installCmd}\``
-      : (m.kind === 'npm' && m.pkg ? `执行 \`npm install --prefix ${relDepsDir}/npm ${m.pkg}${m.version ? '@' + m.version.replace(/^v/, '') : ''}\``
-        : (m.repoUrl ? `克隆至 \`${relDepsDir}/repos/${m.id}\` 并配置环境与 \`${relDepsDir}/.bin\` 入口` : `补齐可执行工具 \`${m.bin || m.id}\``));
+      : (m.kind === 'npm' && m.pkg ? `执行 \`npm install --prefix ${sharedRelDir}/npm ${m.pkg}${m.version ? '@' + m.version.replace(/^v/, '') : ''}\``
+        : (m.repoUrl ? `克隆至 \`${sharedRelDir}/repos/${m.id}\` 并配置 \`${sharedRelDir}/.bin\` 入口` : `补齐可执行工具 \`${m.bin || m.id}\``));
     lines.push(`- **${m.title}** (\`${m.id}\`${ver})${src} → ${hint}`);
   }
-  lines.push(`安装验证通过后，将 \`${relDepsDir}/manifest.json\` 对应条目标为 \`ready: true\` 并刷新工作台。`);
+  lines.push(`安装验证通过后，将 \`${sharedRelDir}/manifest.json\`（或 \`${relDepsDir}/manifest.json\`）对应条目标为 \`ready: true\` 并刷新工作台。`);
   return lines.join('\n');
 }
 
@@ -145,45 +149,67 @@ export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
   const root = resolve(projectRoot || process.cwd());
   const packId = (pack && pack.id) || 'default';
   const paths = getWorkflowDepsPaths(root, packId, platform);
+  const shared = getSharedWorkflowDepsPaths(root, platform);
+
   const manifestRes = existsSync(paths.manifestPath) ? readJsonStrict(paths.manifestPath) : { ok: false };
   const installedMap = (manifestRes.ok && manifestRes.value && manifestRes.value.installed) || {};
+  const sharedManifestRes = existsSync(shared.manifestPath) ? readJsonStrict(shared.manifestPath) : { ok: false };
+  const sharedInstalledMap = (sharedManifestRes.ok && sharedManifestRes.value && sharedManifestRes.value.installed) || {};
+
   const localBins = [paths.binDir, paths.npmBinDir, paths.venvBinDir];
+  const sharedBins = [shared.binDir, shared.npmBinDir, shared.venvBinDir];
   const pathSep = platform === 'win32' ? ';' : delimiter;
   const rawPath = String(env.PATH ?? env.Path ?? env.path ?? '');
   const hostBins = [join(root, 'node_modules', '.bin'), join(DG_ROOT, 'node_modules', '.bin'), ...rawPath.split(pathSep).filter(Boolean)];
 
+  const isManifestRecReady = (rec) => Boolean(
+    rec && rec.ready === true && (!rec.verifyPath || existsSync(resolve(root, rec.verifyPath)))
+  );
+
   const items = resolveWorkflowDepItems(root, pack).map((it) => {
     const rec = installedMap[it.id];
+    const sharedRec = sharedInstalledMap[it.id];
     const repoCloneDir = join(paths.reposDir, sanitizeId(it.id));
+    const sharedRepoDir = join(shared.reposDir, sanitizeId(it.id));
     let resolvedVia = null;
     let resolvedPath = null;
-    if (rec && rec.ready === true && (!rec.verifyPath || existsSync(resolve(root, rec.verifyPath)))) {
+    if (isManifestRecReady(rec)) {
       resolvedVia = 'workflow-manifest'; resolvedPath = rec.verifyPath || paths.relDir;
+    } else if (opts.ignoreSharedPool !== true && isManifestRecReady(sharedRec) && (!it.version || !sharedRec.version || sharedRec.version === it.version)) {
+      resolvedVia = 'shared-manifest'; resolvedPath = sharedRec.verifyPath || shared.relDir;
     } else if (it.bin) {
       const inWf = findExecutableInDirs(it.bin, localBins, platform);
+      const inShared = opts.ignoreSharedPool === true ? null : findExecutableInDirs(it.bin, sharedBins, platform);
       if (inWf) { resolvedVia = 'workflow-deps'; resolvedPath = normalizeSlashes(inWf); }
+      else if (inShared) { resolvedVia = 'shared-deps'; resolvedPath = normalizeSlashes(inShared); }
       else if (it.allowHostEnv) {
         const inHost = findExecutableInDirs(it.bin, hostBins, platform);
         if (inHost) { resolvedVia = 'host-env'; resolvedPath = normalizeSlashes(inHost); }
       }
     } else if (existsSync(repoCloneDir)) {
       resolvedVia = 'workflow-repo'; resolvedPath = normalizeSlashes(repoCloneDir);
+    } else if (opts.ignoreSharedPool !== true && existsSync(sharedRepoDir)) {
+      resolvedVia = 'shared-repo'; resolvedPath = normalizeSlashes(sharedRepoDir);
     }
     return { ...it, ready: Boolean(resolvedVia), resolvedVia, resolvedPath };
   });
 
   const missing = items.filter((x) => !x.ready);
   return {
-    packId, packName: (pack && pack.name) || packId, depsDir: paths.relDir,
+    packId, packName: (pack && pack.name) || packId, depsDir: paths.relDir, sharedDepsDir: shared.relDir,
     ready: missing.length === 0, total: items.length, readyCount: items.length - missing.length,
     missingCount: missing.length, items, missing,
-    agentPrompt: buildProvisionAgentPrompt(pack, paths.relDir, missing)
+    agentPrompt: buildProvisionAgentPrompt(pack, paths.relDir, shared.relDir, missing)
   };
 }
 
 export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env, platform = process.platform) {
   const paths = getWorkflowDepsPaths(projectRoot, packId, platform);
-  const extraBins = [paths.binDir, paths.npmBinDir, paths.venvBinDir].filter((d) => existsSync(d));
+  const shared = getSharedWorkflowDepsPaths(projectRoot, platform);
+  const extraBins = [
+    paths.binDir, paths.npmBinDir, paths.venvBinDir,
+    shared.binDir, shared.npmBinDir, shared.venvBinDir
+  ].filter((d, idx, arr) => existsSync(d) && arr.indexOf(d) === idx);
   const pathSep = platform === 'win32' ? ';' : delimiter;
   const curPath = String(baseEnv.PATH ?? baseEnv.Path ?? baseEnv.path ?? '');
   const nextEnv = { ...baseEnv };
@@ -191,6 +217,7 @@ export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env, 
   delete nextEnv.path;
   nextEnv.PATH = extraBins.length ? [...extraBins, curPath].filter(Boolean).join(pathSep) : curPath;
   nextEnv.DG_WORKFLOW_DEPS_DIR = paths.absDir;
+  nextEnv.DG_SHARED_DEPS_DIR = shared.absDir;
   return nextEnv;
 }
 
@@ -214,25 +241,50 @@ export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
   const root = resolve(projectRoot || process.cwd());
   const packId = (pack && pack.id) || 'default';
   const paths = getWorkflowDepsPaths(root, packId);
+  const shared = getSharedWorkflowDepsPaths(root);
+  const useShared = opts.isolatedOnly !== true;
+
   for (const d of [paths.binDir, join(paths.absDir, 'npm'), paths.reposDir]) mkdirSync(d, { recursive: true });
+  if (useShared) {
+    for (const d of [shared.binDir, join(shared.absDir, 'npm'), shared.reposDir]) mkdirSync(d, { recursive: true });
+  }
+
   const before = inspectWorkflowDeps(root, pack);
   const curManifest = existsSync(paths.manifestPath) ? (readJsonStrict(paths.manifestPath).value || {}) : {};
   const installed = { ...(curManifest.installed || {}) };
+  const curShared = (useShared && existsSync(shared.manifestPath)) ? (readJsonStrict(shared.manifestPath).value || {}) : {};
+  const sharedInstalled = { ...(curShared.installed || {}) };
+  const itemById = new Map(before.items.map((x) => [x.id, x]));
 
   if (Array.isArray(opts.markInstalledIds)) {
-    for (const id of opts.markInstalledIds) installed[String(id)] = { ready: true, updatedAt: new Date().toISOString(), source: 'agent-verified' };
+    for (const rawId of opts.markInstalledIds) {
+      const id = String(rawId);
+      const metaVer = itemById.get(id)?.version || '';
+      const rec = { ready: true, version: metaVer, updatedAt: new Date().toISOString(), source: 'agent-verified' };
+      installed[id] = rec;
+      if (useShared) sharedInstalled[id] = rec;
+    }
   }
   if (opts.runNpm === true) {
+    const targetNpmPrefix = useShared ? join(shared.absDir, 'npm') : join(paths.absDir, 'npm');
     for (const m of before.missing) {
       if (m.kind === 'npm' && m.pkg) {
         const spec = m.version ? `${m.pkg}@${m.version.replace(/^v/, '')}` : m.pkg;
-        const r = runNpmPrefixInstall(join(paths.absDir, 'npm'), spec, root);
-        if (r.status === 0) installed[m.id] = { ready: true, updatedAt: new Date().toISOString(), source: 'npm-prefix' };
+        const r = runNpmPrefixInstall(targetNpmPrefix, spec, root);
+        if (r.status === 0) {
+          const rec = { ready: true, version: m.version || '', updatedAt: new Date().toISOString(), source: useShared ? 'shared-npm-prefix' : 'npm-prefix' };
+          installed[m.id] = rec;
+          if (useShared) sharedInstalled[m.id] = rec;
+        }
       }
     }
   }
-  writeFileSync(paths.planPath, JSON.stringify({ packId, packName: (pack && pack.name) || packId, depsDir: paths.relDir, generatedAt: new Date().toISOString(), items: before.items, agentPrompt: before.agentPrompt }, null, 2) + '\n', 'utf8');
+
+  writeFileSync(paths.planPath, JSON.stringify({ packId, packName: (pack && pack.name) || packId, depsDir: paths.relDir, sharedDepsDir: shared.relDir, generatedAt: new Date().toISOString(), items: before.items, agentPrompt: before.agentPrompt }, null, 2) + '\n', 'utf8');
   writeFileSync(paths.manifestPath, JSON.stringify({ packId, updatedAt: new Date().toISOString(), installed }, null, 2) + '\n', 'utf8');
+  if (useShared) {
+    writeFileSync(shared.manifestPath, JSON.stringify({ packId: '_shared', updatedAt: new Date().toISOString(), installed: sharedInstalled }, null, 2) + '\n', 'utf8');
+  }
   const after = inspectWorkflowDeps(root, pack);
-  return { ok: true, ...after, planFile: `${paths.relDir}/PROVISION-PLAN.json`, manifestFile: `${paths.relDir}/manifest.json` };
+  return { ok: true, ...after, planFile: `${paths.relDir}/PROVISION-PLAN.json`, manifestFile: `${paths.relDir}/manifest.json`, sharedManifestFile: `${shared.relDir}/manifest.json` };
 }

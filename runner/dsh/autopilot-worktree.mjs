@@ -1,7 +1,7 @@
 // 过夜挂机 Git Worktree 零污染隔离沙箱引擎（全绿自动快进合回主分支，熔断停机时主工作区 100% 干净零污染）
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { normalizeSlashes } from './win-paths.mjs';
 
 function sanitizeId(raw) {
@@ -15,8 +15,20 @@ export function cleanGitEnv(baseEnv = process.env) {
 }
 
 function runGit(cwd, args) {
-  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', ...args], { encoding: 'utf8', env: cleanGitEnv() });
+  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', ...args], { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true });
   return { ok: r.status === 0, status: r.status, stdout: (r.stdout || '').trim(), stderr: (r.stderr || '').trim() };
+}
+
+function ensureWorktreeRuntimeExcludes(wtDir) {
+  const ex = runGit(wtDir, ['rev-parse', '--git-path', 'info/exclude']);
+  if (!ex.ok || !ex.stdout) return;
+  const exAbs = resolve(wtDir, ex.stdout);
+  try {
+    mkdirSync(dirname(exAbs), { recursive: true });
+    const cur = existsSync(exAbs) ? readFileSync(exAbs, 'utf8') : '';
+    const need = ['.donegate/', 'workflows/.deps/'].filter((p) => !cur.split(/\r?\n/).includes(p));
+    if (need.length > 0) appendFileSync(exAbs, (cur.endsWith('\n') || !cur ? '' : '\n') + need.join('\n') + '\n', 'utf8');
+  } catch (err) { void err; }
 }
 
 export function canUseGitWorktree(projectRoot) {
@@ -41,6 +53,7 @@ export function prepareAutopilotWorktree(projectRoot, runId) {
   const mainBranch = mainBranchRes.ok ? mainBranchRes.stdout : null;
 
   if (existsSync(join(wtDir, '.git'))) {
+    ensureWorktreeRuntimeExcludes(wtDir);
     return {
       ok: true,
       reused: true,
@@ -59,12 +72,12 @@ export function prepareAutopilotWorktree(projectRoot, runId) {
     return { ok: false, reason: `创建隔离 Worktree 失败：${addRes.stderr || addRes.stdout}` };
   }
 
-  // 确保隔离沙箱具备本地提交身份以便全绿合入时自动归档提交
   const email = runGit(wtDir, ['config', 'user.email']);
   if (!email.ok || !email.stdout) {
     runGit(wtDir, ['config', 'user.email', 'autopilot@donegate.local']);
     runGit(wtDir, ['config', 'user.name', 'DoneGate Autopilot']);
   }
+  ensureWorktreeRuntimeExcludes(wtDir);
 
   return {
     ok: true,
@@ -110,7 +123,8 @@ export function finalizeAutopilotWorktree(projectRoot, wtInfo, outcome, runId) {
     };
   }
 
-  // COMPLETED：检查沙箱内是否有新增提交或未提交改动
+  ensureWorktreeRuntimeExcludes(root);
+  ensureWorktreeRuntimeExcludes(worktreePath);
   const wtStatus = runGit(worktreePath, ['status', '--porcelain']);
   let committedInSandbox = false;
   if (wtStatus.ok && wtStatus.stdout !== '') {

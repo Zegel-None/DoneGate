@@ -1,4 +1,4 @@
-// 完结门开发流确定性运行引擎与挂机持久状态机（缺依赖禁跑 + Worktree 零污染沙箱 + 材料指纹免跑缓存 + 断点续跑 + 三重熔断）
+// 完结门开发流确定性运行引擎与挂机持久状态机（真实砂浆适配器接线 + 缺依赖禁跑 + Worktree 沙箱 + 指纹免跑缓存 + 三重熔断）
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -11,6 +11,7 @@ import {
 } from './autopilot-state.mjs';
 import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot-worktree.mjs';
 import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-cache.mjs';
+import { buildBrickNodeExecSpec, executeBrickGateNode } from './brick-exec.mjs';
 
 const HUB_MAP = new Map();
 
@@ -72,8 +73,9 @@ export function preflightWorkflowPack(pack, opts = {}) {
       return {
         ok: false, exitCode: 3, code: 'MISSING_WORKFLOW_DEPS',
         nodeId: depReport.missing[0]?.nodeIds?.[0] || null,
-        depsDir: depReport.depsDir, missingDeps: depReport.missing, agentPrompt: depReport.agentPrompt,
-        reason: `开发流缺少 ${depReport.missingCount} 项开源/环境依赖（${names}），无法运行；请先点击开发流旁「补齐依赖」安装至 ${depReport.depsDir}`
+        depsDir: depReport.depsDir, sharedDepsDir: depReport.sharedDepsDir,
+        missingDeps: depReport.missing, agentPrompt: depReport.agentPrompt,
+        reason: `开发流缺少 ${depReport.missingCount} 项开源/环境依赖（${names}），无法运行；请先点击开发流旁「补齐依赖」安装至共享池 ${depReport.sharedDepsDir || depReport.depsDir}`
       };
     }
   }
@@ -91,16 +93,19 @@ export function collectGitDiffStats(cwd) {
     for (const line of normalizeLf(rFallback.stdout).split('\n').filter(Boolean)) {
       const [a, d, f] = line.split('\t');
       if (!f) continue;
-      files.add(normalizeSlashes(f.trim()));
-      if (/^\d+$/.test(a)) added += Number(a);
-      if (/^\d+$/.test(d)) removed += Number(d);
+      const norm = normalizeSlashes(f.trim());
+      if (!norm.startsWith('.donegate/') && !norm.startsWith('workflows/.deps/')) {
+        files.add(norm);
+        if (/^\d+$/.test(a)) added += Number(a);
+        if (/^\d+$/.test(d)) removed += Number(d);
+      }
     }
   }
   const untracked = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard'], gitOpts);
   if (untracked.status === 0) {
     for (const u of normalizeLf(untracked.stdout).split('\n').map((s) => s.trim()).filter(Boolean)) {
       const norm = normalizeSlashes(u);
-      if (!norm.startsWith('.donegate/')) files.add(norm);
+      if (!norm.startsWith('.donegate/') && !norm.startsWith('workflows/.deps/')) files.add(norm);
     }
   }
   return { files: [...files], added, removed };
@@ -162,6 +167,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     cp.sandboxWorktree = { active: true, status: 'running', worktreePath: wtInfo.relWorktreePath, branchName: wtInfo.branchName };
     saveAutopilotCheckpoint(root, cp);
   }
+  const baselineFiles = new Set(Array.isArray(hooks.baselineTouchedFiles) ? hooks.baselineTouchedFiles : []);
 
   const abortWithBreaker = (exitCode, code, nodeId, reason) => {
     cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, 'ABORTED', runId);
@@ -221,8 +227,9 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     const round = (loopCounters.get(current.id) || 0) + 1;
     logEvent({ type: 'node_enter', nodeId: current.id, title: current.title, round });
 
-    const isRouter = current.tplId === 'tpl-router-rule' || current.exec?.kind === 'rule_router';
-    const isAgent = current.exec?.kind === 'agent_step' || current.tplId === 'tpl-deai-polish' || current.tplId === 'tpl-prompt-gen';
+    const resolvedSpec = current.exec || buildBrickNodeExecSpec(current.tplId, current, root);
+    const isRouter = current.tplId === 'tpl-router-rule' || resolvedSpec.kind === 'rule_router';
+    const isAgent = resolvedSpec.kind === 'agent_step' || current.tplId === 'tpl-deai-polish' || current.tplId === 'tpl-prompt-gen' || current.tplId === 'tpl-router-ai';
 
     if (isRouter) {
       const slotNeeded = lastExitCode === 0 ? 'out_0' : (lastExitCode === 1 ? 'out_1' : 'out_3');
@@ -254,8 +261,10 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: Date.now() - t0, diagSummary: lastDiag.slice(0, 240) });
     } else if (!isAgent) {
       totalGates++;
-      const args = Array.isArray(current.exec?.nodeArgs) ? current.exec.nodeArgs : [join(root, 'skill', 'check-module-integrity.mjs'), '--root', workCwd];
-      const cacheRes = (useCache && current.cacheable !== false) ? lookupFingerprintCache(root, workCwd, current, args) : { hit: false, fp: null };
+      const cacheKeyArgs = Array.isArray(current.exec?.nodeArgs)
+        ? current.exec.nodeArgs
+        : [resolvedSpec.entryRel || resolvedSpec.scriptRel || current.tplId || current.id, resolvedSpec.obligationId || ''];
+      const cacheRes = (useCache && current.cacheable !== false) ? lookupFingerprintCache(root, workCwd, current, cacheKeyArgs) : { hit: false, fp: null };
       if (cacheRes.hit) {
         lastExitCode = 0;
         lastDiag = cacheRes.entry.diagSummary || '命中材料指纹缓存免跑通过';
@@ -264,15 +273,13 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
         cp.consecEnvFaults = 0;
         logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: 0, cacheHit: true, diagSummary: `⚡ 命中指纹缓存免跑 (${cacheRes.fp.watchedCount} 文件未变)` });
       } else {
-        const t0 = Date.now();
-        const r = spawnSync(process.execPath, args, { cwd: workCwd, env: cleanGitEnv(wfEnv), encoding: 'utf8', timeout: 120000, windowsHide: true });
-        const durationMs = Date.now() - t0;
-        lastExitCode = typeof r.status === 'number' ? r.status : 2;
-        lastDiag = normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+        const execOut = executeBrickGateNode(root, workCwd, current, wfEnv);
+        lastExitCode = execOut.exitCode;
+        lastDiag = execOut.diagSummary;
         if (lastExitCode === 0) {
           passedGates++;
           cp.consecEnvFaults = 0;
-          if (useCache && cacheRes.fp) recordFingerprintCache(root, cacheRes.fp, { durationMs, diagSummary: lastDiag });
+          if (useCache && cacheRes.fp) recordFingerprintCache(root, cacheRes.fp, { durationMs: execOut.durationMs, diagSummary: lastDiag });
         } else if (lastExitCode >= 2) {
           cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
           if (cp.consecEnvFaults >= maxEnvFaults) {
@@ -280,12 +287,13 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
             return abortWithBreaker(lastExitCode, 'ENV_OR_PROTOCOL_FAULT', current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${lastExitCode})，已自动熔断停机`);
           }
         }
-        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: lastExitCode, durationMs, cacheHit: false, diagSummary: lastDiag.slice(0, 240) });
+        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: lastExitCode, durationMs: execOut.durationMs, cacheHit: false, diagSummary: lastDiag.slice(0, 240) });
       }
     }
 
     const stepDiff = collectGitDiffStats(workCwd);
-    const stepScope = checkWriteScopeMandate(stepDiff.files, ticket?.mandate?.allowedWriteScopes || cp.ticket?.allowedWriteScopes);
+    const newlyTouched = stepDiff.files.filter((f) => !baselineFiles.has(f));
+    const stepScope = checkWriteScopeMandate(newlyTouched, ticket?.mandate?.allowedWriteScopes || cp.ticket?.allowedWriteScopes);
     if (!stepScope.ok) {
       return abortWithBreaker(2, 'WRITE_SCOPE_VIOLATION', current.id, `越界修改了未授权范围文件：${stepScope.violated.join(', ')}`);
     }

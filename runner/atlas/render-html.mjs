@@ -1,4 +1,4 @@
-// 零外网依赖单文件工作台 HTML 拼装器（汇聚 12 个高内聚语义模块，浏览器端合并为单脚本零请求开销）
+// 零外网依赖单文件工作台 HTML 拼装器（汇聚高内聚语义模块，浏览器端合并为单脚本零请求开销）
 import { buildWbStyleBase } from './wb-style-base.mjs';
 import { buildWbStyleCanvas } from './wb-style-canvas.mjs';
 import { buildWbDshStyle } from './wb-dsh-style.mjs';
@@ -9,8 +9,12 @@ import { buildWbLayoutTidy } from './wb-layout-tidy.mjs';
 import { buildWbRenderCards } from './wb-render-cards.mjs';
 import { buildWbRenderWires } from './wb-render-wires.mjs';
 import { buildWbSubagent } from './wb-subagent.mjs';
+import { buildWbSnapRulers } from './wb-snap-rulers.mjs';
 import { buildWbMenusViewport } from './wb-menus-viewport.mjs';
+import { buildWbViewportOps } from './wb-viewport-ops.mjs';
+import { buildWbEventsWheelDrop } from './wb-events-wheel-drop.mjs';
 import { buildWbEventsPointer } from './wb-events-pointer.mjs';
+import { buildWbInlineRename } from './wb-inline-rename.mjs';
 import { buildWbEventsActions } from './wb-events-actions.mjs';
 import { buildWbHistoryScript } from './wb-history.mjs';
 import { buildViewsScript } from './ui-views.mjs';
@@ -44,8 +48,12 @@ export function renderAtlasWorkbenchHtml(atlas) {
     buildWbRenderCards(),
     buildWbRenderWires(),
     buildWbSubagent(),
+    buildWbSnapRulers(),
     buildWbMenusViewport(),
+    buildWbViewportOps(),
+    buildWbEventsWheelDrop(),
     buildWbEventsPointer(),
+    buildWbInlineRename(),
     buildWbEventsActions(),
     buildWbHistoryScript(),
     buildViewsScript(),

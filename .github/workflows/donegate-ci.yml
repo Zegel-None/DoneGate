@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: ['22']
+        node: ['22', '24']
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,7 +41,13 @@ jobs:
       - name: Run Zero-Dependency Verdict Core Self-Test
         run: node runner/self-test.mjs
 
-      - name: Run DSH Web, Autopilot & Windows Path E2E Fixtures
+      - name: Run Twelve-Command Core Lifecycle E2E Fixtures
+        run: node runner/donegate-fixtures.mjs
+
+      - name: Run 22 Mortar Adapter Offline Red-Fixture Suite
+        run: node skill/check-declarations.mjs --verify-adapters --offline
+
+      - name: Run DSH Web, JIT, Shared Deps & Campaign Autopilot E2E Fixtures
         run: node runner/dsh-fixtures.mjs
 
       - name: Run ATLAS Infinite Canvas Workbench E2E Fixtures

@@ -317,12 +317,41 @@ async function syncAutopilotMorningBrief() {
 }
 
 async function triggerStartAutopilot() {
-  const pk = WORKFLOW_PACKS[state.activePackId];
-  if (!pk) return;
   if (!/^https?:$/i.test(location.protocol)) {
     showToast('连接本地实时服务或 DSH Web 后即可启动过夜断点续跑状态机');
     return;
   }
+  if (state.page === 'sandbox') {
+    const cont = getActiveSandboxContainer();
+    const nodes = getActiveNodesList().filter((n) => !n.isBoundary && !n.isSubRepoRef && !n.bypassed);
+    if (!nodes.length) { showToast('当前项目看板无可挂机组件节点'); return; }
+    showToast('🌙 已启动全看板 ' + nodes.length + ' 个组件拓扑级过夜挂机（共享 Git Worktree 沙箱 + 组件级写边界锁）...');
+    try {
+      const r = await fetch('/donegate/api/autopilot/start-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodes, links: cont.links || [], componentWorkflows: state.componentWorkflows || {}, useWorktreeSandbox: true, useFingerprintCache: true })
+      });
+      const out = await r.json();
+      if (out && out.suspended && out.pendingHumanGate) {
+        state.chatMessages.push({
+          role: 'agent',
+          html: '⏸ 项目拓扑挂机在组件「<b>' + esc(out.suspendedComponentId || '') + '</b>」人工闸门「<b>' + esc(out.pendingHumanGate.title) + '</b>」安全挂起。<br><br><button type="button" class="ghost-btn is-primary text-[11px]" data-action="approve-autopilot-gate" data-campaign="' + esc(out.campaignId) + '" data-run="' + esc(out.suspendedSubRunId || '') + '" data-node="' + esc(out.pendingHumanGate.nodeId) + '">✓ 批准闸门并续跑剩余拓扑组件</button>'
+        });
+        renderAll();
+        showToast('⏸ 项目挂机已停在人工闸门待拍板');
+      } else if (out && !out.ok) {
+        renderAll();
+        showToast('🛑 组件挂机拦截（主工作区已隔离零污染）：' + (out.reason || out.code || '未通过'));
+      } else {
+        renderAll();
+        showToast('🌅 全项目 ' + (out.completedCount || nodes.length) + ' 个组件拓扑挂机通关（缓存命中 ' + (out.cacheHits || 0) + ' 项）');
+      }
+    } catch (err) { void err; showToast('项目拓扑挂机请求异常'); }
+    return;
+  }
+  const pk = WORKFLOW_PACKS[state.activePackId];
+  if (!pk) return;
   showToast('🌙 已启动过夜挂机长跑（独立 Git Worktree 零污染沙箱 + 断点续跑）...');
   try {
     const r = await fetch('/donegate/api/autopilot/start', {
@@ -347,13 +376,13 @@ async function triggerStartAutopilot() {
   } catch (err) { void err; showToast('挂机服务请求异常'); }
 }
 
-async function approveAndResumeAutopilot(runId, nodeId) {
+async function approveAndResumeAutopilot(runId, nodeId, campaignId) {
   const pk = WORKFLOW_PACKS[state.activePackId];
   if (!/^https?:$/i.test(location.protocol)) return;
   try {
     const r = await fetch('/donegate/api/autopilot/approve', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId, nodeId, pack: pk, by: '业主' })
+      body: JSON.stringify({ runId, nodeId, campaignId: campaignId || null, pack: campaignId ? null : pk, by: '业主' })
     });
     const out = await r.json();
     if (typeof dshRuntime !== 'undefined') {

@@ -4,6 +4,8 @@ export default {
   test: {
     include: ['tests/**/*.test.mjs'],
     reporters: ['default'],
+    // 三个测试文件均在独立 mkdtemp 沙箱与纯函数上运行，关闭重复 Worker 隔离以压低冷启动开销
+    isolate: false,
     // 含多轮 git/node 子进程的集成用例在 Windows + Defender 扫描下易超过默认 5000ms
     testTimeout: 30000,
   },

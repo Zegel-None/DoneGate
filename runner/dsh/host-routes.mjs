@@ -1,4 +1,4 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包、UI看板与实时遥测）
+// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包、UI看板、JIT配招与实时遥测）
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
@@ -9,7 +9,9 @@ import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-pr
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
-import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
+import { loadAutopilotCheckpoint } from './autopilot-state.mjs';
+import { loadCampaignCheckpoint } from './campaign-autopilot.mjs';
+import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
 import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
 import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
 import { buildJitBootstrapSummary } from './workflow-jit.mjs';
@@ -57,6 +59,9 @@ export function createDoneGateWebRouteHandler(projectRoot) {
     if (cleanPath.startsWith('/jit/')) {
       return handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, readJsonBody);
     }
+    if (cleanPath.startsWith('/autopilot/')) {
+      return handleAutopilotSubRoute(req, res, cleanPath, root, readJsonBody);
+    }
 
     if (cleanPath === '/events' && req.method === 'GET') {
       res.writeHead(200, {
@@ -70,7 +75,8 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         dockItems: hub.dockItems,
         cards: [...hub.activeCards.values()],
         nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
-        autopilot: loadAutopilotCheckpoint(root)
+        autopilot: loadAutopilotCheckpoint(root),
+        campaign: loadCampaignCheckpoint(root)
       })}\n\n`);
       const onEvt = (evt) => {
         try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch (err) { void err; }
@@ -88,6 +94,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         state: readSavedWorkbenchState(root),
         jit: buildJitBootstrapSummary(root),
         autopilot: loadAutopilotCheckpoint(root),
+        campaign: loadCampaignCheckpoint(root),
         nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
         dockItems: hub.dockItems,
         cards: [...hub.activeCards.values()]
@@ -95,53 +102,6 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       return true;
     }
 
-    if (cleanPath === '/autopilot/status' && req.method === 'GET') {
-      const u = new URL(req.url || '/', 'http://127.0.0.1');
-      const cp = loadAutopilotCheckpoint(root, u.searchParams.get('runId') || null);
-      sendJson(res, 200, { ok: true, autopilot: cp });
-      return true;
-    }
-
-    if (cleanPath === '/autopilot/start' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      const pack = body.pack || {};
-      const ticket = {
-        ticketId: body.runId || `night-${Date.now()}`,
-        headline: body.headline || '',
-        mandate: { allowedWriteScopes: Array.isArray(body.allowedWriteScopes) ? body.allowedWriteScopes : [] }
-      };
-      const out = await executeDeterministicWorkflowRun(root, ticket, pack, {
-        resumeRunId: body.resumeRunId || null,
-        requireCleanGit: body.requireCleanGit === true,
-        useWorktreeSandbox: body.useWorktreeSandbox !== false,
-        useFingerprintCache: body.useFingerprintCache !== false
-      });
-      sendJson(res, 200, out);
-      return true;
-    }
-
-    if (cleanPath === '/autopilot/approve' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      const app = approveAutopilotHumanGate(root, {
-        runId: body.runId || null,
-        nodeId: body.nodeId || null,
-        by: body.by || '业主',
-        note: body.note || '早间人工确认放行'
-      });
-      if (!app.ok) { sendJson(res, 400, app); return true; }
-      if (body.pack && Array.isArray(body.pack.nodes)) {
-        const resumed = await executeDeterministicWorkflowRun(root, app.checkpoint.ticket || {}, body.pack, {
-          resumeRunId: app.runId,
-          useFingerprintCache: body.useFingerprintCache !== false
-        });
-        sendJson(res, 200, resumed);
-        return true;
-      }
-      sendJson(res, 200, app);
-      return true;
-    }
-
-    // #09 门 5 盲判复核包工作台一键生成与裁决回填接口
     if (cleanPath === '/judge/pack' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const cid = String(body.contractId || '').trim();
@@ -201,7 +161,6 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       return true;
     }
 
-    // #05 类 ComfyUI 开发流 .workflow.json 导入落盘与持久化接口
     if (cleanPath === '/workflow-pack/save' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const pack = body.pack;
@@ -232,12 +191,11 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         wfRelPath = `workflows/${safeId}.workflow.json`;
         writeFileSync(join(root, wfRelPath), JSON.stringify(normalized, null, 2) + '\n', 'utf8');
       }
-      hub.emit({ type: 'workflow_pack_saved', packId: safeId, filePath: wfRelPath });
+      hub.emit({ type: 'workflow_pack_saved', packId: safeId, pack: normalized, filePath: wfRelPath });
       sendJson(res, 200, { ok: true, packId: safeId, pack: normalized, filePath: wfRelPath });
       return true;
     }
 
-    // #04 卡片点击直看适配器 observation.json / claim.json 或最近节点遥测输出
     if (cleanPath === '/observation-preview' && req.method === 'GET') {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
       const tool = String(u.searchParams.get('tool') || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -307,11 +265,12 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const body = await readJsonBody(req);
       const result = provisionWorkflowDeps(root, body.pack || {}, {
         runNpm: body.runNpm === true,
+        isolatedOnly: body.isolatedOnly === true,
         markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
       });
       const title = result.ready
-        ? `开发流「${result.packName}」全部 ${result.total} 项依赖已在 ${result.depsDir} 就位，可随时运行`
-        : `已建立专属环境目录 ${result.depsDir} 并派发后台补齐工单（待装 ${result.missingCount} 项）`;
+        ? `开发流「${result.packName}」全部 ${result.total} 项依赖已在共享池 ${result.sharedDepsDir || result.depsDir} 就位，可随时运行`
+        : `已建立共享依赖池 ${result.sharedDepsDir || result.depsDir} 并派发后台补齐工单（待装 ${result.missingCount} 项）`;
       hub.emit({ type: 'workflow_deps_updated', packId: result.packId, report: result });
       hub.emit({ type: 'dock_item', item: { id: `wfdep-${Date.now()}`, kind: result.ready ? 'summary' : 'receipt', tone: result.ready ? 'ok' : 'warn', title } });
       sendJson(res, 200, result);
