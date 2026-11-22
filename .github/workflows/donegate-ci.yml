@@ -115,15 +115,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/donegate-ci-tools
-          key: donegate-real-toolchain-v1-linux-x64
+          key: donegate-real-toolchain-v2-linux-x64
 
       - name: Provision real OSS CLI binaries on cache miss
         if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          UV_PYTHON_INSTALL_DIR: /home/runner/.cache/donegate-ci-tools/uv-python
         run: |
           set -euo pipefail
           TOOLS_ROOT="$HOME/.cache/donegate-ci-tools"
           BIN_DIR="$TOOLS_ROOT/bin"
-          mkdir -p "$BIN_DIR" "$TOOLS_ROOT/node" "$TOOLS_ROOT/flyway"
+          mkdir -p "$BIN_DIR" "$TOOLS_ROOT/node" "$TOOLS_ROOT/flyway" "$TOOLS_ROOT/uv-python"
 
           curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz" | tar -xz -C "$BIN_DIR" gitleaks
           curl -fsSL "https://github.com/anchore/syft/releases/download/v1.20.0/syft_1.20.0_linux_amd64.tar.gz" | tar -xz -C "$BIN_DIR" syft

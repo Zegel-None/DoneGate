@@ -15,7 +15,7 @@ export function cleanGitEnv(baseEnv = process.env) {
 }
 
 function runGit(cwd, args) {
-  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', ...args], { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true });
+  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', '-c', 'core.autocrlf=false', ...args], { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true });
   return { ok: r.status === 0, status: r.status, stdout: (r.stdout || '').trim(), stderr: (r.stderr || '').trim() };
 }
 
