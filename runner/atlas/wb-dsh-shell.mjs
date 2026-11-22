@@ -1,4 +1,4 @@
-// DSH 全屏沉浸式外壳装配、Alt+单击拾取监听、等宽同材质悬停对话窗口与实时明暗主题同步（零外网依赖）
+// DSH 全屏沉浸式外壳装配、Alt+单击拾取监听、卡包抽卡式零缝隙主对话复刻抽屉与实时明暗主题同步（零外网依赖）
 export function buildWbDshShell() {
   const fn = function initDoneGateDshIntegration() {
     document.body.classList.add(IS_DSH_EMBED ? 'is-dsh-embed' : 'has-dsh-dock');
@@ -39,7 +39,7 @@ export function buildWbDshShell() {
         '<div id="dsh-standalone-card">',
         '  <div id="dsh-quote-row" class="flex flex-wrap items-center gap-1.5"></div>',
         '  <div class="flex items-center gap-2.5">',
-        '    <input id="dsh-sim-input" type="text" placeholder="输入修改意图（点选元素或 Alt+单击可累加引用胶囊）..." class="flex-1 min-w-0 bg-transparent text-[13.5px] outline-none" style="color:var(--text-main);">',
+        '    <input id="dsh-sim-input" type="text" placeholder="发消息或创建任务，/ 调用指令，@ 文件或对话" class="flex-1 min-w-0 bg-transparent text-[13.5px] outline-none" style="color:var(--text-main);">',
         '    <button type="button" id="dsh-sim-send" class="w-7 h-7 rounded-full inline-flex items-center justify-center shrink-0" style="background:var(--btn-primary-bg);color:var(--btn-primary-fg);" aria-label="发送">',
         '      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.31 0.98c.36.07.67.22.95.45.22.18.47.43.72.68l4.73 4.72-1.42 1.42L9 3.96v11.08H7V3.96L2.71 8.25 1.29 6.83l4.73-4.72c.25-.25.49-.5.72-.68.24-.19.54-.39.95-.45.21-.03.41-.02.62 0Z"/></svg>',
         '    </button>',
@@ -48,6 +48,11 @@ export function buildWbDshShell() {
       ].join('');
       document.body.appendChild(shell);
     }
+
+    function saveSimPref(k, v) {
+      try { if (typeof localStorage !== 'undefined') localStorage.setItem(k, String(v)); } catch (err) { void err; }
+    }
+
     window.renderDshStandaloneShell = function renderDshStandaloneShell() {
       if (IS_DSH_EMBED) {
         if (window.parent && window.parent !== window) {
@@ -72,41 +77,71 @@ export function buildWbDshShell() {
       const dock = document.getElementById('dsh-input-dock');
       if (dock) {
         const top = dshRuntime.dockItems[0] || null;
-        const lastMsg = dshRuntime.chatHistory[dshRuntime.chatHistory.length - 1] || null;
         const isQ = Boolean(top && (top.kind === 'question' || top.kind === 'blocked'));
-        const exp = Boolean(dshRuntime.dockExpanded || isQ);
-        dock.className = (exp ? 'is-expanded ' : '') + (isQ ? 'is-question' : '');
-        const barTitle = top
-          ? esc(top.title)
-          : (lastMsg ? esc((lastMsg.role === 'user' ? '你 · ' : 'Agent · ') + lastMsg.text) : '悬停查看对话消息与门禁回执 · 移开自动回到工作台');
-        const popoutHtml = exp
-          ? '<div id="dsh-chat-popout" class="dsh-chat-popout"><div class="dsh-chat-popout-inner">' +
-            '<div class="flex items-center justify-between gap-2 pb-2 mb-2 border-b text-xs" style="border-color:var(--border-subtle);">' +
-            '<span class="font-medium" style="color:var(--text-secondary);">对话与门禁回执</span>' +
-            '<span style="color:var(--text-muted);">' + dshRuntime.chatHistory.length + ' 条消息</span></div>' +
-            '<div class="flex flex-col gap-1.5">' +
-            dshRuntime.chatHistory.slice(-14).map((m) => (
-              '<div class="dsh-chat-bubble ' + (m.role === 'user' ? 'is-user' : 'is-agent') + '">' + esc(m.text) + '</div>'
-            )).join('') +
-            '</div>' +
-            (dshRuntime.dockItems.length
-              ? '<div class="mt-2 pt-2 border-t text-xs flex flex-col gap-1" style="border-color:var(--border-subtle);color:var(--text-secondary);">' +
-                dshRuntime.dockItems.slice(0, 5).map((it) => '<div>· ' + esc(it.title) + '</div>').join('') + '</div>'
-              : '') +
-            '</div></div>'
-          : '';
-        dock.innerHTML = popoutHtml +
-          '<div class="flex items-center justify-between gap-2.5">' +
-          '<div class="flex items-center gap-2 min-w-0 flex-1">' +
-          '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--text-muted);flex-shrink:0;"><path d="M2.5 3.8C2.5 2.97 3.17 2.3 4 2.3h8c.83 0 1.5.67 1.5 1.5v5.4c0 .83-.67 1.5-1.5 1.5H6.4L3.3 13v-2.3H4c-.83 0-1.5-.67-1.5-1.5V3.8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>' +
-          '<span class="font-medium shrink-0" style="color:var(--text-main);">' + (top ? (isQ ? '待确认' : '门禁回执') : '对话与回执') + '</span>' +
-          '<span class="truncate flex-1" style="color:var(--text-muted);">' + barTitle + '</span></div>' +
-          '<div class="flex items-center gap-1.5 shrink-0">' +
-          (top && top.approveRunId ? '<button type="button" class="dg-micro-btn" data-action="approve-autopilot-gate" data-run="' + esc(top.approveRunId) + '" data-node="' + esc(top.approveNodeId || '') + '">批准并续跑</button>' : '') +
-          (top && top.confirmBlankNodeId ? '<button type="button" class="dg-micro-btn" data-dock-confirm-blank="' + esc(top.confirmBlankNodeId) + '">套用门禁模块</button>' : '') +
-          (top && top.targetNodeId ? '<button type="button" class="dg-micro-btn" data-dock-fly="' + esc(top.targetNodeId) + '">定位节点</button>' : '') +
-          (top ? '<button type="button" class="dg-micro-btn" data-dock-dismiss="1">×</button>' : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="color:var(--text-muted);transform:' + (exp ? 'rotate(180deg)' : 'none') + ';"><path d="M4 10L8 6L12 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>') +
-          '</div></div>';
+        const exp = Boolean(dshRuntime.dockPinned || dshRuntime.dockExpanded || dshRuntime.isResizingDock || isQ);
+        const hPx = Math.max(128, Math.min(640, Number(dshRuntime.dockHeight || 280)));
+        const agName = String(dshRuntime.agentName || 'Agent');
+        dock.style.height = ((exp ? hPx : 34) + 28) + 'px';
+        dock.className = (exp ? 'is-expanded ' : '') + (dshRuntime.isResizingDock ? 'is-dragging ' : '') + (isQ ? 'is-question' : '');
+
+        let latestAgentTxt = '';
+        for (let i = dshRuntime.chatHistory.length - 1; i >= 0; i--) {
+          if (dshRuntime.chatHistory[i] && dshRuntime.chatHistory[i].role === 'assistant' && dshRuntime.chatHistory[i].text) {
+            latestAgentTxt = String(dshRuntime.chatHistory[i].text).replace(/\s+/g, ' ').trim();
+            break;
+          }
+        }
+        if (!latestAgentTxt && top && top.title) latestAgentTxt = String(top.title).trim();
+
+        const prefixHtml = dshRuntime.editingAgentName
+          ? '<input id="dg-sim-agent-name-inp" type="text" value="' + esc(agName) + '" class="px-1.5 py-0.5 rounded text-xs font-semibold outline-none" style="width:88px;background:var(--bg);color:var(--text-main);border:0.5px solid var(--border-strong);">'
+          : '<span data-dg-rename-agent="1" title="双击可给 Agent 改名（如：小小张）" class="font-semibold shrink-0 select-none cursor-text" style="color:var(--text-main);">' + esc(agName) + '：</span>';
+
+        if (exp) {
+          const pinBtn = '<button type="button" data-dg-toggle-pin="1" style="position:absolute;top:8px;right:12px;z-index:8;height:24px;padding:0 9px;border-radius:8px;font-size:11.5px;font-weight:500;cursor:pointer;border:0.5px solid var(--border-strong);background:' + (dshRuntime.dockPinned ? 'var(--btn-primary-bg)' : 'var(--surface-soft)') + ';color:' + (dshRuntime.dockPinned ? 'var(--btn-primary-fg)' : 'var(--text-secondary)') + ';">📌 ' + (dshRuntime.dockPinned ? '已固定' : '固定') + '</button>';
+          const resizeGrip = '<div data-dg-sim-resize="1" title="上下拖动调整窗口高度（自动记忆）" style="position:absolute;top:0;left:0;right:0;height:10px;cursor:ns-resize;z-index:7;display:flex;align-items:center;justify-content:center;"><span style="width:32px;height:3px;border-radius:999px;background:var(--text-muted);opacity:0.35;"></span></div>';
+          const turnsHtml = dshRuntime.chatHistory.length
+            ? dshRuntime.chatHistory.map((m) => (
+              m.role === 'user'
+                ? '<div class="dsh-chat-bubble is-user">' + esc(m.text) + '</div>'
+                : '<div class="dsh-chat-bubble is-agent"><div class="mb-0.5">' + prefixHtml + '</div><div style="white-space:pre-wrap;">' + esc(m.text) + '</div></div>'
+            )).join('')
+            : '<div class="text-xs py-1" style="color:var(--text-muted);">暂无历史对话，直接在下方输入框发送消息即可开始协作。</div>';
+
+          dock.innerHTML = resizeGrip + pinBtn +
+            '<div id="dg-sim-chat-scroll" class="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-3 flex flex-col gap-3">' +
+            turnsHtml +
+            (top && top.targetNodeId ? '<div class="flex items-center justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style="background:var(--surface-soft);color:var(--text-secondary);"><span class="truncate">' + esc(top.title) + '</span><button type="button" class="dg-micro-btn shrink-0" data-dock-fly="' + esc(top.targetNodeId) + '">定位节点</button></div>' : '') +
+            '</div>';
+          const sc = document.getElementById('dg-sim-chat-scroll');
+          if (sc) sc.scrollTop = sc.scrollHeight;
+        } else {
+          const isLong = latestAgentTxt.length > 40;
+          dock.innerHTML = '<div style="height:34px;padding:0 16px;display:flex;align-items:center;gap:4px;font-size:13px;overflow:hidden;">' +
+            prefixHtml +
+            '<div class="dg-sim-pop flex-1 min-w-0 overflow-hidden whitespace-nowrap" style="color:' + (latestAgentTxt ? 'var(--text-secondary)' : 'var(--text-muted)') + ';">' +
+            '<span class="' + (isLong ? 'dg-sim-marquee' : '') + '">' + esc(latestAgentTxt || '等待新消息…') + '</span></div></div>';
+        }
+        if (dshRuntime.editingAgentName) {
+          const ni = document.getElementById('dg-sim-agent-name-inp');
+          if (ni) {
+            ni.focus();
+            ni.select();
+            const commit = () => {
+              const nv = String(ni.value || '').trim().slice(0, 24) || 'Agent';
+              dshRuntime.agentName = nv;
+              dshRuntime.editingAgentName = false;
+              saveSimPref('dg_dsh_agent_name', nv);
+              renderDshStandaloneShell();
+            };
+            ni.onblur = commit;
+            ni.onkeydown = (ke) => {
+              ke.stopPropagation();
+              if (ke.key === 'Enter') commit();
+              else if (ke.key === 'Escape') { dshRuntime.editingAgentName = false; renderDshStandaloneShell(); }
+            };
+          }
+        }
       }
       const rp = document.getElementById('dsh-right-preview');
       if (rp) {
@@ -120,6 +155,7 @@ export function buildWbDshShell() {
         }
       }
     };
+
     function dispatchDshInstruction(rawPrompt) {
       const prompt = String(rawPrompt || '').trim();
       if (!prompt && !dshRuntime.quotes.length) return;
@@ -137,7 +173,6 @@ export function buildWbDshShell() {
         const scopeTitle = state.page === 'workshop' ? WORKFLOW_PACKS[state.activePackId].name : (state.page === 'uiboard' ? 'UI 看板实时舞台' : REPO_SANDBOXES[state.viewingRepoId].name);
         const reply = '已扫描当前「' + scopeTitle + '」并对齐确定性门禁状态。';
         dshRuntime.chatHistory.push({ id: 'a-' + Date.now(), role: 'assistant', text: reply });
-        dshRuntime.dockItems.unshift({ id: 'dk-' + Date.now(), kind: 'receipt', title: reply });
         renderDshStandaloneShell();
         return;
       }
@@ -187,25 +222,59 @@ export function buildWbDshShell() {
           ? '已在对应元素上方挂出契约与职责说明。'
           : '已对 ' + targets.map((t) => '「' + t.title + '」').join('、') + ' 完成改码并通过确定性门禁验真。'
       });
-      if (targets.length > 1) {
-        dshRuntime.dockItems.unshift({
-          id: 'multi-' + Date.now(), kind: 'receipt', targetNodeId: targets[0].id,
-          title: '批量派工已完成：共处理 ' + targets.length + ' 个引用目标'
-        });
-      }
       renderDshCanvasAnchors();
       renderDshStandaloneShell();
     }
+
     const origRenderAll = window.renderAll || renderAll;
     renderAll = function patchedRenderAll() {
       origRenderAll();
       renderDshCanvasAnchors();
     };
+
     const dockEl = document.getElementById('dsh-input-dock');
     if (dockEl) {
       dockEl.addEventListener('mouseenter', () => { dshRuntime.dockExpanded = true; renderDshStandaloneShell(); });
-      dockEl.addEventListener('mouseleave', () => { dshRuntime.dockExpanded = false; renderDshStandaloneShell(); });
+      dockEl.addEventListener('mouseleave', () => {
+        if (!dshRuntime.editingAgentName && !dshRuntime.isResizingDock) {
+          dshRuntime.dockExpanded = false;
+          renderDshStandaloneShell();
+        }
+      });
+      dockEl.addEventListener('wheel', (e) => { e.stopPropagation(); }, { passive: true });
+      dockEl.addEventListener('dblclick', (e) => {
+        if (e.target.closest('[data-dg-rename-agent]')) {
+          e.preventDefault();
+          e.stopPropagation();
+          dshRuntime.editingAgentName = true;
+          renderDshStandaloneShell();
+        }
+      });
+      dockEl.addEventListener('pointerdown', (e) => {
+        if (!e.target.closest('[data-dg-sim-resize]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startY = e.clientY;
+        const startH = Number(dshRuntime.dockHeight || 280);
+        dshRuntime.isResizingDock = true;
+        dockEl.classList.add('is-dragging');
+        const onMove = (ev) => {
+          const nextH = Math.max(128, Math.min(640, Math.round(startH + (startY - ev.clientY))));
+          dshRuntime.dockHeight = nextH;
+          dockEl.style.height = (nextH + 28) + 'px';
+        };
+        const onUp = () => {
+          dshRuntime.isResizingDock = false;
+          dockEl.classList.remove('is-dragging');
+          saveSimPref('dg_dsh_dock_height', dshRuntime.dockHeight || 280);
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
     }
+
     document.addEventListener('pointerdown', (e) => {
       if (e.altKey && e.button === 0) {
         const btn = e.target.closest('button');
@@ -245,7 +314,16 @@ export function buildWbDshShell() {
         if (closedExplain) renderDshCanvasAnchors();
       }
     }, true);
+
     document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-dg-toggle-pin]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        dshRuntime.dockPinned = !dshRuntime.dockPinned;
+        saveSimPref('dg_dsh_dock_pinned', dshRuntime.dockPinned ? '1' : '0');
+        renderDshStandaloneShell();
+        return;
+      }
       if (e.target.closest('[data-dsh-quote="selection"]')) { emitDshQuote(collectCurrentSelectionAsQuote()); return; }
       const dctx = e.target.closest('[data-dsh-ctx]');
       if (dctx) {
@@ -297,12 +375,18 @@ export function buildWbDshShell() {
       if (e.target.closest('[data-close-rp]')) { dshRuntime.rightPreview.open = false; renderDshStandaloneShell(); return; }
       if (e.target.closest('#dsh-sim-send')) { const inp = document.getElementById('dsh-sim-input'); dispatchDshInstruction(inp ? inp.value : ''); }
     });
+
     const simInp = document.getElementById('dsh-sim-input');
     if (simInp) simInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); dispatchDshInstruction(simInp.value); } });
     window.addEventListener('message', (ev) => {
       const d = ev && ev.data;
       if (!d || typeof d !== 'object') return;
       if (d.type === 'dg:focus-node' && d.nodeId) flyCanvasToNode(String(d.nodeId));
+      if (d.type === 'dg:agent-name-sync' && d.agentName) {
+        dshRuntime.agentName = String(d.agentName);
+        saveSimPref('dg_dsh_agent_name', dshRuntime.agentName);
+        renderDshStandaloneShell();
+      }
       if (d.type === 'dg:theme-sync' && (d.theme === 'dark' || d.theme === 'light') && state.theme !== d.theme) {
         state.theme = d.theme;
         applyThemeClasses(d.theme);

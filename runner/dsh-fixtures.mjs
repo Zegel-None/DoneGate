@@ -179,6 +179,15 @@ export async function runAllDshChecks() {
       assert.ok(clientCode.includes('data-conversation-composer-overlay'), '必须启用 DSH 全屏覆盖模式使工作台铺满输入框底部区域');
       assert.ok(clientCode.includes('--dsh-composer-card-max-width'), '顶部消息栏必须与下方输入框严格共享 --dsh-composer-card-max-width 等宽');
       assert.ok(clientCode.includes('--dsw-specific-input-major') && clientCode.includes('--dsw-radius-xl'), '必须复用 DSH 官方输入框表面与圆角令牌');
+      assert.ok(!clientCode.includes('切回对话页') && !clientCode.includes('对话与回执'), '必须彻底移除多余的对话与回执顶栏及切回对话页按钮');
+      assert.ok(clientCode.includes('dg_dsh_agent_name') && clientCode.includes('dg_dsh_dock_pinned') && clientCode.includes('dg_dsh_dock_height'), '必须持久化自定义 Agent 名字、右上角固定状态与手动拖拽高度');
+      const dockEntry = registeredSlots.find((s) => s.opts.id === 'donegate-dock');
+      const mockTree = JSON.stringify(dockEntry.comp({
+        sessionId: 's-live',
+        useConversation: (sel) => sel({ views: { get: (v) => v === 'chat' ? { legacy: { nodes: [{ kind: 'user', seq: 1, content: [{ type: 'text', text: '帮我检查计算模块' }] }, { kind: 'assistant', seq: 2, turn: 1, blocks: [{ kind: 'text', text: '已完成计算模块门禁扫描，零违规放行。' }] }], partial: null } } : null } })
+      }));
+      assert.ok(mockTree.includes('calc(0px - var(--dsh-composer-stack-gap, 6px) - 28px)') && mockTree.includes('"paddingBottom":"28px"'), '抽屉底边必须零缝隙压入输入框上方 28px 圆角底下');
+      assert.ok(mockTree.includes('Agent：') && mockTree.includes('已完成计算模块门禁扫描，零违规放行。'), '收起态必须直接显示 Agent： 与真实主对话最新回复');
 
       const pre = preflightWorkflowPack({ id: 'wf-blank', name: '含空白节点流', nodes: [{ id: 'b1', title: '待定模块', isBlank: true }], links: [] });
       assert.equal(pre.ok, false);

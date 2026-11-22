@@ -1,35 +1,53 @@
-// 生成符合 DSH dsh-doc 与 web-styling/ui-radius 官方规范的浏览器端模块（全屏画布铺底 + 输入框悬浮 + 等宽同材质顶部消息条）
+// 生成符合 DSH 官方规范的浏览器端模块总装入口（组合全屏画布、会话消息提取器与卡包抽卡式对话抽屉）
 import { DSH_BUNDLE_NAME } from './bundle-templates.mjs';
+import { buildDshClientChatExtractSource } from './client-chat-extract.mjs';
+import { buildDshClientDockViewSource } from './client-dock-view.mjs';
 
 export function renderDshClientBundleJs() {
-  return `window.__ModuleLoader__.load({
-  id: ${JSON.stringify(DSH_BUNDLE_NAME)},
+  const partExtract = buildDshClientChatExtractSource();
+  const partDock = buildDshClientDockViewSource();
+  const shell = String.raw`window.__ModuleLoader__.load({
+  id: __DSH_BUNDLE_ID__,
   factory(require) {
     var React = require("react");
     var h = React.createElement;
 
     var NS = "dshDonegate";
+    var TUCK_OVERLAP_PX = 28;
+    var COLLAPSED_LIP_PX = 34;
+    var DEFAULT_EXPANDED_PX = 280;
+    var MIN_EXPANDED_PX = 128;
+    var MAX_EXPANDED_PX = 680;
+
+    var STORAGE_KEYS = {
+      agentName: "dg_dsh_agent_name",
+      pinned: "dg_dsh_dock_pinned",
+      height: "dg_dsh_dock_height"
+    };
+
     var zh = {
       "view.donegate": "完结门",
       "switch.label": "完结门",
-      "switch.back": "切回对话页",
-      "dock.bar": "悬停查看对话消息与门禁回执 · 移开自动回到工作台",
-      "dock.label": "对话与回执",
-      "dock.question": "待确认",
-      "dock.receipt": "门禁回执",
+      "dock.pin": "固定",
+      "dock.pinned": "已固定",
+      "dock.waiting": "等待新消息…",
+      "dock.empty": "暂无历史对话，直接在下方输入框发送消息即可开始协作。",
+      "dock.renameTip": "双击可修改 Agent 称呼（回车保存）",
+      "dock.resizeTip": "上下拖动调整窗口高度（自动记忆）",
       "dock.fly": "定位节点",
-      "dock.empty": "当前暂无对话消息，在下方输入框直接发送指令即可驱动工作台。"
+      "dock.thinking": "思考过程"
     };
     var en = {
       "view.donegate": "DoneGate",
       "switch.label": "DoneGate",
-      "switch.back": "Chat view",
-      "dock.bar": "Hover to view chat history & gate receipts",
-      "dock.label": "Messages",
-      "dock.question": "Action needed",
-      "dock.receipt": "Receipt",
+      "dock.pin": "Pin",
+      "dock.pinned": "Pinned",
+      "dock.waiting": "Waiting for reply…",
+      "dock.empty": "No conversation history yet. Send a message below to start.",
+      "dock.renameTip": "Double-click to rename Agent",
+      "dock.resizeTip": "Drag to resize height (auto-saved)",
       "dock.fly": "Locate",
-      "dock.empty": "No messages yet. Type below to drive the workbench."
+      "dock.thinking": "Reasoning"
     };
 
     var HOST_OVERLAY_CSS = [
@@ -46,8 +64,73 @@ export function renderDshClientBundleJs() {
       "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-card],",
       "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-dock] > * {",
       "  pointer-events: auto !important;",
-      "}"
-    ].join("\\n");
+      "}",
+      "/* 卡包抽卡叠压层次：抽屉卡在 z-index:1，下方原生输入框在 z-index:4，上圆角自然压住抽屉底边零缝隙 */",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) [data-composer-seat] [data-slot='conversation.input.dock'],",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) [data-composer-seat] [data-donegate-dock-wrap] {",
+      "  position: relative !important;",
+      "  z-index: 1 !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) [data-composer-seat] :has(> [data-composer-card]) {",
+      "  position: relative !important;",
+      "  z-index: 4 !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) [data-composer-seat] [data-composer-card] {",
+      "  position: relative !important;",
+      "  z-index: 4 !important;",
+      "  background: var(--dsw-specific-input-major, #2c2c2e) !important;",
+      "  box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22)), 0 -5px 14px rgba(0, 0, 0, 0.18), 0 4px 16px rgba(0, 0, 0, 0.04) !important;",
+      "}",
+      "@keyframes dgCardMsgPop {",
+      "  from { opacity: 0; transform: translateY(7px); }",
+      "  to { opacity: 1; transform: translateY(0); }",
+      "}",
+      "@keyframes dgCardMarquee {",
+      "  0%, 16% { transform: translateX(0); }",
+      "  84%, 100% { transform: translateX(var(--dg-marquee-shift, -42%)); }",
+      "}",
+      "[data-donegate-msg-pop] {",
+      "  animation: dgCardMsgPop 0.22s cubic-bezier(0.22, 1, 0.36, 1);",
+      "}",
+      "[data-donegate-marquee='1'] {",
+      "  display: inline-block;",
+      "  padding-right: 36px;",
+      "  animation: dgCardMarquee var(--dg-marquee-dur, 11s) linear infinite alternate;",
+      "}",
+      "[data-donegate-dock-wrap]:hover [data-donegate-marquee='1'] {",
+      "  animation-play-state: paused;",
+      "}",
+      "[data-donegate-chat-scroll]::-webkit-scrollbar { width: 5px; height: 5px; }",
+      "[data-donegate-chat-scroll]::-webkit-scrollbar-track { background: transparent; margin: 6px 0; }",
+      "[data-donegate-chat-scroll]::-webkit-scrollbar-thumb { background: var(--dsw-alias-scrollbar-bg-l2, rgba(128, 128, 128, 0.28)); border-radius: 999px; }",
+      "[data-donegate-chat-scroll]::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-scrollbar-hover-l2, rgba(128, 128, 128, 0.44)); }",
+      "[data-donegate-resize-bar]:hover [data-donegate-resize-pill] { opacity: 0.72 !important; width: 42px !important; }"
+    ].join("\n");
+
+    function readLocalPref(key, fallbackVal) {
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          var v = window.localStorage.getItem(key);
+          if (v !== null && v !== undefined && v !== "") return v;
+        }
+      } catch (err) { void err; }
+      return fallbackVal;
+    }
+
+    function writeLocalPref(key, val) {
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem(key, String(val));
+        }
+      } catch (err) { void err; }
+    }
+
+    function clampHeight(rawH) {
+      var n = Number(rawH);
+      if (!n || isNaN(n)) return DEFAULT_EXPANDED_PX;
+      var maxWin = (typeof window !== "undefined" && window.innerHeight) ? Math.max(200, Math.round(window.innerHeight * 0.72)) : MAX_EXPANDED_PX;
+      return Math.max(MIN_EXPANDED_PX, Math.min(Math.min(MAX_EXPANDED_PX, maxWin), Math.round(n)));
+    }
 
     function ensureHostOverlayStyle() {
       if (typeof document === "undefined" || !document.head) return function () {};
@@ -58,6 +141,8 @@ export function renderDshClientBundleJs() {
         el.id = id;
         el.textContent = HOST_OVERLAY_CSS;
         document.head.appendChild(el);
+      } else {
+        el.textContent = HOST_OVERLAY_CSS;
       }
       return function () {
         if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -69,30 +154,57 @@ export function renderDshClientBundleJs() {
       if (document.body.hasAttribute("data-ds-dark-theme")) return true;
       try {
         var bg = window.getComputedStyle(document.body).backgroundColor || "";
-        var m = bg.match(/\\d+/g);
+        var m = bg.match(/\d+/g);
         if (m && m.length >= 3) return (Number(m[0]) + Number(m[1]) + Number(m[2])) < 380;
       } catch (err) { void err; }
       return false;
     }
 
     function createDockStore() {
-      var state = { items: [], messages: [], expanded: false };
+      var initPinned = readLocalPref(STORAGE_KEYS.pinned, "0") === "1";
+      var state = {
+        items: [],
+        messages: [],
+        hovered: false,
+        pinned: initPinned,
+        height: clampHeight(readLocalPref(STORAGE_KEYS.height, String(DEFAULT_EXPANDED_PX))),
+        agentName: String(readLocalPref(STORAGE_KEYS.agentName, "Agent") || "Agent").trim() || "Agent"
+      };
       var subs = new Set();
       function emit() { subs.forEach(function (fn) { try { fn(); } catch (err) { void err; } }); }
       return {
         getSnapshot: function () { return state; },
         subscribe: function (fn) { subs.add(fn); return function () { subs.delete(fn); }; },
         setItems: function (items, messages) {
-          state = {
+          state = Object.assign({}, state, {
             items: Array.isArray(items) ? items : state.items,
-            messages: Array.isArray(messages) ? messages : state.messages,
-            expanded: state.expanded
-          };
+            messages: Array.isArray(messages) ? messages : state.messages
+          });
           emit();
         },
-        setExpanded: function (expanded) {
-          if (state.expanded === Boolean(expanded)) return;
-          state = { items: state.items, messages: state.messages, expanded: Boolean(expanded) };
+        setHovered: function (hovered) {
+          var next = Boolean(hovered);
+          if (state.hovered === next) return;
+          state = Object.assign({}, state, { hovered: next });
+          emit();
+        },
+        togglePinned: function () {
+          var next = !state.pinned;
+          writeLocalPref(STORAGE_KEYS.pinned, next ? "1" : "0");
+          state = Object.assign({}, state, { pinned: next });
+          emit();
+        },
+        setHeight: function (nextH) {
+          var clamped = clampHeight(nextH);
+          if (state.height === clamped) return;
+          writeLocalPref(STORAGE_KEYS.height, String(clamped));
+          state = Object.assign({}, state, { height: clamped });
+          emit();
+        },
+        setAgentName: function (rawName) {
+          var clean = String(rawName || "").trim().slice(0, 24) || "Agent";
+          writeLocalPref(STORAGE_KEYS.agentName, clean);
+          state = Object.assign({}, state, { agentName: clean });
           emit();
         }
       };
@@ -103,36 +215,17 @@ export function renderDshClientBundleJs() {
 
     function resolveSessionId(props) {
       if (props && typeof props.useSession === "function") {
-        var sid = props.useSession(function (s) { return s && s.id; });
-        if (sid) return String(sid);
+        try {
+          var sid = props.useSession(function (s) { return s && s.id; });
+          if (sid) return String(sid);
+        } catch (err) { void err; }
       }
       if (props && props.session && props.session.id) return String(props.session.id);
       if (props && props.sessionId) return String(props.sessionId);
       return "default";
     }
 
-    function resolveSessionMessages(props) {
-      var raw = null;
-      if (props && typeof props.useSession === "function") {
-        try {
-          raw = props.useSession(function (s) { return s && (s.messages || s.turns || s.items); });
-        } catch (err) { void err; }
-      }
-      if (!raw && props && props.session) {
-        raw = props.session.messages || props.session.turns || props.session.items;
-      }
-      if (!Array.isArray(raw)) return [];
-      return raw.slice(-16).map(function (m, idx) {
-        var role = (m && (m.role || m.sender)) || "assistant";
-        var text = typeof (m && m.content) === "string"
-          ? m.content
-          : (Array.isArray(m && m.content)
-              ? m.content.map(function (p) { return (p && (p.text || p.content)) || ""; }).join(" ")
-              : String((m && (m.text || m.summary || "")) || ""));
-        return { id: String((m && m.id) || ("msg-" + idx)), role: String(role), text: text.trim() };
-      }).filter(function (m) { return Boolean(m.text); });
-    }
-
+__PART_CHAT_EXTRACT__
     function DoneGateCanvasView(props) {
       var sessionId = resolveSessionId(props);
       var inputActions = props.inputActions;
@@ -153,6 +246,8 @@ export function renderDshClientBundleJs() {
             openRightResource(String(data.address));
           } else if (data.type === "dg:dock-sync") {
             dockStore.setItems(data.items, data.messages);
+          } else if (data.type === "dg:set-agent-name" && data.agentName) {
+            dockStore.setAgentName(data.agentName);
           }
         }
         window.addEventListener("message", onMessage);
@@ -199,219 +294,7 @@ export function renderDshClientBundleJs() {
       }));
     }
 
-    function renderChatGlyph() {
-      return h("svg", { width: "14", height: "14", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", style: { flexShrink: 0, color: "var(--dsw-alias-label-tertiary, #81858c)" } },
-        h("path", { d: "M2.5 3.8C2.5 2.97 3.17 2.3 4 2.3h8c.83 0 1.5.67 1.5 1.5v5.4c0 .83-.67 1.5-1.5 1.5H6.4L3.3 13v-2.3H4c-.83 0-1.5-.67-1.5-1.5V3.8Z", stroke: "currentColor", strokeWidth: "1.3", strokeLinejoin: "round" })
-      );
-    }
-
-    function renderChevronGlyph(open) {
-      return h("svg", {
-        width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true",
-        style: { flexShrink: 0, color: "var(--dsw-alias-label-tertiary, #81858c)", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.16s ease" }
-      }, h("path", { d: "M4 10L8 6L12 10", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }));
-    }
-
-    function DoneGateInputDock(props) {
-      var sessionId = resolveSessionId(props);
-      var t = props.t || function (k) { return zh[k] || k; };
-      var snap = React.useSyncExternalStore
-        ? React.useSyncExternalStore(dockStore.subscribe, dockStore.getSnapshot, dockStore.getSnapshot)
-        : dockStore.getSnapshot();
-      var hostMsgs = resolveSessionMessages(props);
-      var items = (snap && snap.items) || [];
-      var syncedMsgs = (snap && snap.messages) || [];
-      var chatList = hostMsgs.length ? hostMsgs : syncedMsgs;
-      var isDoneGateActive = typeof props.isDoneGateActive === "function" ? props.isDoneGateActive(sessionId) : true;
-      if (!isDoneGateActive && !items.length) return null;
-
-      var top = items[0] || null;
-      var lastMsg = chatList.length ? chatList[chatList.length - 1] : null;
-      var isQuestion = Boolean(top && (top.kind === "question" || top.kind === "blocked"));
-      var expanded = Boolean((snap && snap.expanded) || isQuestion);
-
-      function flyToNode(nodeId) {
-        if (typeof props.activateDoneGateView === "function") props.activateDoneGateView(sessionId);
-        var ifr = iframeBySession.get(sessionId);
-        if (ifr && ifr.contentWindow) {
-          ifr.contentWindow.postMessage({ source: "donegate-host", type: "dg:focus-node", nodeId: nodeId }, "*");
-        }
-      }
-
-      var strokeVar = isQuestion
-        ? "var(--dsw-alias-state-warn-primary, rgba(245, 158, 11, 0.55))"
-        : "var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.14))";
-      var barShadow = "0 0 0 0.5px " + strokeVar + ", 0 4px 16px 0 rgba(0, 0, 0, 0.03), 0 0 24px 0 rgba(0, 0, 0, 0.03)";
-      var panelShadow = "0 0 0 0.5px " + strokeVar + ", 0 6px 24px 0 rgba(0, 0, 0, 0.08), 0 0 20px 0 rgba(0, 0, 0, 0.04)";
-      var barSummary = top
-        ? String(top.title || "")
-        : (lastMsg ? ((lastMsg.role === "user" ? "你 · " : "Agent · ") + lastMsg.text) : t("dock.bar"));
-
-      return h("div", {
-        "data-donegate-dock-wrap": "",
-        onMouseEnter: function (e) {
-          if (e && e.pointerType === "touch") return;
-          dockStore.setExpanded(true);
-        },
-        onMouseLeave: function () {
-          if (!isQuestion) dockStore.setExpanded(false);
-        },
-        style: {
-          boxSizing: "border-box",
-          position: "relative",
-          margin: "0 auto",
-          width: "calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))",
-          maxWidth: "var(--dsh-composer-card-max-width, 760px)",
-          fontFamily: "var(--dsw-font-family, inherit)"
-        }
-      },
-        expanded ? h("div", {
-          "data-donegate-dock-popout": "",
-          style: {
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: "100%",
-            paddingBottom: "6px",
-            zIndex: 60
-          }
-        }, h("div", {
-          style: {
-            boxSizing: "border-box",
-            maxHeight: "280px",
-            overflowY: "auto",
-            padding: "12px 14px",
-            borderRadius: "var(--dsw-radius-xl, 20px)",
-            border: "0",
-            background: "var(--dsw-specific-menu, rgba(44, 44, 46, 0.92))",
-            backdropFilter: "var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%))",
-            WebkitBackdropFilter: "var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%))",
-            boxShadow: panelShadow,
-            color: "var(--dsw-alias-label-primary, #f9fafb)",
-            fontSize: "13px",
-            lineHeight: "20px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "8px"
-          }
-        },
-          h("div", {
-            style: {
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
-              paddingBottom: "8px", borderBottom: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.14))"
-            }
-          },
-            h("span", { style: { fontWeight: 500, fontSize: "12.5px", color: "var(--dsw-alias-label-secondary, #cfd3d6)" } }, t("dock.label")),
-            typeof props.toggleDoneGateView === "function" ? h("button", {
-              type: "button",
-              onClick: function () { props.toggleDoneGateView(sessionId); },
-              style: {
-                height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
-                border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
-                background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.08))",
-                color: "var(--dsw-alias-label-secondary, #cfd3d6)", cursor: "pointer", fontSize: "12px"
-              }
-            }, t("switch.back")) : null
-          ),
-          chatList.length ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
-            chatList.map(function (m) {
-              var isUser = m.role === "user";
-              return h("div", {
-                key: m.id,
-                style: {
-                  alignSelf: isUser ? "flex-end" : "flex-start",
-                  maxWidth: "88%",
-                  padding: isUser ? "6px 12px" : "4px 6px",
-                  borderRadius: "var(--dsw-radius-lg, 16px)",
-                  background: isUser ? "var(--dsw-specific-bubble, rgba(128,128,128,0.14))" : "transparent",
-                  color: "var(--dsw-alias-label-primary, #f9fafb)",
-                  fontSize: "13px",
-                  lineHeight: "20px"
-                }
-              }, m.text);
-            })
-          ) : h("div", { style: { color: "var(--dsw-alias-label-tertiary, #81858c)", fontSize: "12.5px", padding: "2px 0" } }, t("dock.empty")),
-          items.length ? h("div", {
-            style: {
-              borderTop: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.14))",
-              paddingTop: "8px", display: "flex", flexDirection: "column", gap: "4px"
-            }
-          },
-            items.slice(0, 5).map(function (it) {
-              return h("div", {
-                key: it.id,
-                style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", fontSize: "12.5px", color: "var(--dsw-alias-label-secondary, #cfd3d6)" }
-              },
-                h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(it.title || "")),
-                it.targetNodeId ? h("button", {
-                  type: "button",
-                  onClick: function () { flyToNode(it.targetNodeId); },
-                  style: {
-                    height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
-                    border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
-                    background: "transparent", color: "var(--dsw-alias-label-primary, #f9fafb)", cursor: "pointer", fontSize: "11.5px", flexShrink: 0
-                  }
-                }, t("dock.fly")) : null
-              );
-            })
-          ) : null
-        )) : null,
-        h("div", {
-          "data-donegate-dock-card": "",
-          style: {
-            boxSizing: "border-box",
-            width: "100%",
-            minHeight: "36px",
-            padding: "6px 12px 6px 14px",
-            borderRadius: "var(--dsw-radius-xl, 20px)",
-            border: "0",
-            background: "var(--dsw-specific-input-major, #2c2c2e)",
-            boxShadow: barShadow,
-            color: "var(--dsw-alias-label-secondary, #cfd3d6)",
-            fontSize: "13px",
-            lineHeight: "20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "10px",
-            cursor: "pointer"
-          }
-        },
-          h("div", { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 } },
-            renderChatGlyph(),
-            h("span", { style: { fontWeight: 500, color: "var(--dsw-alias-label-primary, #f9fafb)", flexShrink: 0 } },
-              top ? (isQuestion ? t("dock.question") : t("dock.receipt")) : t("dock.label")
-            ),
-            h("span", {
-              style: {
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                color: "var(--dsw-alias-label-tertiary, #81858c)", flex: 1, minWidth: 0
-              }
-            }, barSummary)
-          ),
-          h("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 } },
-            top && top.targetNodeId ? h("button", {
-              type: "button",
-              onClick: function () { flyToNode(top.targetNodeId); },
-              style: {
-                height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
-                border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
-                background: "transparent", color: "var(--dsw-alias-label-secondary, #cfd3d6)", cursor: "pointer", fontSize: "12px"
-              }
-            }, t("dock.fly")) : null,
-            top ? h("button", {
-              type: "button",
-              onClick: function () { dockStore.setItems(items.slice(1), syncedMsgs); },
-              style: {
-                width: "24px", height: "24px", borderRadius: "var(--dsw-radius-sm, 8px)",
-                border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary, #81858c)", cursor: "pointer", fontSize: "14px"
-              }
-            }, "×") : renderChevronGlyph(expanded)
-          )
-        )
-      );
-    }
-
+__PART_DOCK_VIEW__
     function DoneGateQuickSwitch(props) {
       var sessionId = resolveSessionId(props);
       var t = props.t || function (k) { return zh[k] || k; };
@@ -520,5 +403,8 @@ export function renderDshClientBundleJs() {
     };
   }
 });
-`;
+`.replace("__DSH_BUNDLE_ID__", JSON.stringify(DSH_BUNDLE_NAME));
+  return shell
+    .replace("__PART_CHAT_EXTRACT__", () => partExtract)
+    .replace("__PART_DOCK_VIEW__", () => partDock);
 }

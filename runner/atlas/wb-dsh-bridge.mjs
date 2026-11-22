@@ -11,9 +11,10 @@ const dshRuntime = {
   quotes: [],
   anchors: new Map(),
   dockItems: [],
-  chatHistory: [
-    { id: 'welcome-1', role: 'assistant', text: '工作台已就绪：点选任意卡片、UI 元素或连线累加蓝色引用胶囊，在下方输入框发话即可驱动改码验真；鼠标移入顶部窄栏随时查看完整对话记录，移开即刻回到工作台。' }
-  ],
+  chatHistory: [],
+  agentName: (typeof localStorage !== 'undefined' && localStorage.getItem('dg_dsh_agent_name')) || 'Agent',
+  dockPinned: (typeof localStorage !== 'undefined' && localStorage.getItem('dg_dsh_dock_pinned') === '1'),
+  dockHeight: Number((typeof localStorage !== 'undefined' && localStorage.getItem('dg_dsh_dock_height')) || 280),
   dockExpanded: false,
   rightPreview: { open: false, title: '', path: '', diffText: '' }
 };
