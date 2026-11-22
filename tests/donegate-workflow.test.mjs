@@ -392,4 +392,82 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       rmSync(baseTmp, { recursive: true, force: true });
     }
   });
+
+  it("混合配招与节点级即时变招 HTTP 闭环：Worker 403 拦截、需求变更局部变招、底座锁 409 拦截与一键沉淀宏", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dg-jit-http-"));
+    dispatchCommand(["init", "."], dir);
+    mkdirSync(join(dir, "src/core"), { recursive: true });
+    writeFileSync(join(dir, "src/core/calc.mjs"), "// 计算器核心运算模块\nexport const add = (a, b) => a + b;\n", "utf8");
+    const srv = await startAtlasHttpServer(dir, { port: 0, idleExitSec: 15 });
+    try {
+      const calcNode = {
+        id: "node-calc-core",
+        title: "计算器核心运算模块",
+        tip: "负责四则运算与表达式求值",
+        scopePaths: ["src/core/"],
+        modules: [{ name: "核心运算模块", role: "逻辑", path: "src/core/calc.mjs" }]
+      };
+
+      // 1) Worker 角色越权请求 -> 403 WORKER_CANNOT_MUTATE_WORKFLOW
+      const rWorker = await fetch(`${srv.url}donegate/api/jit/mutate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "worker" },
+        body: JSON.stringify({ nodeId: calcNode.id, node: calcNode, removeTplIds: ["tpl-anti-slop"] })
+      });
+      expect(rWorker.status).toBe(403);
+      const jWorker = await rWorker.json();
+      expect(jWorker.code).toBe("WORKER_CANNOT_MUTATE_WORKFLOW");
+
+      // 2) Super Agent 自动配招 + 按新需求即时变招
+      const rAssign = await fetch(`${srv.url}donegate/api/jit/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        body: JSON.stringify({ nodeId: calcNode.id, node: calcNode })
+      });
+      expect(rAssign.status).toBe(200);
+      const jAssign = await rAssign.json();
+      expect(jAssign.binding.baseMacroId).toBe("pack-core-logic");
+
+      const rMut = await fetch(`${srv.url}donegate/api/jit/mutate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        body: JSON.stringify({
+          nodeId: calcNode.id,
+          node: calcNode,
+          requirementText: "改需求：增加自定义公式解析并在前端弹窗展示实时汇率 API"
+        })
+      });
+      expect(rMut.status).toBe(200);
+      const jMut = await rMut.json();
+      expect(jMut.binding.mode).toBe("jit-forked");
+      expect(jMut.binding.tplIds).toContain("tpl-openspec");
+      expect(jMut.binding.tplIds).toContain("tpl-gitleaks");
+      expect(jMut.binding.tplIds).toContain("tpl-playwright");
+
+      // 3) 试图删除底座护栏 tpl-anti-slop -> 409 MANDATORY_FLOOR_LOCKED
+      const rFloor = await fetch(`${srv.url}donegate/api/jit/mutate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        body: JSON.stringify({ nodeId: calcNode.id, node: calcNode, removeTplIds: ["tpl-anti-slop"] })
+      });
+      expect(rFloor.status).toBe(409);
+      const jFloor = await rFloor.json();
+      expect(jFloor.code).toBe("MANDATORY_FLOOR_LOCKED");
+      expect(jFloor.requiresHumanApproval).toBe(true);
+
+      // 4) 一键另存为工作流宏 -> 写入 workflows/*.workflow.json
+      const rPromo = await fetch(`${srv.url}donegate/api/jit/promote-macro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "human" },
+        body: JSON.stringify({ nodeId: calcNode.id, macroId: "calc-fx-ui-macro", name: "计算器公式汇率全栈宏" })
+      });
+      expect(rPromo.status).toBe(200);
+      const jPromo = await rPromo.json();
+      expect(jPromo.ok).toBe(true);
+      expect(JSON.parse(readFileSync(join(dir, "workflows/calc-fx-ui-macro.workflow.json"), "utf8")).name).toBe("计算器公式汇率全栈宏");
+    } finally {
+      srv.server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

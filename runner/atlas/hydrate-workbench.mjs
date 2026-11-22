@@ -30,6 +30,7 @@ function defaultSavedState() {
   return {
     schemaVersion: '1.0',
     customPacks: {},
+    componentWorkflows: {},
     hostNodeLayouts: {},
     hostGroups: [],
     hostSubgraphs: [],
@@ -132,6 +133,7 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
       primaryContractId: contractIds[0] || null,
       lifecycleLabel: (contractIds[0] && summaryById.get(contractIds[0])?.lifecycleLabel) || (contractIds.length ? "草稿待冻结" : "未挂契约"),
       scopePaths: [...scopeSet],
+      workflowBinding: (savedState.componentWorkflows || {})[nodeId] || null,
       bypassed: Boolean(saved.bypassed || false),
       collapsed: Boolean(saved.collapsed || false),
       expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : domMods.length <= 4,

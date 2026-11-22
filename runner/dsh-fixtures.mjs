@@ -28,6 +28,9 @@ import {
 import {
   buildDshBundleDirectory, installDshWebBundle, uninstallDshWebBundle
 } from './dsh/install-dsh-web.mjs';
+import {
+  assignComponentWorkflow, mutateComponentWorkflowJit, promoteComponentJitToMacro
+} from './dsh/workflow-jit.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -384,6 +387,87 @@ export async function runAllDshChecks() {
       const runC = await executeDeterministicWorkflowRun(tmp, { ticketId: "fp-3" }, cachePack, { useFingerprintCache: true });
       assert.equal(runC.cacheHits, 0, "源码变更后材料指纹变化，必须自动失效并重跑真机节点");
       assert.equal(readFileSync(markerPath, "utf8"), "2");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+
+  await check("9. 预置宏打底 + 节点级即时变招 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为宏", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "dg-jit-wf-"));
+    try {
+      const uiComp = {
+        id: "calc-ui", title: "计算器按键与显示屏界面", tip: "React 界面与弹窗交互",
+        scopePaths: ["src/ui/"], modules: [{ name: "CalcView", role: "界面", path: "src/ui/CalcView.tsx" }]
+      };
+      const engineComp = {
+        id: "calc-engine", title: "科学计算核心逻辑模块", tip: "纯函数四则与浮点运算",
+        scopePaths: ["src/core/"], modules: [{ name: "evalExpr", role: "逻辑", path: "src/core/eval.mjs" }]
+      };
+
+      // (A) 执行端 Worker 严禁选配或篡改验收连招
+      const deniedAssign = assignComponentWorkflow(tmp, engineComp, { actorRole: "worker" });
+      assert.equal(deniedAssign.ok, false);
+      assert.equal(deniedAssign.code, "WORKER_CANNOT_MUTATE_WORKFLOW");
+
+      // (B) 总控自动为不同组件匹配对应基准宏（且优先命中零外部未装依赖的 pack-core-logic）
+      const assignedUi = assignComponentWorkflow(tmp, uiComp, { actorRole: "super-agent" });
+      const assignedEng = assignComponentWorkflow(tmp, engineComp, { actorRole: "super-agent" });
+      assert.equal(assignedUi.ok, true);
+      assert.equal(assignedUi.binding.baseMacroId, "pack-web");
+      assert.equal(assignedEng.ok, true);
+      assert.equal(assignedEng.binding.baseMacroId, "pack-core-logic");
+      assert.equal(assignedEng.binding.depsReady, true);
+
+      // (C) 改需求时在当前节点局部派生变招（不污染全局宏，且禁止注入非标脚本）
+      const badBrick = mutateComponentWorkflowJit(tmp, engineComp, { actorRole: "super-agent", addTplIds: ["raw-shell-hack"] });
+      assert.equal(badBrick.ok, false);
+      assert.equal(badBrick.code, "UNKNOWN_BRICK_REJECTED");
+
+      const mutated = mutateComponentWorkflowJit(tmp, engineComp, {
+        actorRole: "super-agent",
+        requirementText: "改需求：支持自定义公式语法解析，并联网拉取实时汇率 API"
+      });
+      assert.equal(mutated.ok, true);
+      assert.equal(mutated.binding.mode, "jit-forked");
+      assert.ok(mutated.binding.tplIds.includes("tpl-openspec"));
+      assert.ok(mutated.binding.tplIds.includes("tpl-gitleaks"));
+      assert.ok(mutated.binding.tplIds.includes("tpl-anti-slop"));
+      assert.ok(mutated.binding.deltaCount >= 2);
+
+      // (D) 底座护栏「只增不减」安全锁：自动卸载底线护栏必须被拦截并要求人工审批
+      const apiComp = {
+        id: "calc-rate-api", title: "汇率鉴权与收银接口", tip: "OAuth 与密钥签名",
+        scopePaths: ["src/api/"], modules: [{ name: "rateApi", role: "接口", path: "src/api/rate.ts" }]
+      };
+      assignComponentWorkflow(tmp, apiComp, { actorRole: "super-agent" });
+      const locked = mutateComponentWorkflowJit(tmp, apiComp, {
+        actorRole: "super-agent",
+        removeTplIds: ["tpl-gitleaks"]
+      });
+      assert.equal(locked.ok, false);
+      assert.equal(locked.code, "MANDATORY_FLOOR_LOCKED");
+      assert.equal(locked.requiresHumanApproval, true);
+
+      const humanOk = mutateComponentWorkflowJit(tmp, apiComp, {
+        actorRole: "human",
+        removeTplIds: ["tpl-gitleaks"],
+        humanApprovedFloorRemoval: true
+      });
+      assert.equal(humanOk.ok, true);
+      assert.ok(!humanOk.binding.tplIds.includes("tpl-gitleaks"));
+      assert.ok(humanOk.binding.tplIds.includes("tpl-anti-slop"), "防手搓核心护栏仍保持守底");
+
+      // (E) 一键另存为全局工作流宏 (.workflow.json)
+      const promoted = promoteComponentJitToMacro(tmp, engineComp.id, {
+        actorRole: "human",
+        macroId: "calc-formula-fx",
+        name: "公式与汇率联防连招"
+      });
+      assert.equal(promoted.ok, true);
+      assert.ok(existsSync(join(tmp, "workflows", "calc-formula-fx.workflow.json")));
+      assert.equal(promoted.binding.mode, "macro");
+      assert.equal(promoted.binding.baseMacroId, "calc-formula-fx");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

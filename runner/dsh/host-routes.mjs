@@ -11,6 +11,8 @@ import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runn
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
 import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
+import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
+import { buildJitBootstrapSummary } from './workflow-jit.mjs';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -52,6 +54,9 @@ export function createDoneGateWebRouteHandler(projectRoot) {
     if (cleanPath.startsWith('/uiboard/')) {
       return handleUiBoardSubRoute(req, res, cleanPath, root, hub, readJsonBody);
     }
+    if (cleanPath.startsWith('/jit/')) {
+      return handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, readJsonBody);
+    }
 
     if (cleanPath === '/events' && req.method === 'GET') {
       res.writeHead(200, {
@@ -81,6 +86,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         platform: process.platform,
         atlas: buildDashboardPayload(root),
         state: readSavedWorkbenchState(root),
+        jit: buildJitBootstrapSummary(root),
         autopilot: loadAutopilotCheckpoint(root),
         nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
         dockItems: hub.dockItems,

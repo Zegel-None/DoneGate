@@ -25,6 +25,7 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   if (!state.packDepReports) state.packDepReports = {};
   if (!state.provisionedPacks) state.provisionedPacks = {};
   if (!state.nodeTelemetry) state.nodeTelemetry = {};
+  if (!state.componentWorkflows) state.componentWorkflows = {};
 
   if (Array.isArray(wb.registeredTemplates)) {
     wb.registeredTemplates.forEach((tpl) => {
@@ -66,6 +67,7 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
         }
       });
     }
+    if (sv.componentWorkflows && typeof sv.componentWorkflows === 'object') state.componentWorkflows = { ...state.componentWorkflows, ...sv.componentWorkflows };
     if (Array.isArray(sv.starredRepos) && sv.starredRepos.length > 0) state.starredRepos = new Set(sv.starredRepos);
     if (sv.textOverrides && typeof sv.textOverrides === 'object') state.customTextOverrides = { ...state.customTextOverrides, ...sv.textOverrides };
     if (sv.textStyles && typeof sv.textStyles === 'object') state.textStyleOverrides = { ...state.textStyleOverrides, ...sv.textStyles };
@@ -97,6 +99,16 @@ function connectDoneGateLiveEvents() {
             diagSummary: msg.diagSummary || ''
           };
           renderCanvas();
+        } else if (msg.type === 'jit_workflow_updated' && msg.nodeId && msg.binding) {
+          state.componentWorkflows = { ...(state.componentWorkflows || {}), [msg.nodeId]: msg.binding };
+          renderCanvas();
+        } else if (msg.type === 'jit_workflows_batch_assigned' && msg.bindings) {
+          state.componentWorkflows = { ...(state.componentWorkflows || {}), ...msg.bindings };
+          renderCanvas();
+        } else if (msg.type === 'workflow_pack_saved' && msg.packId && msg.pack) {
+          WORKFLOW_PACKS[msg.packId] = msg.pack;
+          if (msg.pack.group && !WORKFLOW_GROUPS.includes(msg.pack.group)) WORKFLOW_GROUPS.push(msg.pack.group);
+          renderLeftDrawer();
         } else if (msg.type === 'workflow_deps_updated' && msg.packId && msg.report) {
           state.packDepReports = { ...(state.packDepReports || {}), [msg.packId]: msg.report };
           renderLeftDrawer();

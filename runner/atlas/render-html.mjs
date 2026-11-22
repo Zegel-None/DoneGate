@@ -16,6 +16,7 @@ import { buildWbHistoryScript } from './wb-history.mjs';
 import { buildViewsScript } from './ui-views.mjs';
 import { buildWbDshBridge } from './wb-dsh-bridge.mjs';
 import { buildWbUiBoardScript } from './wb-uiboard.mjs';
+import { buildWbJitWorkflowScript } from './wb-jit-workflow.mjs';
 import { buildShellScript } from './ui-shell.mjs';
 import { buildWbDshShell } from './wb-dsh-shell.mjs';
 
@@ -50,6 +51,7 @@ export function renderAtlasWorkbenchHtml(atlas) {
     buildViewsScript(),
     buildWbDshBridge(),
     buildWbUiBoardScript(),
+    buildWbJitWorkflowScript(),
     buildShellScript(),
     buildWbDshShell()
   ].join('\n');
