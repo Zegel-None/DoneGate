@@ -36,7 +36,7 @@ const HELP_TEXT = [
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
   '密封契约切片与单卡微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
-  '· slice [nodeId] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
+  '· slice [nodeId] [--focus <f1,f2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
   '· check-node <nodeId> [--criterion <oid>] [--allow-dirty] [--allow-stub-change] [--receipt] [--json]'
 ].join('\n');
 
@@ -50,7 +50,7 @@ function parseCliArgs(argv) {
       const k = a.slice(2);
       if (BOOLEAN_FLAGS.has(k)) { flags[k] = true; continue; }
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('--')) { flags[k] = next; i++; }
+      if (next !== undefined && !next.startsWith('--')) { flags[k] = (k === 'focus' && flags[k]) ? `${flags[k]},${next}` : next; i++; }
       else flags[k] = true;
     } else pos.push(a);
   }
@@ -83,6 +83,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   if (cmd === 'slice') {
     return cmdSlice(root, {
       id: pos[1],
+      focus: flags.focus,
       routerOnly: Boolean(flags['router-only']),
       freezeStub: Boolean(flags['freeze-stub']),
       contextWindow: flags['context-window'],
