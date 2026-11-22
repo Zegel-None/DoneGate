@@ -18,7 +18,7 @@ function initGitRepo(dir) {
 }
 
 describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预算', () => {
-  it('提取多语言导出签名与前置 JSDoc 契约文档，剥离函数体且内部重构不触发 stubHash 漂移', () => {
+  it('提取多语言导出签名与前置 JSDoc 契约文档，剥离函数体且内部重构不触发 64 位 stubHash 漂移', () => {
     const jsV1 = [
       '// export function commentedFake(x) { return x; }',
       '/* export const blockFake = 1; */',
@@ -63,6 +63,7 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       const stub1 = buildNodeInterfaceStub(dir, { id: 'order', scope: ['src/order.mjs'] });
       writeFileSync(join(dir, 'src/order.mjs'), jsV2InternalRefactor);
       const stub2 = buildNodeInterfaceStub(dir, { id: 'order', scope: ['src/order.mjs'] });
+      expect(stub1.stubHash).toMatch(/^[0-9a-f]{64}$/);
       expect(stub1.stubHash).toBe(stub2.stubHash);
       expect(stub1.stubText).toContain('创建订单并返回聚合总额');
       expect(stub1.stubText).not.toContain('SECRET_SQL');
@@ -83,7 +84,7 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
     }
   });
 
-  it('默认 1M×40%=400k 五段预算全量装入 0-Hop 源码+关联单测、1-Hop JSDoc 存根并物理屏蔽 2-Hop+，支持多模型按比例缩放', () => {
+  it('默认 1M×40%=400k 五段预算静态前缀置顶排布，修改 0-Hop 内部实现与单测不改变 ## 4. 0-Hop 前缀', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dg-slice-'));
     try {
       dispatchCommand(['init', '.'], dir);
@@ -116,6 +117,7 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
 
       const rCap = dispatchCommand(['slice', 'order-svc', '--freeze-stub'], dir);
       expect(rCap.exitCode).toBe(0);
+      expect(rCap.capsule.stubHash).toMatch(/^[0-9a-f]{64}$/);
       expect(rCap.stdout).toContain('getOrderSummary(id)');
       expect(rCap.stdout).toContain('ORDER_UNIT_TEST_MARKER');
       expect(rCap.stdout).toContain('按主键查询订单行');
@@ -126,6 +128,30 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       expect(rCap.capsule.omittedTwoHopNodes).toContain('audit-job');
       expect(rCap.stdout).not.toContain('TWO_HOP_SECRET');
 
+      const md1 = readFileSync(join(dir, '.donegate/capsules/order-svc.capsule.md'), 'utf8');
+      const idxSec1 = md1.indexOf('## 1. 静态路由规则与阅后即焚收口指令');
+      const idxSec2 = md1.indexOf('## 2. 本卡契约声明（0-Hop Mandate）');
+      const idxSec3 = md1.indexOf('## 3. 1-Hop 邻域冻结接口存根');
+      const idxStubDts = md1.indexOf('.donegate/stubs/api-gw.stub.d.ts');
+      const idxDbDts = md1.indexOf('.donegate/stubs/db-layer.stub.d.ts');
+      const idxSec4 = md1.indexOf('## 4. 0-Hop');
+      expect(idxSec1).toBeGreaterThan(0);
+      expect(idxSec1).toBeLessThan(idxSec2);
+      expect(idxSec2).toBeLessThan(idxSec3);
+      expect(idxSec3).toBeLessThan(idxStubDts);
+      expect(idxStubDts).toBeLessThan(idxDbDts);
+      expect(idxDbDts).toBeLessThan(idxSec4);
+
+      writeFileSync(join(dir, 'src/order/service.mjs'), 'import { queryOrderById } from "../db/index.mjs";\nfunction normId(v) { return String(v).trim(); }\nexport function getOrderSummary(id) {\n  const clean = normId(id);\n  return { id: clean, row: queryOrderById(clean), ok: true };\n}\n');
+      writeFileSync(join(dir, 'tests/order.test.mjs'), 'import { getOrderSummary } from "../src/order/service.mjs";\nexport const ORDER_UNIT_TEST_MARKER = Boolean(getOrderSummary);\nexport const EXTRA_CASE = 2;\n');
+      writeFileSync(join(dir, 'tests/order-extra.test.mjs'), 'import { getOrderSummary } from "../src/order/service.mjs";\nexport const SECOND_TEST_FILE = typeof getOrderSummary;\n');
+
+      const rCap2 = dispatchCommand(['slice', 'order-svc'], dir);
+      expect(rCap2.exitCode).toBe(0);
+      const md2 = readFileSync(join(dir, '.donegate/capsules/order-svc.capsule.md'), 'utf8');
+      expect(md2.slice(0, md2.indexOf('## 4. 0-Hop'))).toBe(md1.slice(0, idxSec4));
+      expect(md2).toContain('SECOND_TEST_FILE');
+
       const scaled = dispatchCommand(['slice', 'order-svc', '--context-window', '128000', '--utilization', '0.4', '--json'], dir);
       expect(scaled.exitCode).toBe(0);
       expect(scaled.capsule.budgetProfile.totalSessionBudgetTokens).toBe(51200);
@@ -135,7 +161,7 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
     }
   });
 
-  it('check-node 四重微门禁精准拦截越界改文件、篡改冻结存根、绕过门面私引与未声明红线依赖，并输出结构化回执', () => {
+  it('check-node 四重微门禁精准拦截违规，且 --receipt 正向通过 <=12行/<=512字符落盘、反向失败带完整原因与退出码尾标', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dg-checknode-'));
     try {
       dispatchCommand(['init', '.'], dir);
@@ -174,16 +200,35 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       dispatchCommand(['slice', 'order-node', '--freeze-stub'], dir);
       const okRun = dispatchCommand(['check-node', 'order-node', '--receipt'], dir);
       expect(okRun.exitCode).toBe(0);
+      expect(okRun.stdout.split('\n').length).toBeLessThanOrEqual(12);
+      expect(okRun.stdout.length).toBeLessThanOrEqual(512);
       const okReceipt = JSON.parse(okRun.stdout);
       expect(okReceipt.verdict).toBe('PASS');
+      expect(okReceipt.stubHash).toMatch(/^[0-9a-f]{64}$/);
       expect(okReceipt.sessionBudgetTokens).toBe(400000);
       expect(okReceipt.passedObligations).toEqual(['order-unit']);
       expect(Math.ceil(okRun.stdout.length / 4)).toBeLessThan(okReceipt.receiptBudgetTokens);
+      const diskReceipt = JSON.parse(readFileSync(join(dir, '.donegate/capsules/order-node.receipt.json'), 'utf8'));
+      expect(diskReceipt.stubHash).toBe(okReceipt.stubHash);
+      expect(diskReceipt.passedObligations).toEqual(['order-unit']);
 
       writeFileSync(join(dir, 'src/other/side.mjs'), 'export const side = () => 99;\n');
+      const dirtyReceiptRun = dispatchCommand(['check-node', 'order-node', '--receipt'], dir);
+      expect(dirtyReceiptRun.exitCode).toBe(3);
+      expect(dirtyReceiptRun.stderr).toBe('');
+      expect(dirtyReceiptRun.stdout).toContain('"exitCode":3');
+      expect(dirtyReceiptRun.stdout).toContain('工作区存在未提交改动');
+      expect(dirtyReceiptRun.stdout.endsWith('\n[exit code: 3]')).toBe(true);
+
       const outScopeRun = dispatchCommand(['check-node', 'order-node', '--allow-dirty'], dir);
       expect(outScopeRun.exitCode).toBe(1);
       expect(outScopeRun.stderr).toContain('越界修改非本卡 scope 文件');
+      const outScopeReceiptRun = dispatchCommand(['check-node', 'order-node', '--allow-dirty', '--receipt'], dir);
+      expect(outScopeReceiptRun.exitCode).toBe(1);
+      expect(outScopeReceiptRun.stderr).toBe('');
+      expect(outScopeReceiptRun.stdout).toContain('"exitCode":1');
+      expect(outScopeReceiptRun.stdout).toContain('越界修改非本卡 scope 文件：src/other/side.mjs');
+      expect(outScopeReceiptRun.stdout.endsWith('\n[exit code: 1]')).toBe(true);
       writeFileSync(join(dir, 'src/other/side.mjs'), 'export const side = () => 42;\n');
 
       writeFileSync(join(dir, 'src/order/index.mjs'), 'import { findItem } from "../db/index.mjs";\nexport function loadOrder(id, extraRequiredFlag) { return findItem(id) || extraRequiredFlag; }\n');

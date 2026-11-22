@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, cmdCheckNode, cmdSlice, cmdVerifyApply, cmdVerifyPack, exportDashboardHtml } from '../core/index.mjs';
 import { readSavedWorkbenchState } from '../atlas/contract.mjs';
-import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-protocol.mjs';
+import { buildMicroVerdictCard, parseQuotedTargetsFromMessage, verifySubagentNodeReceipt } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer, resolveSafeWorkspaceFolders } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
@@ -325,10 +325,15 @@ export function createDoneGateWebRouteHandler(projectRoot) {
         sendJson(res, 200, out);
         return true;
       }
+      const receiptMap = (body.subagentReceipts && typeof body.subagentReceipts === 'object') ? body.subagentReceipts : null;
+      const mustVerifyReceipt = Boolean(body.requireNodeReceipt || receiptMap);
       const cards = targets.map((t, idx) => {
+        const checkId = (Array.isArray(t.contracts) && t.contracts[0]) || t.id;
+        const vRes = mustVerifyReceipt ? verifySubagentNodeReceipt(root, checkId, receiptMap ? receiptMap[checkId] : null) : { ok: true, exitCode: 0 };
         const card = buildMicroVerdictCard({
-          ticketId: `tkt-${Date.now()}-${idx}`, targetUri: t.uri, exitCode: 0,
-          headline: `${t.name || t.id} 已同步处理`, passedGates: 1, totalGates: 1,
+          ticketId: `tkt-${Date.now()}-${idx}`, targetUri: t.uri, exitCode: vRes.ok ? 0 : vRes.exitCode,
+          headline: vRes.ok ? `${t.name || t.id} 已同步处理` : (vRes.reason || '缺少盘上回执证据'),
+          passedGates: vRes.ok ? 1 : 0, totalGates: 1,
           touchedFiles: (t.scopes || []).filter((s) => !s.endsWith('/'))
         });
         hub.emit({ type: 'micro_card_ready', card });

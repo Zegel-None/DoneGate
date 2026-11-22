@@ -14,7 +14,7 @@ import {
 } from './dsh/win-paths.mjs';
 import {
   buildElementQuotePayload, buildMicroVerdictCard,
-  parseQuotedTargetsFromMessage
+  parseQuotedTargetsFromMessage, verifySubagentNodeReceipt
 } from './dsh/quote-protocol.mjs';
 import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
@@ -64,7 +64,7 @@ export async function runAllDshChecks() {
     assert.ok(gitAttrs.includes('*.cmd text eol=crlf') && gitAttrs.includes('* text=auto eol=lf'));
   });
 
-  await check('2. DSH 原生蓝色引用胶囊多元素累加（卡片 + 连线 + 按钮）与两行验真微卡协议', () => {
+  await check('2. DSH 原生蓝色引用胶囊多元素累加（卡片 + 连线 + 按钮）与两行验真微卡协议', async () => {
     const q1 = buildElementQuotePayload({ kind: 'node', id: 'n-ui', label: 'UI 组件层', contractIds: ['verdict-core'], scopePaths: ['runner/atlas'] });
     const q2 = buildElementQuotePayload({ kind: 'link', id: 'lk-loop-1', label: '门禁失败回跳线' });
     const q3 = buildElementQuotePayload({ kind: 'control', id: 'tb:bypass', label: '跳过' });
@@ -89,6 +89,31 @@ export async function runAllDshChecks() {
     assert.equal(card.tone, 'ok');
     assert.equal(card.touchedFiles[0], 'runner/atlas/wb-dsh-style.mjs');
     assert.equal(card.canRollback, true);
+
+    const tmpRcpt = mkdtempSync(join(tmpdir(), 'dg-rcpt-verify-'));
+    try {
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node', { exitCode: 0 }).ok, false, '无盘上 .receipt.json 必须拒收口头完成声称');
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node').exitCode, 3);
+      mkdirSync(join(tmpRcpt, 'src'), { recursive: true });
+      mkdirSync(join(tmpRcpt, 'contracts', 'demo-node'), { recursive: true });
+      mkdirSync(join(tmpRcpt, '.donegate', 'capsules'), { recursive: true });
+      writeFileSync(join(tmpRcpt, 'src', 'index.mjs'), 'export function ping(x) { return x; }\n', 'utf8');
+      writeFileSync(join(tmpRcpt, 'contracts', 'demo-node', 'contract.json'), JSON.stringify({ id: 'demo-node', scope: ['src/'] }, null, 2));
+      writeFileSync(join(tmpRcpt, '.donegate', 'capsules', 'demo-node.receipt.json'), JSON.stringify({ nodeId: 'demo-node', verdict: 'FAIL', exitCode: 1, stubHash: 'a'.repeat(64) }), 'utf8');
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node').ok, false, 'exitCode !== 0 必须判否');
+      writeFileSync(join(tmpRcpt, '.donegate', 'capsules', 'demo-node.receipt.json'), JSON.stringify({ nodeId: 'demo-node', verdict: 'PASS', exitCode: 0, stubHash: 'short16hash00000' }), 'utf8');
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node').exitCode, 2, '非 64 位 SHA-256 stubHash 必须拒收');
+      const mismatch = verifySubagentNodeReceipt(tmpRcpt, 'demo-node');
+      assert.equal(mismatch.ok, false);
+      const { buildNodeInterfaceStub } = await import('./core/contract.mjs');
+      const realHash = buildNodeInterfaceStub(tmpRcpt, { id: 'demo-node', scope: ['src/'] }).stubHash;
+      assert.equal(realHash.length, 64);
+      writeFileSync(join(tmpRcpt, '.donegate', 'capsules', 'demo-node.receipt.json'), JSON.stringify({ schema: 'donegate-node-receipt/v1', nodeId: 'demo-node', verdict: 'PASS', exitCode: 0, stubHash: realHash }), 'utf8');
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node', { exitCode: 0, stubHash: 'b'.repeat(64) }).ok, false, '自报哈希与落盘哈希不符必须拒收');
+      assert.equal(verifySubagentNodeReceipt(tmpRcpt, 'demo-node', { exitCode: 0, stubHash: realHash }).ok, true, '盘上存在且 64 位 stubHash 匹配的回执应验真通过');
+    } finally {
+      rmSync(tmpRcpt, { recursive: true, force: true });
+    }
   });
 
   await check('3. DSH 创造模式 (dsh-doc) 官方规范校验（manifest / engines.dsh / locale / 纯几何 SVG 图标与预览图）', () => {
@@ -122,6 +147,9 @@ export async function runAllDshChecks() {
       assert.ok(patchYml.includes("process.platform === 'win32'"));
       assert.ok(patchYml.includes('@deepseek-ai/dsh-pwsh-sandbox'));
       assert.ok(patchYml.includes('id: preset-donegate-router'));
+      assert.equal((patchYml.match(/compaction:\s*true/g) || []).length, 2, 'router 与 worker 两个预设均须挂载 isolate.compaction 压缩隔离组');
+      assert.equal((patchYml.match(/@deepseek-ai\/dsh-compaction-basic/g) || []).length, 2, '压缩隔离组内须默认挂载官方 dsh-compaction-basic');
+      assert.ok(patchYml.includes('[DG-TARGET]') && patchYml.includes('非工程问答直通退让'), '主调度预设描述须包含非工程问答直通退让规则');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -136,8 +164,20 @@ export async function runAllDshChecks() {
         name: 'dsh-profile-web', private: true, dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } }
       }, null, 2));
 
-      const res = installDshWebBundle({ projectRoot: ROOT, dshHome: join(tmp, 'dsh-home'), profileDir: profWithPkg, platform: 'win32' });
+      const fakeDshHome = join(tmp, 'dsh-home');
+      const fakeProj = join(tmp, 'proj-copy');
+      for (const sk of ['donegate', 'donegate-judge', 'donegate-forge']) {
+        mkdirSync(join(fakeDshHome, 'skills', sk), { recursive: true });
+        writeFileSync(join(fakeDshHome, 'skills', sk, 'SKILL.md'), 'legacy polluted global skill\n', 'utf8');
+        mkdirSync(join(fakeProj, sk), { recursive: true });
+        writeFileSync(join(fakeProj, sk, 'SKILL.md'), readFileSync(join(ROOT, sk, 'SKILL.md'), 'utf8'), 'utf8');
+      }
+      const res = installDshWebBundle({ projectRoot: fakeProj, dshHome: fakeDshHome, profileDir: profWithPkg, platform: 'win32' });
       assert.equal(res.registeredInManifest, true);
+      for (const sk of ['donegate', 'donegate-judge', 'donegate-forge']) {
+        assert.equal(existsSync(join(fakeDshHome, 'skills', sk)), false, `禁止向全局 dshHome/skills 写入且必须清除历史残留 ${sk}`);
+        assert.equal(existsSync(join(fakeProj, '.dsh', 'skills', sk, 'SKILL.md')), true, '项目级 .dsh/skills 必须保留技能副本');
+      }
       const afterPkg = JSON.parse(readFileSync(join(profWithPkg, 'package.json'), 'utf8'));
       assert.ok(afterPkg.dsh.profile.bundles.includes('@local/dsh-donegate'));
       assert.ok(existsSync(join(profWithPkg, 'node_modules', '@local', 'dsh-donegate', 'lib', 'client.js')));
@@ -167,24 +207,42 @@ export async function runAllDshChecks() {
         if (modName === 'react') return { createElement: (...a) => a, useRef: () => ({ current: null }), useEffect() {} };
         throw new Error('Unexpected require: ' + modName);
       });
+      let mockViewMode = 'chat';
       plugin.apply({
         effect(fn) { fn(); },
         locale: { register() { return () => {}; }, bind() { return (k) => k; } },
         slots: { inject(_slot, cb) { cb(); }, register(opts, comp) { registeredSlots.push({ opts, comp }); return () => {}; } },
-        get() { return null; }
+        get(svc) {
+          if (svc === 'uiConversation') {
+            return { binding(sid) { if (sid === 'throw-sid') throw new Error('boom'); return { store: { getSnapshot: () => ({ view: mockViewMode }) } }; } };
+          }
+          return null;
+        }
       });
       const slotNames = registeredSlots.map((s) => `${s.opts.name}:${s.opts.id}`);
       assert.ok(slotNames.includes('conversation.view:donegate'));
       assert.ok(slotNames.includes('conversation.input.dock:donegate-dock'));
       assert.ok(slotNames.includes('conversation.input.left:donegate-switch'));
+      const viewEntry = registeredSlots.find((s) => s.opts.id === 'donegate');
+      assert.equal(viewEntry.opts.order, 85, '完结门视图 order 必须后置为 85，严禁抢占默认聊天视图');
       assert.ok(clientCode.includes('data-conversation-composer-overlay'), '必须启用 DSH 全屏覆盖模式使工作台铺满输入框底部区域');
       assert.ok(clientCode.includes('--dsh-composer-card-max-width'), '顶部消息栏必须与下方输入框严格共享 --dsh-composer-card-max-width 等宽');
       assert.ok(clientCode.includes('--dsw-specific-input-major') && clientCode.includes('--dsw-radius-xl'), '必须复用 DSH 官方输入框表面与圆角令牌');
       assert.ok(!clientCode.includes('切回对话页') && !clientCode.includes('对话与回执'), '必须彻底移除多余的对话与回执顶栏及切回对话页按钮');
       assert.ok(clientCode.includes('dg_dsh_agent_name') && clientCode.includes('dg_dsh_dock_pinned') && clientCode.includes('dg_dsh_dock_height'), '必须持久化自定义 Agent 名字、右上角固定状态与手动拖拽高度');
       const dockEntry = registeredSlots.find((s) => s.opts.id === 'donegate-dock');
+      const injectedDockProps = dockEntry.opts.inject();
+      assert.equal(injectedDockProps.isDoneGateActive('default'), false, 'sid === "default" 未建会话时必须默认失活');
+      assert.equal(injectedDockProps.isDoneGateActive(''), false, '空会话 ID 必须默认失活');
+      assert.equal(injectedDockProps.isDoneGateActive('throw-sid'), false, '读取会话快照异常时必须回退失活');
+      assert.equal(injectedDockProps.isDoneGateActive('s-live'), false, '原生 chat 视图下必须返回 false');
+      assert.equal(dockEntry.comp({ sessionId: 'default', ...injectedDockProps }), null, '未建会话问天气时抽屉必须直接返回 null 零遮挡');
+      assert.equal(dockEntry.comp({ sessionId: 's-live', ...injectedDockProps }), null, '默认 chat 视图下抽屉必须返回 null');
+      mockViewMode = 'donegate';
+      assert.equal(injectedDockProps.isDoneGateActive('s-live'), true, '显式切换 view === "donegate" 时才激活');
       const mockTree = JSON.stringify(dockEntry.comp({
         sessionId: 's-live',
+        ...injectedDockProps,
         useConversation: (sel) => sel({ views: { get: (v) => v === 'chat' ? { legacy: { nodes: [{ kind: 'user', seq: 1, content: [{ type: 'text', text: '帮我检查计算模块' }] }, { kind: 'assistant', seq: 2, turn: 1, blocks: [{ kind: 'text', text: '已完成计算模块门禁扫描，零违规放行。' }] }], partial: null } } : null } })
       }));
       assert.ok(mockTree.includes('calc(0px - var(--dsh-composer-stack-gap, 6px) - 28px)') && mockTree.includes('"paddingBottom":"28px"'), '抽屉底边必须零缝隙压入输入框上方 28px 圆角底下');

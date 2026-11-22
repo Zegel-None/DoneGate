@@ -58,3 +58,6 @@ workflows/.deps/
 .donegate/stubs/
 .donegate/capsules/
 .githooks/
+.donegate/worktrees/
+.donegate/autopilot/
+.donegate/rsi-candidates/

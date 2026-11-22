@@ -250,7 +250,7 @@ export function buildNodeInterfaceStub(projectRoot, node) {
       richLines.push(ex.signature);
     }
   }
-  const stubHash = sha256(hashLines.join('\n') || `empty:${node.id}`).slice(0, 16);
+  const stubHash = sha256(hashLines.join('\n') || `empty:${node.id}`);
   const header = `// @donegate-stub node=${node.id} mode=${facadeMode} hash=${stubHash}`;
   const stubText = richLines.length > 0 ? `${header}\n${richLines.join('\n')}\n` : `${header}\n// (no public code exports)\n`;
   return {

@@ -64,9 +64,17 @@ export function renderDshBundleCordisPatch(projectRoot) {
       config:
         id: dsh-donegate-router
         name: 完结门 · Super Agent 主调度
-        description: 承接画布蓝色引用胶囊与全局指令，不直接改业务文件，负责指派 Worker 子代理挂载开发流执行并以零废话微卡回传。
+        description: "承接画布蓝色引用胶囊与全局工程指令，指派 Worker 子代理挂载开发流执行并以零废话微卡回传。【非工程问答直通退让】若消息不含 [DG-TARGET] 蓝色引用胶囊且属于查天气、日常闲聊等非软件工程请求，立即按普通助手简明作答，严禁运行 donegate 命令、严禁生成画布节点或门禁微卡。"
         order: 85
         plugins:
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -106,6 +114,14 @@ export function renderDshBundleCordisPatch(projectRoot) {
         description: 由 Super Agent 派工调用，在授权契约 scope 内修改代码并接受完结门 0/1/2/3 确定性门禁验真。
         order: 86
         plugins:
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:

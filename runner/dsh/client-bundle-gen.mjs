@@ -335,14 +335,19 @@ __PART_DOCK_VIEW__
         }
 
         function isDoneGateActive(sid) {
+          if (!sid || sid === "default") return false;
           var uic = ctx.get && ctx.get("uiConversation");
-          if (uic && typeof uic.binding === "function" && sid && sid !== "default") {
-            try {
-              var b = uic.binding(sid);
-              return (b.store && b.store.getSnapshot ? b.store.getSnapshot().view : "donegate") === "donegate";
-            } catch (err) { void err; }
+          if (!uic || typeof uic.binding !== "function") return false;
+          try {
+            var b = uic.binding(sid);
+            var view = (b && b.store && typeof b.store.getSnapshot === "function" && b.store.getSnapshot())
+              ? (b.store.getSnapshot().view || "chat")
+              : "chat";
+            return view === "donegate";
+          } catch (err) {
+            void err;
+            return false;
           }
-          return true;
         }
 
         function toggleDoneGate(sid) {
@@ -360,7 +365,7 @@ __PART_DOCK_VIEW__
           return ctx.slots.register({
             name: "conversation.view",
             id: "donegate",
-            order: 1,
+            order: 85,
             locale: NS,
             label: function () { return t("view.donegate"); },
             inject: function () {

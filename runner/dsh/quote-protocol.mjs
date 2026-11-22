@@ -1,4 +1,8 @@
 // DSH 原生 Quote 引用胶囊协议与零废话验真微卡编解码器（对齐 QuoteSummary 与完结门 INV-01，<= 200 行）
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { readJsonStrict } from '../../skill/io.mjs';
+import { buildNodeInterfaceStub } from '../core/contract.mjs';
 import { normalizeLf, normalizeSlashes } from './win-paths.mjs';
 
 const KIND_LABELS = {
@@ -123,4 +127,41 @@ export function buildMicroVerdictCard(input = {}) {
     canRollback: Boolean(input.canRollback && files.length > 0),
     createdAt: input.createdAt || new Date().toISOString()
   };
+}
+
+export function verifySubagentNodeReceipt(projectRoot, nodeId, claimedReceipt = null) {
+  const root = resolve(projectRoot);
+  const safeNodeId = String(nodeId || '').trim();
+  if (!safeNodeId || !/^[a-zA-Z0-9._-]+$/.test(safeNodeId)) {
+    return { ok: false, exitCode: 3, nodeId: safeNodeId, reason: '无效的节点标识，无法核验落盘回执' };
+  }
+  const receiptPath = join(root, '.donegate', 'capsules', `${safeNodeId}.receipt.json`);
+  const res = readJsonStrict(receiptPath);
+  if (!res.ok || !res.value || typeof res.value !== 'object') {
+    return { ok: false, exitCode: 3, nodeId: safeNodeId, reason: `缺少盘上微门禁回执 .donegate/capsules/${safeNodeId}.receipt.json，拒绝采信口头完成声称` };
+  }
+  const disk = res.value;
+  if (disk.nodeId !== safeNodeId || disk.exitCode !== 0 || disk.verdict !== 'PASS') {
+    return { ok: false, exitCode: typeof disk.exitCode === 'number' && disk.exitCode !== 0 ? disk.exitCode : 1, nodeId: safeNodeId, reason: `盘上微门禁回执未通过（exitCode=${disk.exitCode}, verdict=${disk.verdict}）` };
+  }
+  if (typeof disk.stubHash !== 'string' || !/^[0-9a-f]{64}$/.test(disk.stubHash)) {
+    return { ok: false, exitCode: 2, nodeId: safeNodeId, reason: '盘上微门禁回执缺少合法的 64 位 SHA-256 stubHash 指纹' };
+  }
+  const contractFile = join(root, 'contracts', safeNodeId, 'contract.json');
+  if (existsSync(contractFile)) {
+    const cRes = readJsonStrict(contractFile);
+    if (!cRes.ok || !cRes.value) {
+      return { ok: false, exitCode: 2, nodeId: safeNodeId, reason: '节点契约文件损坏，无法比对 64 位 stubHash' };
+    }
+    const liveStub = buildNodeInterfaceStub(root, cRes.value);
+    if (disk.stubHash !== liveStub.stubHash) {
+      return { ok: false, exitCode: 2, nodeId: safeNodeId, reason: `盘上回执 stubHash 与当前源码接口存根不一致（expected=${liveStub.stubHash}）` };
+    }
+  }
+  if (claimedReceipt && typeof claimedReceipt === 'object') {
+    if (claimedReceipt.exitCode !== 0 || claimedReceipt.stubHash !== disk.stubHash) {
+      return { ok: false, exitCode: 2, nodeId: safeNodeId, reason: '子代理自报回执与盘上 .receipt.json 证据不一致' };
+    }
+  }
+  return { ok: true, exitCode: 0, nodeId: safeNodeId, stubHash: disk.stubHash, receipt: disk };
 }

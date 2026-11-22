@@ -1,5 +1,5 @@
 // 单卡阅后即焚四重微门禁与 500-Token 富结构回执执行器（donegate check-node）
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -25,20 +25,63 @@ function listGitTouchedFiles(projectRoot) {
   return { isGit: true, files };
 }
 
+function buildCompactPassReceiptJson(receipt) {
+  const obs = [...(receipt.passedObligations || [])];
+  const makeCompact = (list, omitted) => ({
+    schema: receipt.schema,
+    nodeId: receipt.nodeId,
+    verdict: receipt.verdict,
+    exitCode: receipt.exitCode,
+    passed: receipt.passed,
+    total: receipt.total,
+    passedObligations: list,
+    ...(omitted > 0 ? { omittedObligations: omitted } : {}),
+    stubHash: receipt.stubHash,
+    stubChanged: receipt.stubChanged,
+    sessionBudgetTokens: receipt.sessionBudgetTokens,
+    receiptBudgetTokens: receipt.receiptBudgetTokens,
+    durationMs: receipt.durationMs
+  });
+  let out = JSON.stringify(makeCompact(obs, 0));
+  while (out.length > 512 && obs.length > 0) {
+    obs.pop();
+    out = JSON.stringify(makeCompact(obs, receipt.passedObligations.length - obs.length));
+  }
+  return out;
+}
+
 export function cmdCheckNode(projectRoot, opts = {}) {
   const t0 = Date.now();
   const id = opts.id;
-  if (!id) return { exitCode: 3, stderr: '缺少目标节点标识（用法：donegate check-node <nodeId>）' };
+  const abortWith = (exitCode, reason) => {
+    if (!opts.receipt) return { exitCode, stderr: reason };
+    const receipt = {
+      schema: 'donegate-node-receipt/v1',
+      nodeId: id || null,
+      verdict: exitCode === 2 ? 'ERROR' : 'UNKNOWN',
+      exitCode,
+      fails: [reason],
+      durationMs: Date.now() - t0
+    };
+    if (id && (existsSync(join(projectRoot, '.donegate')) || existsSync(join(projectRoot, 'contracts')))) {
+      const capDir = join(projectRoot, '.donegate', 'capsules');
+      mkdirSync(capDir, { recursive: true });
+      writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
+    }
+    return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
+  };
+
+  if (!id) return abortWith(3, '缺少目标节点标识（用法：donegate check-node <nodeId>）');
   const cPath = join(projectRoot, 'contracts', id, 'contract.json');
   const cRes = readJsonStrict(cPath);
-  if (!cRes.ok) return { exitCode: cRes.error === 'parse' ? 2 : 3, stderr: `读取节点契约失败：${cPath}` };
+  if (!cRes.ok) return abortWith(cRes.error === 'parse' ? 2 : 3, `读取节点契约失败：${cPath}`);
   const contract = cRes.value;
 
   const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
   const cmdObs = (opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs).filter((o) => o.kind === 'command');
   for (const o of cmdObs) {
     const banHits = checkCommandBans(o.command);
-    if (banHits.length > 0) return { exitCode: 2, stderr: `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}` };
+    if (banHits.length > 0) return abortWith(2, `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}`);
   }
 
   const thresholds = loadThresholds(projectRoot);
@@ -49,7 +92,7 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   // 微门禁 1：写入范围围栏（防越权修改其他节点源码）
   const gitState = listGitTouchedFiles(projectRoot);
   if (gitState.isGit && !opts.allowDirty && gitState.files.length > 0) {
-    return { exitCode: 3, stderr: '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）' };
+    return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
   }
   const touchedNonMeta = gitState.files.filter((f) => !f.startsWith('.donegate/'));
   if (gitState.isGit && !opts.skipScopeCheck) {
@@ -62,10 +105,12 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   }
 
   // 微门禁 2：冻结接口存根兼容性（防私改对外签名破坏上下游）
-  const stubDiff = diffAgainstFrozenStub(projectRoot, id, currentStub);
-  if (stubDiff.breakingChanges.length > 0) {
-    if (opts.allowStubChange) freezeNodeStubBaseline(projectRoot, id, currentStub);
-    else fails.push(...stubDiff.breakingChanges);
+  let stubDiff = diffAgainstFrozenStub(projectRoot, id, currentStub);
+  if (opts.allowStubChange && (!stubDiff.hasFrozenBaseline || stubDiff.stubChanged || stubDiff.breakingChanges.length > 0)) {
+    freezeNodeStubBaseline(projectRoot, id, currentStub);
+    stubDiff = diffAgainstFrozenStub(projectRoot, id, currentStub);
+  } else if (stubDiff.breakingChanges.length > 0) {
+    fails.push(...stubDiff.breakingChanges);
   }
 
   // 微门禁 3：跨节点红线未声明依赖与门面出口私引拦截
@@ -95,13 +140,14 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     const timedOut = Boolean(r.signal === 'SIGTERM' || (r.error && r.error.code === 'ETIMEDOUT'));
     const spawnFailed = Boolean(r.error && !timedOut) || typeof r.status !== 'number';
     const stdoutTrim = String(r.stdout || '').replace(/[\r\n\s]+$/, '');
+    const errDetail = String(r.stderr || stdoutTrim || '').trim();
     if (timedOut || spawnFailed) {
       unknown++;
-      fails.push(`判据 ${o.id} 无法执行或超时`);
+      fails.push(`判据 ${o.id} 无法执行或超时${errDetail ? `：${errDetail}` : ''}`);
     } else if (r.status !== o.expect?.exitCode) {
-      fails.push(`判据 ${o.id} 退出码 ${r.status} !== 期望 ${o.expect?.exitCode}`);
+      fails.push(`判据 ${o.id} 退出码 ${r.status} !== 期望 ${o.expect?.exitCode}${errDetail ? `：${errDetail}` : ''}`);
     } else if (o.expect?.stdoutMatches !== undefined && stdoutTrim !== o.expect.stdoutMatches) {
-      fails.push(`判据 ${o.id} 输出不匹配期望值`);
+      fails.push(`判据 ${o.id} 输出不匹配期望值（实际：${stdoutTrim}）`);
     } else {
       passed++;
       passedObligations.push(o.id);
@@ -128,18 +174,24 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     stubChanged: Boolean(stubDiff.stubChanged),
     addedExports: stubDiff.addedExports || [],
     effectiveLines: currentStub.effectiveLines,
-    touchedFiles: touchedNonMeta.slice(0, 16),
+    touchedFiles: touchedNonMeta,
     sessionBudgetTokens: budget.totalSessionBudgetTokens,
     receiptBudgetTokens: budget.receiptBudgetTokens,
     durationMs: Date.now() - t0,
-    ...(fails.length > 0 ? { fails: fails.slice(0, 8) } : {})
+    ...(fails.length > 0 ? { fails } : {})
   };
 
   const capDir = join(projectRoot, '.donegate', 'capsules');
   mkdirSync(capDir, { recursive: true });
   writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
 
-  if (opts.json || opts.receipt) {
+  if (opts.receipt) {
+    if (exitCode === 0) {
+      return { exitCode: 0, receipt, stdout: buildCompactPassReceiptJson(receipt), stderr: '' };
+    }
+    return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
+  }
+  if (opts.json) {
     return { exitCode, receipt, stdout: JSON.stringify(receipt), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
   }
   const summaryLines = [

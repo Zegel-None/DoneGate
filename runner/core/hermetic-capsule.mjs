@@ -38,6 +38,27 @@ export function diffAgainstFrozenStub(projectRoot, nodeId, currentStub) {
   return { hasFrozenBaseline: true, previousHash: r.value.stubHash, stubChanged: r.value.stubHash !== currentStub.stubHash, breakingChanges, addedExports };
 }
 
+function resolveNeighborStubSnapshot(projectRoot, nb) {
+  const frzPath = frozenStubPathOf(projectRoot, nb.id);
+  if (existsSync(frzPath)) {
+    const frz = readJsonStrict(frzPath);
+    if (frz.ok && frz.value?.stubHash && frz.value.stubHash !== nb.stub.stubHash) {
+      const facadeMode = frz.value.facadeMode || nb.stub.facadeMode;
+      const lines = [`// @donegate-stub node=${nb.id} mode=${facadeMode} hash=${frz.value.stubHash}`];
+      let lastFile = '';
+      for (const s of frz.value.exportedSymbols || []) {
+        if (s.file && s.file !== lastFile) { lines.push(`// [entry: ${s.file}]`); lastFile = s.file; }
+        if (s.signature) lines.push(s.signature);
+      }
+      if (lines.length === 1) lines.push('// (no public code exports)');
+      return { facadeMode, stubHash: frz.value.stubHash, stubText: `${lines.join('\n')}\n` };
+    }
+  }
+  const dtsPath = join(projectRoot, '.donegate', 'stubs', `${nb.id}.stub.d.ts`);
+  const stubText = existsSync(dtsPath) ? readFileSync(dtsPath, 'utf8') : nb.stub.stubText;
+  return { facadeMode: nb.stub.facadeMode, stubHash: nb.stub.stubHash, stubText };
+}
+
 function collectMatchingNodeTests(projectRoot, target, repoTestFiles = []) {
   const matched = new Set(target.stub.relatedTestFiles || []);
   for (const o of target.obligations || []) {
@@ -80,7 +101,7 @@ export function cmdSlice(projectRoot, opts = {}) {
 
   const oneHopCharCap = budget.oneHopContractBudgetTokens * 4;
   let usedOneHopChars = 0;
-  const neighborIds = [...new Set([...target.dependsOnIds, ...target.dependedByIds])];
+  const neighborIds = [...new Set([...target.dependsOnIds, ...target.dependedByIds])].sort();
   const neighbors = [];
   for (const nid of neighborIds) {
     const nb = graph.nodes.find((x) => x.id === nid);
@@ -91,18 +112,19 @@ export function cmdSlice(projectRoot, opts = {}) {
     const sharedObs = (nb.obligations || [])
       .filter((o) => Array.isArray(o.spansContracts) && o.spansContracts.includes(target.id))
       .map((o) => `${o.id}: ${o.claim || ''}`);
-    const stubSlice = usedOneHopChars + nb.stub.stubText.length <= oneHopCharCap
-      ? nb.stub.stubText
-      : nb.stub.stubText.slice(0, Math.max(400, oneHopCharCap - usedOneHopChars));
+    const snap = resolveNeighborStubSnapshot(projectRoot, nb);
+    const stubSlice = usedOneHopChars + snap.stubText.length <= oneHopCharCap
+      ? snap.stubText
+      : snap.stubText.slice(0, Math.max(400, oneHopCharCap - usedOneHopChars));
     usedOneHopChars += stubSlice.length;
     neighbors.push({
-      nodeId: nid, title: nb.title || nid, why: nb.why || '', relation, facadeMode: nb.stub.facadeMode,
-      stubHash: nb.stub.stubHash, stubTokens: Math.ceil(stubSlice.length / 4), sharedBoundaryClaims: sharedObs, stubText: stubSlice
+      nodeId: nid, title: nb.title || nid, why: nb.why || '', relation, facadeMode: snap.facadeMode,
+      stubHash: snap.stubHash, stubTokens: Math.ceil(stubSlice.length / 4), sharedBoundaryClaims: sharedObs, stubText: stubSlice
     });
   }
 
   const visibleSet = new Set([target.id, ...neighborIds]);
-  const hiddenNodeIds = graph.nodes.filter((n) => !visibleSet.has(n.id)).map((n) => n.id);
+  const hiddenNodeIds = graph.nodes.filter((n) => !visibleSet.has(n.id)).map((n) => n.id).sort();
 
   const zeroHopCharCap = budget.zeroHopSourceBudgetTokens * 4;
   let usedZeroHopChars = 0;
@@ -125,47 +147,53 @@ export function cmdSlice(projectRoot, opts = {}) {
   }
 
   const utilPct = Math.round(budget.targetUtilization * 100);
+  const microGateCommand = `node runner/donegate.mjs check-node ${target.id} --allow-dirty --receipt`;
   const md = [
     `# DoneGate 密封施工胶囊：${target.id}（${target.title}）`,
     '',
-    `> 子代理总预算：**${budget.contextWindowTokens.toLocaleString()} × ${utilPct}% = ${budget.totalSessionBudgetTokens.toLocaleString()} Tokens**（0-Hop 上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | 1-Hop 存根上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t | 按需展开预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | 多轮思考与微门禁迭代预留 ${budget.multiTurnReserveTokens.toLocaleString()}t）`,
-    `> 隔离范围：0-Hop 源码 ${zeroHopFiles.length} 个 + 关联测试 ${zeroHopTests.length} 个 | 1-Hop 只读存根 ${neighbors.length} 个节点 | 2-Hop+ 物理屏蔽 ${hiddenNodeIds.length} 个节点`,
+    '## 1. 静态路由规则与阅后即焚收口指令',
+    `- **五段配额**：子代理总预算 **${budget.contextWindowTokens.toLocaleString()} × ${utilPct}% = ${budget.totalSessionBudgetTokens.toLocaleString()} Tokens**（L0 路由 ${budget.routerBudgetTokens.toLocaleString()}t | 0-Hop 上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | 1-Hop 存根上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t | 按需展开预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | 多轮思考与微门禁迭代预留 ${budget.multiTurnReserveTokens.toLocaleString()}t）`,
+    `- **门面与隔离约束**：只准修改本节点 \`scope\` 与关联单测；跨节点调用必须经由 1-Hop 门面存根（直连邻居 ${neighbors.length} 个节点），2-Hop+ 节点物理屏蔽（共屏蔽 ${hiddenNodeIds.length} 个节点）。`,
+    `- **阅后即焚收口指令**：局部快检执行 \`${microGateCommand}\`；退出码为 0 后仅将结构化回执（上限 ${budget.receiptBudgetTokens} Tokens）交回总控，随即销毁当前子会话上下文。`,
     '',
-    '## 1. 本卡契约边界（0-Hop Mandate）',
+    '## 2. 本卡契约声明（0-Hop Mandate）',
     `- **节点 ID**：\`${target.id}\``,
     `- **业务职责**：${target.why || target.title}`,
     `- **允许写入路径 (scope)**：${(target.scope || []).map((s) => `\`${s}\``).join(', ') || '（未声明）'}`,
-    `- **门面模式**：\`${target.stub.facadeMode}\`（当前 \`stubHash=${target.stub.stubHash}\`，有效代码 ${target.stub.effectiveLines} 行）`,
+    `- **门面模式**：\`${target.stub.facadeMode}\`（当前 \`stubHash=${target.stub.stubHash}\`）`,
     ...(target.obligations.length > 0
       ? ['- **本卡验收判据**：', ...target.obligations.map((o) => `  - \`${o.id}\` (${o.kind})：${o.claim || ''} → \`${o.command || o.expect?.standard || ''}\``)]
-      : ['- **本卡验收判据**：（待补充）'])
+      : ['- **本卡验收判据**：（待补充）']),
+    '',
+    '## 3. 1-Hop 邻域冻结接口存根（只读契约签名 · 物理隐藏邻居内部实现）'
   ];
-  if (truncatedFiles.length > 0) {
-    md.push('', `> ⚠ 预算溢出提示：当前节点超出了 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t 源码上限（剩余 ${truncatedFiles.length} 个文件仅附存根）。`);
-  }
-
-  md.push('', '## 2. 1-Hop 邻域接口存根（只读契约签名 · 物理隐藏邻居内部实现）');
   if (neighbors.length === 0) md.push('（无 1-Hop 上下游直连节点，本卡为独立自治节点）');
   for (const nb of neighbors) {
-    md.push(`### [${nb.relation}] \`${nb.nodeId}\` — ${nb.title}${nb.why ? `（${nb.why}）` : ''}`);
+    md.push(`### [${nb.relation}] \`${nb.nodeId}\` — ${nb.title}${nb.why ? `（${nb.why}）` : ''}（存根：\`.donegate/stubs/${nb.nodeId}.stub.d.ts\`）`);
     if (nb.sharedBoundaryClaims.length > 0) md.push(...nb.sharedBoundaryClaims.map((c) => `- 联调判据：${c}`));
     md.push('```ts', nb.stubText.trimEnd(), '```');
   }
 
-  md.push('', '## 3. 0-Hop 本卡全量源码（可读写施工区）');
-  for (const f of zeroHopFiles) md.push(`### \`${f.path}\``, '```js', f.content.trimEnd(), '```');
-  if (zeroHopTests.length > 0) {
-    md.push('', '## 4. 0-Hop 关联单测与验收夹具（可同步增补断言）');
-    for (const tf of zeroHopTests) md.push(`### \`${tf.path}\``, '```js', tf.content.trimEnd(), '```');
-  }
-  if (truncatedFiles.length > 0) md.push('', '### 未全量展开文件的 AST 存根', '```ts', target.stub.stubText.trimEnd(), '```');
-
   md.push(
     '',
-    '## 5. 阅后即焚收口指令（Sub-Agent 必跑）',
-    `- 局部快检与出回执：\`node runner/donegate.mjs check-node ${target.id} --allow-dirty --receipt\``,
-    `- 退出码为 0 后，仅将结构化回执（上限 ${budget.receiptBudgetTokens} Tokens）交回总控 Super Agent，随即销毁当前子会话上下文。`
+    '## 4. 0-Hop 本卡全量源码（动态读写施工区）',
+    `> 动态范围统计：0-Hop 源码 ${zeroHopFiles.length} 个文件（有效代码 ${target.stub.effectiveLines} 行） | 关联单测 ${zeroHopTests.length} 个文件`
   );
+  for (const f of zeroHopFiles) md.push(`### \`${f.path}\``, '```js', f.content.trimEnd(), '```');
+
+  md.push('', '## 5. 0-Hop 关联单测与验收夹具（动态断言区）');
+  if (zeroHopTests.length === 0) md.push('（暂无关联单测或验收夹具）');
+  for (const tf of zeroHopTests) md.push(`### \`${tf.path}\``, '```js', tf.content.trimEnd(), '```');
+  if (truncatedFiles.length > 0) {
+    md.push(
+      '',
+      `> ⚠ 预算溢出提示：当前节点超出了 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t 源码上限（剩余 ${truncatedFiles.length} 个文件仅附存根）。`,
+      '### 未全量展开文件的 AST 存根',
+      '```ts',
+      target.stub.stubText.trimEnd(),
+      '```'
+    );
+  }
 
   const capsuleMarkdown = md.join('\n') + '\n';
   const capsuleTokens = Math.ceil(capsuleMarkdown.length / 4);
@@ -177,7 +205,7 @@ export function cmdSlice(projectRoot, opts = {}) {
     repoTotalSourceTokens: routerPayload.totalSourceTokens, omittedTwoHopNodes: hiddenNodeIds, oneHopStubs: neighbors,
     zeroHopFiles: zeroHopFiles.map((f) => ({ path: f.path, tokens: Math.ceil(f.content.length / 4) })),
     zeroHopTests: zeroHopTests.map((f) => ({ path: f.path, tokens: Math.ceil(f.content.length / 4) })),
-    truncatedFiles, microGateCommand: `node runner/donegate.mjs check-node ${target.id} --allow-dirty --receipt`
+    truncatedFiles, microGateCommand
   };
 
   const capDir = join(projectRoot, '.donegate', 'capsules');

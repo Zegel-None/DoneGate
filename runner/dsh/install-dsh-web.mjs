@@ -110,15 +110,15 @@ export function installDshWebBundle(opts = {}) {
   rmSync(join(profileDir, 'node_modules', 'dsh-donegate'), { recursive: true, force: true });
   cpSync(bundleDir, targetModDir, { recursive: true });
 
-  for (const skRoot of [join(projectRoot, '.dsh', 'skills'), join(dshHome, 'skills')]) {
-    mkdirSync(skRoot, { recursive: true });
-    for (const sk of SKILLS) {
-      const src = join(projectRoot, sk);
-      if (existsSync(join(src, 'SKILL.md'))) {
-        const dst = join(skRoot, sk);
-        rmSync(dst, { recursive: true, force: true });
-        cpSync(src, dst, { recursive: true });
-      }
+  const projSkillsRoot = join(projectRoot, '.dsh', 'skills');
+  mkdirSync(projSkillsRoot, { recursive: true });
+  for (const sk of SKILLS) {
+    rmSync(join(dshHome, 'skills', sk), { recursive: true, force: true });
+    const src = join(projectRoot, sk);
+    if (existsSync(join(src, 'SKILL.md'))) {
+      const dst = join(projSkillsRoot, sk);
+      rmSync(dst, { recursive: true, force: true });
+      cpSync(src, dst, { recursive: true });
     }
   }
 
@@ -130,6 +130,9 @@ export function installDshWebBundle(opts = {}) {
       writeFileSync(join(profileDir, 'cordis.patch.donegate-prev.yml'), prevPatch, 'utf8');
     }
     writeFileSync(patchPath, mergeCordisPatchText(prevPatch, projectRoot), 'utf8');
+  } else if (existsSync(patchPath)) {
+    const curPatch = readFileSync(patchPath, 'utf8');
+    if (curPatch.includes(PATCH_BEGIN)) writeFileSync(patchPath, stripCordisPatchText(curPatch), 'utf8');
   }
 
   return {
@@ -154,6 +157,7 @@ export function uninstallDshWebBundle(opts = {}) {
 
   rmSync(join(profileDir, 'node_modules', '@local', 'dsh-donegate'), { recursive: true, force: true });
   rmSync(join(profileDir, 'node_modules', 'dsh-donegate'), { recursive: true, force: true });
+  for (const sk of SKILLS) rmSync(join(dshHome, 'skills', sk), { recursive: true, force: true });
   updateProfileManifestBundles(profileDir, DSH_BUNDLE_NAME, false);
   const patchPath = join(profileDir, 'cordis.patch.yml');
   if (existsSync(patchPath)) {

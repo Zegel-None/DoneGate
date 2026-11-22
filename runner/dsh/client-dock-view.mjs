@@ -42,12 +42,11 @@ export function buildDshClientDockViewSource() {
       var syncedMsgs = (snap && snap.messages) || [];
       var entries = extractLiveConversationEntries(props, syncedMsgs);
 
-      var isDoneGateActive = typeof props.isDoneGateActive === "function" ? props.isDoneGateActive(sessionId) : true;
-      if (!isDoneGateActive) return null;
+      var isDoneGateActive = typeof props.isDoneGateActive === "function" ? Boolean(props.isDoneGateActive(sessionId)) : false;
 
       var topReceipt = items[0] || null;
       var isBlockingReceipt = Boolean(topReceipt && (topReceipt.kind === "question" || topReceipt.kind === "blocked"));
-      var expanded = Boolean(snap.pinned || snap.hovered || isDragging || isBlockingReceipt);
+      var expanded = Boolean(isDoneGateActive && (snap.pinned || snap.hovered || isDragging || isBlockingReceipt));
       var agentName = snap.agentName || "Agent";
 
       var latestAgentEntry = null;
@@ -68,21 +67,24 @@ export function buildDshClientDockViewSource() {
 
       if (React.useEffect) {
         React.useEffect(function () {
+          if (!isDoneGateActive) return;
           if (editingName && nameInputRef.current) {
             try {
               nameInputRef.current.focus();
               nameInputRef.current.select();
             } catch (err) { void err; }
           }
-        }, [editingName]);
+        }, [isDoneGateActive, editingName]);
 
         React.useEffect(function () {
-          if (!expanded || !scrollBoxRef.current) return;
+          if (!isDoneGateActive || !expanded || !scrollBoxRef.current) return;
           if (stickBottomRef.current) {
             scrollBoxRef.current.scrollTop = scrollBoxRef.current.scrollHeight;
           }
-        }, [expanded, entries.length, latestAgentLine]);
+        }, [isDoneGateActive, expanded, entries.length, latestAgentLine]);
       }
+
+      if (!isDoneGateActive) return null;
 
       function commitAgentRename() {
         setEditingName(false);
