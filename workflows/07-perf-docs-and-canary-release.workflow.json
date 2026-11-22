@@ -1,0 +1,235 @@
+{
+  "id": "07-perf-docs-and-canary-release",
+  "group": "专项覆盖族与发布流",
+  "name": "07 · 阶段 8–10 · 性能压测、文档核验与金丝雀发布流",
+  "tip": "严禁守护进程阻塞工作流（runtime-service 单次探针纪律）：k6 阈值基线压测 → 3 轮性能回修 → Vale+Lychee 文档术语与死链扫描 → Git-Cliff 变更日志生成 → 人工发版签字闸门 → Flagger 金丝雀指标单次快照核验。",
+  "deps": [
+    {
+      "id": "k6",
+      "title": "Grafana k6 脚本化阈值压测引擎",
+      "repo": "grafana/k6",
+      "version": "v0.55.0",
+      "kind": "binary",
+      "bin": "k6",
+      "installCmd": "下载 grafana/k6 v0.55.0 至 workflows/.deps/07-perf-docs-and-canary-release/.bin/k6"
+    },
+    {
+      "id": "vale",
+      "title": "Vale 技术文档术语与文风检查",
+      "repo": "errata-ai/vale",
+      "version": "v3.9.3",
+      "kind": "binary",
+      "bin": "vale",
+      "installCmd": "下载 errata-ai/vale v3.9.3 至 workflows/.deps/07-perf-docs-and-canary-release/.bin/vale"
+    },
+    {
+      "id": "lychee",
+      "title": "Lychee 文档与锚点死链扫描器",
+      "repo": "lycheeverse/lychee",
+      "version": "v0.17.0",
+      "kind": "binary",
+      "bin": "lychee",
+      "installCmd": "下载 lycheeverse/lychee v0.17.0 至 workflows/.deps/07-perf-docs-and-canary-release/.bin/lychee"
+    },
+    {
+      "id": "git-cliff",
+      "title": "Git-Cliff 约定式提交变更日志生成器",
+      "repo": "orhun/git-cliff",
+      "version": "v2.7.0",
+      "kind": "binary",
+      "bin": "git-cliff",
+      "installCmd": "下载 orhun/git-cliff v2.7.0 至 workflows/.deps/07-perf-docs-and-canary-release/.bin/git-cliff"
+    },
+    {
+      "id": "flagger",
+      "title": "Flagger 渐进式金丝雀发布控制器（单次状态快照查询）",
+      "repo": "fluxcd/flagger",
+      "version": "v1.39.0",
+      "kind": "binary",
+      "bin": "kubectl",
+      "installCmd": "配置 kubectl 只读快照查询金丝雀 Canary CRD 状态（严禁阻塞常驻监听）"
+    }
+  ],
+  "groups": [
+    { "id": "grp-07-perf", "title": "阶段 8 · k6 单次阈值压测探针与回归闭环", "x": 28, "y": 42, "w": 628, "h": 320, "color": "purple" },
+    { "id": "grp-07-docs", "title": "阶段 9 · 文档术语、死链与发布说明", "x": 684, "y": 42, "w": 628, "h": 320, "color": "blue" },
+    { "id": "grp-07-canary", "title": "阶段 10 · 人工放量审批与金丝雀健康快照", "x": 1340, "y": 42, "w": 620, "h": 330, "color": "emerald" }
+  ],
+  "nodes": [
+    {
+      "id": "rel-k6-probe",
+      "tplId": "tpl-anti-slop",
+      "title": "k6 P95/P99 阈值压测探针",
+      "tip": "单次执行 k6 run --summary-export：校验 http_req_duration p(95)/p(99) 与错误率阈值，输出静态 JSON 证据",
+      "repoSlug": "grafana/k6",
+      "repoUrl": "https://github.com/grafana/k6",
+      "pinnedVersion": "v0.55.0",
+      "latestUpstream": "v0.56.0",
+      "requiresDep": true,
+      "bin": "k6",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 48,
+      "y": 98,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "预发环境与压测脚本", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 性能阈值码", "type": "SIGNAL" },
+        { "id": "out_txt", "name": "P95/P99 延迟对比", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "k6_1", "label": "P95/P99 退化未超 10% 红线", "wired": true, "boundOut": "out_sig" },
+        { "id": "k6_2", "label": "慢接口与吞吐瓶颈摘录", "wired": true, "boundOut": "out_txt" }
+      ]
+    },
+    {
+      "id": "rel-perf-router",
+      "tplId": "tpl-router-rule",
+      "title": "性能预算收敛路由",
+      "tip": "0 延迟与错误率达标进入文档核验；1 退化超标打回优化热路径或补索引（上限 3 轮）",
+      "repoSlug": "",
+      "repoUrl": "",
+      "pinnedVersion": "",
+      "latestUpstream": "",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 364,
+      "y": 98,
+      "w": 256,
+      "h": null,
+      "inputs": [{ "id": "in_sig", "name": "0-3 压测状态码", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_0", "name": "0 性能过关放行", "type": "SIGNAL" },
+        { "id": "out_1", "name": "1 超阈值打回优化", "type": "TEXT" },
+        { "id": "out_3", "name": "2/3 缺压测靶场降级", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "s_0", "label": "0 号口放行文档与变更日志", "wired": true, "boundOut": "out_0" },
+        { "id": "s_1", "label": "1 号口回流优化 (maxLoops=3)", "wired": true, "boundOut": "out_1" },
+        { "id": "s_3", "label": "2/3 号口提示启动压测实例", "wired": true, "boundOut": "out_3" }
+      ]
+    },
+    {
+      "id": "rel-docs-audit",
+      "tplId": "tpl-anti-slop",
+      "title": "Vale + Lychee 术语与死链核验",
+      "tip": "拦截 AI 生成文档中编造的配置项、前后不一的产品术语与失效相对链接",
+      "repoSlug": "lycheeverse/lychee",
+      "repoUrl": "https://github.com/lycheeverse/lychee",
+      "pinnedVersion": "v0.17.0",
+      "latestUpstream": "v0.17.0",
+      "requiresDep": true,
+      "bin": "lychee",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 708,
+      "y": 98,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "README / 运维手册", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_art", "name": "文档核验通过快照", "type": "ARTIFACT" },
+        { "id": "out_txt", "name": "死链与术语违规表", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "ly_1", "label": "全仓 Markdown 零死链", "wired": true, "boundOut": "out_art" },
+        { "id": "ly_2", "label": "Vale 术语表一致性报告", "wired": true, "boundOut": "out_txt" }
+      ]
+    },
+    {
+      "id": "rel-git-cliff",
+      "tplId": "tpl-anti-slop",
+      "title": "Git-Cliff 发行日志与回滚手册卡",
+      "tip": "从真实 Git 提交树生成确定性 CHANGELOG.md 与破坏性变更清单，严禁模型凭记忆编造发版说明",
+      "repoSlug": "orhun/git-cliff",
+      "repoUrl": "https://github.com/orhun/git-cliff",
+      "pinnedVersion": "v2.7.0",
+      "latestUpstream": "v2.7.0",
+      "requiresDep": true,
+      "bin": "git-cliff",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1020,
+      "y": 98,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "Git 提交区间", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_art", "name": "CHANGELOG 产物", "type": "ARTIFACT" },
+        { "id": "out_txt", "name": "破坏性变更摘要", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "gc_1", "label": "锁定 CHANGELOG SHA-256", "wired": true, "boundOut": "out_art" },
+        { "id": "gc_2", "label": "Breaking Changes 提醒", "wired": true, "boundOut": "out_txt" }
+      ]
+    },
+    {
+      "id": "rel-human-gate",
+      "tplId": "tpl-human-gate",
+      "title": "生产环境金丝雀放量人工闸门",
+      "tip": "上线硬红线：无论前序自动化全绿，推向真实用户流量（1% -> 10% -> 100%）前必须人工签字确认回滚开关就绪",
+      "repoSlug": "",
+      "repoUrl": "",
+      "pinnedVersion": "",
+      "latestUpstream": "",
+      "isBlank": false,
+      "isHumanGate": true,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1364,
+      "y": 98,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_gate", "name": "发版包与日志就绪", "type": "ARTIFACT" }],
+      "outputs": [{ "id": "out_go", "name": "批准金丝雀放量", "type": "FLOW" }],
+      "slots": [{ "id": "hg_1", "label": "发布负责人签字准予灰度", "wired": true, "boundOut": "out_go" }]
+    },
+    {
+      "id": "rel-canary-snapshot",
+      "tplId": "tpl-anti-slop",
+      "title": "Flagger 金丝雀健康单次快照核验",
+      "tip": "遵循 runtime-service 单次探针纪律：读取 Prometheus / Flagger Canary CRD 当前错误率与 P99 快照即退，不阻塞挂起守护进程",
+      "repoSlug": "fluxcd/flagger",
+      "repoUrl": "https://github.com/fluxcd/flagger",
+      "uiExternalUrl": "http://localhost:3001/d/canary-rollout",
+      "pinnedVersion": "v1.39.0",
+      "latestUpstream": "v1.39.0",
+      "requiresDep": true,
+      "bin": "kubectl",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1672,
+      "y": 98,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "灰度放行指令", "type": "FLOW" }],
+      "outputs": [
+        { "id": "out_art", "name": "灰度健康快照 JSON", "type": "ARTIFACT" },
+        { "id": "out_txt", "name": "回滚触发告警", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "fl_1", "label": "5xx 错误率与 P99 稳态达标", "wired": true, "boundOut": "out_art" },
+        { "id": "fl_2", "label": "外链按需打开 Grafana 面板", "wired": true, "boundOut": "out_txt" }
+      ]
+    }
+  ],
+  "links": [
+    { "id": "rel-lk-1", "fromNode": "rel-k6-probe", "fromSlot": "out_sig", "toNode": "rel-perf-router", "toSlot": "in_sig", "type": "SIGNAL" },
+    { "id": "rel-lk-2", "fromNode": "rel-perf-router", "fromSlot": "out_0", "toNode": "rel-docs-audit", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "rel-lk-loop", "fromNode": "rel-perf-router", "fromSlot": "out_1", "toNode": "rel-k6-probe", "toSlot": "in_src", "type": "TEXT", "maxLoops": 3 },
+    { "id": "rel-lk-3", "fromNode": "rel-docs-audit", "fromSlot": "out_art", "toNode": "rel-git-cliff", "toSlot": "in_src", "type": "ARTIFACT" },
+    { "id": "rel-lk-4", "fromNode": "rel-git-cliff", "fromSlot": "out_art", "toNode": "rel-human-gate", "toSlot": "in_gate", "type": "ARTIFACT" },
+    { "id": "rel-lk-5", "fromNode": "rel-human-gate", "fromSlot": "out_go", "toNode": "rel-canary-snapshot", "toSlot": "in_src", "type": "FLOW" }
+  ]
+}

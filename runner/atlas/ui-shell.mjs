@@ -29,7 +29,10 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
 
   if (Array.isArray(wb.registeredTemplates)) {
     wb.registeredTemplates.forEach((tpl) => {
-      if (tpl && tpl.tplId && !BLOCK_TEMPLATES[tpl.tplId]) BLOCK_TEMPLATES[tpl.tplId] = tpl;
+      if (tpl && tpl.tplId && !BLOCK_TEMPLATES[tpl.tplId]) {
+        BLOCK_TEMPLATES[tpl.tplId] = tpl;
+        if (tpl.category && !CATEGORY_LIST.includes(tpl.category)) CATEGORY_LIST.push(tpl.category);
+      }
     });
   }
 

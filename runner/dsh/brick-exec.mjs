@@ -169,12 +169,36 @@ export function executeBrickGateNode(projectRoot, workCwd, node, wfEnv) {
       const obsChecker = existsSync(join(root, 'skill', 'check-brick-observations.mjs'))
         ? join(root, 'skill', 'check-brick-observations.mjs')
         : join(DG_ROOT, 'skill', 'check-brick-observations.mjs');
-      const rVer = spawnSync(process.execPath, [obsChecker, '--obligation', spec.obligationId, '--root', workCwd], {
-        cwd: workCwd, env, encoding: 'utf8', timeout: 30000, windowsHide: true
-      });
-      const vExit = typeof rVer.status === 'number' ? rVer.status : 2;
-      const vDiag = normalizeLf((rVer.stdout || '') + '\n' + (rVer.stderr || '')).trim();
-      return { exitCode: vExit, durationMs: Date.now() - t0, diagSummary: vDiag || adpOut, watchArgs: adpArgs };
+      if (existsSync(obsChecker)) {
+        const rVer = spawnSync(process.execPath, [obsChecker, '--obligation', spec.obligationId, '--root', workCwd], {
+          cwd: workCwd, env, encoding: 'utf8', timeout: 30000, windowsHide: true
+        });
+        const vExit = typeof rVer.status === 'number' ? rVer.status : 2;
+        const vDiag = normalizeLf((rVer.stdout || '') + '\n' + (rVer.stderr || '')).trim();
+        return { exitCode: vExit, durationMs: Date.now() - t0, diagSummary: vDiag || adpOut, watchArgs: adpArgs };
+      }
+      const obsFileHard = join(workCwd, '.donegate', 'adapters', spec.tool, 'observation.json');
+      const obsResHard = existsSync(obsFileHard) ? readJsonStrict(obsFileHard) : { ok: false };
+      if (!obsResHard.ok || !obsResHard.value) {
+        return { exitCode: 3, durationMs: Date.now() - t0, diagSummary: `${spec.tool}: 缺少观测产物 observation.json`, watchArgs: adpArgs };
+      }
+      const o = obsResHard.value;
+      const countByObl = {
+        'gitleaks-no-secrets': Number(o.findingCount || 0),
+        'stryker-no-survivors': Number(o.countsByStatus?.Survived || 0) + Number(o.countsByStatus?.NoCoverage || 0),
+        'codegraph-no-cycles': Number(o.cycleCount || 0),
+        'osv-no-high-severity': Number(o.severityCounts?.HIGH || 0) + Number(o.severityCounts?.CRITICAL || 0) + Number(o.severityCounts?.UNKNOWN || 0),
+        'depcruise-no-violations': Number(o.violationCount || 0),
+        'knip-no-unlisted-deps': Number(o.unlistedDepsCount || 0),
+        'biome-no-errors': Number(o.errors || 0)
+      };
+      const badCount = countByObl[spec.obligationId] ?? 0;
+      return {
+        exitCode: badCount > 0 ? 1 : 0,
+        durationMs: Date.now() - t0,
+        diagSummary: badCount > 0 ? `${spec.obligationId}: 检出 ${badCount} 项阻断违例` : `${spec.obligationId}: 零违例通过`,
+        watchArgs: adpArgs
+      };
     }
 
     const obsFile = join(workCwd, '.donegate', 'adapters', spec.tool, 'observation.json');
