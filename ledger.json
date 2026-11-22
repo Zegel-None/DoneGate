@@ -184,6 +184,38 @@
       "actionsChanged": 0,
       "note": "advisory（本仓单文件 donegate-ci.yml 已由双系统 CI 自验，暂作旁注观测供多流水线用户项目拦截 Action 表达式错误，接受 3 批硬淘汰考核）",
       "ecosystem": "cloud-devops"
+    },
+    {
+      "brick": "ui-interaction-matrix",
+      "registryId": "ui-interaction-matrix@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（内置 16 条前端交互控件决策规则与五态清单，供阶段 4 预置开发流前置约束，接受 3 批硬淘汰考核）",
+      "ecosystem": "web-mobile"
+    },
+    {
+      "brick": "vuln-merge",
+      "registryId": "vuln-merge@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（多源漏洞报告按包名+版本+CVE 跨源去重与可达性 P0-P3 定级归并器，供阶段 7 安全覆盖族收口，接受 3 批硬淘汰考核）",
+      "ecosystem": "cloud-devops"
+    },
+    {
+      "brick": "syft",
+      "registryId": "syft@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（生成 CycloneDX 标准 SBOM 物料清单供下游漏洞覆盖族消费，接受 3 批硬淘汰考核）",
+      "ecosystem": "cloud-devops"
+    },
+    {
+      "brick": "semgrep",
+      "registryId": "semgrep@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（多语言快速 SAST 静态安全扫描节点，供阶段 6/7 安全覆盖族调用，接受 3 批硬淘汰考核）",
+      "ecosystem": "core"
     }
   ]
 }

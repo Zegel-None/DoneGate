@@ -1,0 +1,54 @@
+{
+  "说明": "静态安全诊断探针（archetype: scanner）：调用 Semgrep 执行多语言快速 SAST 规则扫描，作为每次提交/PR 的第一层静态安全防线。",
+  "tool": "semgrep",
+  "registryId": "semgrep@stage4",
+  "role": "hard",
+  "stage": 4,
+  "archetype": "scanner",
+  "upstream": {
+    "repo": "semgrep/semgrep",
+    "extractMode": "cli",
+    "homepage": "https://github.com/semgrep/semgrep"
+  },
+  "install": {
+    "kind": "pip",
+    "pkg": "semgrep",
+    "version": "v1.101.0",
+    "bin": "semgrep",
+    "installCmd": "pip install semgrep==1.101.0"
+  },
+  "card": {
+    "title": "Semgrep 静态安全快扫卡",
+    "category": "安全与运维",
+    "summary": "多语言规则驱动 SAST 快速扫描，拦截注入、不安全反序列化、SSRF 与硬编码高危调用模式",
+    "inputs": [
+      { "id": "in_src", "name": "多语言业务源码", "type": "ARTIFACT" }
+    ],
+    "outputs": [
+      { "id": "out_sig", "name": "0-3 安全状态码", "type": "SIGNAL" },
+      { "id": "out_obs", "name": "SAST 规则命中明细", "type": "TEXT" }
+    ],
+    "slots": [
+      { "id": "sg_1", "label": "ERROR 级高危规则零命中判定口", "wired": true, "boundOut": "out_sig" },
+      { "id": "sg_2", "label": "命中文件行号与规则 ID 原文", "wired": true, "boundOut": "out_obs" }
+    ]
+  },
+  "observables": [
+    {
+      "id": "errorSeverityCount",
+      "from": "errorSeverityCount",
+      "kind": "count",
+      "assertableAs": ["zero"],
+      "wired": false,
+      "reason": "供阶段 6/7 安全门禁与覆盖族调用，待业务安全契约认领"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "长于单文件与轻量跨文件模式匹配，深度跨模块污点追踪弱于发版前的 CodeQL 全量数据流分析"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "阶段 6/7 快速 SAST 覆盖族核心节点"
+  }
+}
