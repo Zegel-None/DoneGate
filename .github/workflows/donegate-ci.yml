@@ -57,6 +57,7 @@ jobs:
         run: node runner/self-test.mjs
 
       - name: Run Adapter Protocol v1.1 Nine-Field & Hash Self-Test
+        shell: bash
         run: |
           node skill/check-declarations.mjs
           if [ -d tests/adapters ]; then node skill/check-declarations.mjs --verify-adapters --offline; fi
