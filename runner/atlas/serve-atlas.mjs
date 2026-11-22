@@ -8,6 +8,8 @@ import { sha256 } from '../../skill/hash.mjs';
 import { exportDashboardHtml, openInSystemBrowser } from '../core/dashboard.mjs';
 import { readSavedWorkbenchState } from './hydrate-workbench.mjs';
 import { createDoneGateWebRouteHandler } from '../dsh/host-routes.mjs';
+import { resolveSafeWorkspaceFolders } from '../dsh/win-paths.mjs';
+export { resolveSafeWorkspaceFolders };
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 
@@ -48,37 +50,6 @@ function readReqJson(req, maxBytes = 2 * 1024 * 1024) {
     });
     req.on('error', rejectBody);
   });
-}
-
-export function resolveSafeWorkspaceFolders(projectRoot, requestedPaths, pathMod = path) {
-  const root = pathMod.resolve(projectRoot);
-  const workspaceParent = pathMod.dirname(root);
-  const list = Array.isArray(requestedPaths) ? requestedPaths : [];
-  const resolved = [];
-
-  for (const raw of list.slice(0, 16)) {
-    const clean = String(raw || '').trim().replace(/\\/g, '/');
-    if (!clean) continue;
-    const candidate = pathMod.resolve(root, clean);
-    const rawRel = pathMod.relative(workspaceParent, candidate);
-    const relToParent = rawRel.replace(/\\/g, '/');
-    if (!relToParent || pathMod.isAbsolute(rawRel) || /^[A-Za-z]:/.test(relToParent) || relToParent.startsWith('..') || relToParent.includes('/../')) {
-      resolved.push({ requested: clean, absPath: null, exists: false, blocked: true });
-      continue;
-    }
-    let targetDir = candidate;
-    let exists = existsSync(candidate);
-    if (exists) {
-      try {
-        if (!statSync(candidate).isDirectory()) targetDir = pathMod.dirname(candidate);
-      } catch (err) { void err; }
-    } else if (existsSync(pathMod.dirname(candidate))) {
-      targetDir = pathMod.dirname(candidate);
-      exists = true;
-    }
-    resolved.push({ requested: clean, absPath: targetDir, exists, blocked: false });
-  }
-  return resolved;
 }
 
 export function startAtlasHttpServer(projectRoot, opts = {}) {

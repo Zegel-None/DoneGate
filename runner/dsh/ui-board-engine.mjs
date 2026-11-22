@@ -7,7 +7,7 @@ import {
   AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
   lockDesignSystemMaster, readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
-import { buildWinBatchSpawn } from '../../skill/adapters/_shared.mjs';
+import { buildWinCmdSpawn } from './win-paths.mjs';
 import { findExecutableInDirs, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
 
 export const UI_TOOLCHAIN_DEPS_PACK = {
@@ -326,7 +326,7 @@ export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
   const localAbBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir]);
   const runAb = (abArgs) => {
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(localAbBin)) {
-      const wb = buildWinBatchSpawn(localAbBin, abArgs);
+      const wb = buildWinCmdSpawn(localAbBin, abArgs);
       return spawnSync(wb.cmd, wb.args, { encoding: 'utf8', timeout: 8000, ...wb.extraOpts });
     }
     return spawnSync(localAbBin, abArgs, { encoding: 'utf8', timeout: 8000, windowsHide: true });

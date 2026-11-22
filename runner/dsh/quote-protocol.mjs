@@ -65,8 +65,7 @@ export function parseQuotedTargetsFromMessage(rawMessage) {
   const targets = [];
   const seen = new Set();
   const re = /\[DG-TARGET\s+([^\]]+)\]/g;
-  let m;
-  while ((m = re.exec(clean)) !== null) {
+  for (const m of clean.matchAll(re)) {
     const segs = m[1].split('|').map((s) => s.trim());
     const item = { uri: null, kind: 'node', id: null, board: 'kanban', name: '', contracts: [], scopes: [] };
     for (const seg of segs) {
