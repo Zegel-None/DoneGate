@@ -195,7 +195,7 @@
       "id": "sec-vuln-merge",
       "tplId": "tpl-adp-vuln-merge",
       "title": "多源漏洞去重与可达性归并卡",
-      "tip": "内置零二进制 aggregator 积木：按 (package, version, CVE/GHSA) 跨扫描器去重，结合运行时与可达性划分 P0-P3，根治告警刷屏",
+      "tip": "内置零二进制 aggregator 节点：按 (package, version, CVE/GHSA) 跨扫描器去重，结合运行时与可达性划分 P0-P3，根治告警刷屏",
       "repoSlug": "",
       "repoUrl": "",
       "pinnedVersion": "",

@@ -57,7 +57,10 @@ jobs:
         run: node runner/self-test.mjs
 
       - name: Run Adapter Protocol v1.1 Nine-Field & Hash Self-Test
-        run: node skill/check-declarations.mjs
+        run: |
+          node skill/check-declarations.mjs
+          if [ -d tests/adapters ]; then node skill/check-declarations.mjs --verify-adapters --offline; fi
+          if [ -f runner/donegate-fixtures.mjs ]; then node runner/donegate-fixtures.mjs; fi
 
       - name: Run DSH Web, JIT, Shared Deps & Campaign Autopilot E2E Fixtures
         run: node runner/dsh-fixtures.mjs

@@ -1,5 +1,5 @@
 {
-  "说明": "覆盖族归并型积木（archetype: aggregator）：解决多源漏洞扫描（锁文件 osv-scanner、镜像/配置 trivy、SBOM grype、语言调用可达性 govulncheck/pip-audit）互相刷屏与重复告警缺口。",
+  "说明": "覆盖族归并型节点（archetype: aggregator）：解决多源漏洞扫描（锁文件 osv-scanner、镜像/配置 trivy、SBOM grype、语言调用可达性 govulncheck/pip-audit）互相刷屏与重复告警缺口。",
   "tool": "vuln-merge",
   "registryId": "vuln-merge@stage4",
   "role": "hard",

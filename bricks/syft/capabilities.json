@@ -1,5 +1,5 @@
 {
-  "说明": "工件生成型积木（archetype: generator）：调用 Anchore Syft 生成 CycloneDX 标准 SBOM 清单并锁定产物 SHA-256 供下游漏洞覆盖族消费。",
+  "说明": "工件生成型节点（archetype: generator）：调用 Anchore Syft 生成 CycloneDX 标准 SBOM 清单并锁定产物 SHA-256 供下游漏洞覆盖族消费。",
   "tool": "syft",
   "registryId": "syft@stage4",
   "role": "soft",

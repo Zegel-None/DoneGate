@@ -249,7 +249,7 @@ export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
     for (const d of [shared.binDir, join(shared.absDir, 'npm'), shared.reposDir]) mkdirSync(d, { recursive: true });
   }
 
-  const before = inspectWorkflowDeps(root, pack);
+  const before = inspectWorkflowDeps(root, pack, opts.env ? { env: opts.env } : {});
   const curManifest = existsSync(paths.manifestPath) ? (readJsonStrict(paths.manifestPath).value || {}) : {};
   const installed = { ...(curManifest.installed || {}) };
   const curShared = (useShared && existsSync(shared.manifestPath)) ? (readJsonStrict(shared.manifestPath).value || {}) : {};

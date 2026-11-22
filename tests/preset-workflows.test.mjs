@@ -133,19 +133,19 @@ describe('DoneGate 预置十阶段开发流、懒加载依赖门禁与适配器�
     try {
       initCleanGitWorkspace(tmp);
       const secPack = JSON.parse(readFileSync(join(REPO_ROOT, 'workflows/06-security-coverage-family.workflow.json'), 'utf8'));
-      const pre = preflightWorkflowPack(secPack, { projectRoot: tmp, enforceDeps: true });
+      const pre = preflightWorkflowPack(secPack, { projectRoot: tmp, enforceDeps: true, env: { PATH: '' } });
       expect(pre.ok).toBe(false);
       expect(pre.exitCode).toBe(3);
       expect(pre.code).toBe('MISSING_WORKFLOW_DEPS');
       expect(pre.depsDir).toBe('workflows/.deps/06-security-coverage-family');
       expect(pre.missingDeps.some((d) => d.id === 'vuln-merge')).toBe(false);
 
-      const prov = provisionWorkflowDeps(tmp, secPack, { markInstalledIds: pre.missingDeps.map((d) => d.id) });
+      const prov = provisionWorkflowDeps(tmp, secPack, { env: { PATH: '' }, markInstalledIds: pre.missingDeps.map((d) => d.id) });
       expect(prov.ok).toBe(true);
       expect(prov.ready).toBe(true);
       expect(existsSync(join(tmp, prov.planFile))).toBe(true);
       expect(existsSync(join(tmp, prov.sharedManifestFile))).toBe(true);
-      expect(preflightWorkflowPack(secPack, { projectRoot: tmp, enforceDeps: true }).ok).toBe(true);
+      expect(preflightWorkflowPack(secPack, { projectRoot: tmp, enforceDeps: true, env: { PATH: '' } }).ok).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

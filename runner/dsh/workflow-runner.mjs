@@ -67,7 +67,7 @@ export function preflightWorkflowPack(pack, opts = {}) {
     return { ok: false, exitCode: 3, code: 'BLANK_NODE', nodeId: blankNode.id, reason: `节点「${blankNode.title || blankNode.id}」仍是空白待定节点，请先绑定节点或开启跳过` };
   }
   if (opts.enforceDeps !== false) {
-    const depReport = inspectWorkflowDeps(opts.projectRoot || process.cwd(), pack);
+    const depReport = inspectWorkflowDeps(opts.projectRoot || process.cwd(), pack, opts.env ? { env: opts.env } : {});
     if (!depReport.ready) {
       const names = depReport.missing.slice(0, 4).map((x) => x.title || x.id).join('、');
       return {

@@ -327,3 +327,5 @@ export function runAdapter(spec) {
   console.log(`产出声明：${relPath(outPath)}${res.summaryLog ? `（${res.summaryLog}）` : ''}`);
   process.exit(0);
 }
+
+export { runAdapter as runMortarAdapter };

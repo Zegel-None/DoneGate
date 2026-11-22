@@ -50,7 +50,7 @@
       "id": "ui-matrix-plan",
       "tplId": "tpl-adp-ui-interaction-matrix",
       "title": "交互模式与控件映射决策卡",
-      "tip": "内置零二进制规划积木：核对下拉/单选/即时开关/可逆撤销 Toast 等 16 条铁律与空/载/错/权/常五态完整性",
+      "tip": "内置零二进制规划节点：核对下拉/单选/即时开关/可逆撤销 Toast 等 16 条铁律与空/载/错/权/常五态完整性",
       "repoSlug": "",
       "repoUrl": "",
       "pinnedVersion": "",
