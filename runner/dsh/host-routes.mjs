@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
-import { cmdVerifyApply, cmdVerifyPack } from '../core/cmd-handover-verify.mjs';
+import { cmdCheckNode, cmdSlice, cmdVerifyApply, cmdVerifyPack } from '../core/commands-b.mjs';
 import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer, resolveSafeWorkspaceFolders } from './win-paths.mjs';
@@ -60,6 +60,26 @@ export function createDoneGateWebRouteHandler(projectRoot) {
     }
     if (cleanPath.startsWith('/autopilot/')) {
       return handleAutopilotSubRoute(req, res, cleanPath, root, readJsonBody);
+    }
+
+    if (cleanPath === '/router' && req.method === 'GET') {
+      const r = cmdSlice(root, { routerOnly: true, json: true });
+      sendJson(res, r.exitCode === 0 ? 200 : 400, { ok: r.exitCode === 0, exitCode: r.exitCode, router: r.router || null, stderr: r.stderr || '' });
+      return true;
+    }
+
+    if (cleanPath === '/slice' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const r = cmdSlice(root, { id: body.nodeId || body.id, routerOnly: Boolean(body.routerOnly), freezeStub: Boolean(body.freezeStub), contextWindow: body.contextWindow, utilization: body.utilization, maxTokens: body.maxTokens, json: true });
+      sendJson(res, r.exitCode === 0 ? 200 : 400, { ok: r.exitCode === 0, exitCode: r.exitCode, capsule: r.capsule || null, router: r.router || null, stderr: r.stderr || '' });
+      return true;
+    }
+
+    if (cleanPath === '/check-node' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const r = cmdCheckNode(root, { id: body.nodeId || body.id, criterion: body.criterion, allowDirty: body.allowDirty !== false, allowStubChange: Boolean(body.allowStubChange), receipt: true });
+      sendJson(res, 200, { ok: r.exitCode === 0, exitCode: r.exitCode, receipt: r.receipt || null, stderr: r.stderr || '' });
+      return true;
     }
 
     if (cleanPath === '/events' && req.method === 'GET') {

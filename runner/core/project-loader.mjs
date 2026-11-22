@@ -4,6 +4,18 @@ import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
 
+export const DEFAULT_SUBAGENT_BUDGET = {
+  contextWindowTokens: 1000000,
+  targetUtilization: 0.4,
+  totalSessionBudgetTokens: 400000,
+  routerBudgetTokens: 8000,
+  zeroHopSourceBudgetTokens: 160000,
+  oneHopContractBudgetTokens: 48000,
+  onDemandExpandBudgetTokens: 64000,
+  multiTurnReserveTokens: 120000,
+  receiptBudgetTokens: 500
+};
+
 export const DEFAULT_THRESHOLDS = {
   maxConstraints: 12,
   maxPermanentConstraints: 6,
@@ -27,6 +39,7 @@ export const DEFAULT_THRESHOLDS = {
   maxEffectiveFileLines: 850,
   maxFileLines: 1200,
   warnFunctionLines: 160,
+  subagentContextBudget: { ...DEFAULT_SUBAGENT_BUDGET },
   bannedPatterns: []
 };
 
@@ -47,10 +60,19 @@ export const VALID_TEETH = new Set([
 
 export function loadThresholds(projectRoot) {
   const p = join(projectRoot, 'thresholds.json');
-  if (!existsSync(p)) return { ...DEFAULT_THRESHOLDS };
+  if (!existsSync(p)) return { ...DEFAULT_THRESHOLDS, subagentContextBudget: { ...DEFAULT_SUBAGENT_BUDGET } };
   const r = readJsonStrict(p);
-  if (!r.ok || !r.value || typeof r.value !== 'object') return { ...DEFAULT_THRESHOLDS };
-  return { ...DEFAULT_THRESHOLDS, ...r.value };
+  if (!r.ok || !r.value || typeof r.value !== 'object') {
+    return { ...DEFAULT_THRESHOLDS, subagentContextBudget: { ...DEFAULT_SUBAGENT_BUDGET } };
+  }
+  return {
+    ...DEFAULT_THRESHOLDS,
+    ...r.value,
+    subagentContextBudget: {
+      ...DEFAULT_SUBAGENT_BUDGET,
+      ...(r.value.subagentContextBudget && typeof r.value.subagentContextBudget === 'object' ? r.value.subagentContextBudget : {})
+    }
+  };
 }
 
 export function loadContracts(projectRoot) {

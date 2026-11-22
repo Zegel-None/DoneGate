@@ -53,4 +53,8 @@ workflows/.deps/
 .donegate/scratch/
 .donegate/runs/
 .donegate/dsh-bundle/
+.donegate/ROUTER.md
+.donegate/router.json
+.donegate/stubs/
+.donegate/capsules/
 .githooks/
