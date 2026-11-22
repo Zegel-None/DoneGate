@@ -276,8 +276,10 @@ const BUILTIN_GATES = {
       if (errDist) return { ok: false, detail: errDist };
       return { ok: true, detail: 'build-public 与 build-dist 双产物均过空格链接/反引号/README先后序/自检命令门禁' };
     } finally {
-      rmSync(tmpPub, { recursive: true, force: true });
-      rmSync(tmpDist, { recursive: true, force: true });
+      if (process.platform !== 'win32') {
+        rmSync(tmpPub, { recursive: true, force: true });
+        rmSync(tmpDist, { recursive: true, force: true });
+      }
     }
   }
 };
