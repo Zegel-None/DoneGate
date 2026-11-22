@@ -460,7 +460,7 @@ if (has('--self-check')) {
     if (r.error || r.status !== 0) {
       bad++;
       console.log(`  ✗ ${script} ${sArgs.join(' ')} → exit ${r.status}`);
-      const detail = (r.stderr || r.stdout || '').trim().split(/\r?\n/).slice(-5).join('\n    ');
+      const detail = (r.stderr || r.stdout || '').trim().split(/\r?\n/).slice(-15).join('\n    ');
       if (detail) console.log('    ' + detail);
     } else {
       console.log(`  ✓ ${script} ${sArgs.join(' ')} → exit 0`);

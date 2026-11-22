@@ -1,0 +1,296 @@
+{
+  "id": "05-red-green-teeth-gate",
+  "group": "预置全周期开发流",
+  "name": "05 · 阶段 5 & 6 · 有牙变异测试与 PR 架构门禁流",
+  "tip": "专治 AI 假绿灯测试与循环依赖：内置防手搓护栏 → Biome 语法检查 → Typos 标识符防滑移 → Dependency-Cruiser 分层边界 → CodeGraph 改动波及图 → Stryker 变异击杀实验（上限 3 轮补断言）→ Actionlint CI 校验。",
+  "deps": [
+    {
+      "id": "biome",
+      "title": "Biome 语法与规范检查",
+      "repo": "biomejs/biome",
+      "version": "v1.9.4",
+      "kind": "npm",
+      "bin": "biome",
+      "pkg": "@biomejs/biome"
+    },
+    {
+      "id": "typos",
+      "title": "Typos 源码标识符拼写检查",
+      "repo": "crate-ci/typos",
+      "version": "v1.28.4",
+      "kind": "binary",
+      "bin": "typos",
+      "installCmd": "下载 crate-ci/typos v1.28.4 至 workflows/.deps/05-red-green-teeth-gate/.bin/typos"
+    },
+    {
+      "id": "depcruise",
+      "title": "Dependency-Cruiser 模块分层越界门禁",
+      "repo": "sverweij/dependency-cruiser",
+      "version": "v16.8.0",
+      "kind": "npm",
+      "bin": "depcruise",
+      "pkg": "dependency-cruiser"
+    },
+    {
+      "id": "codegraph",
+      "title": "CodeGraph 静态依赖波及与循环检测",
+      "repo": "colinchen-333/codegraph",
+      "version": "v1.6.0",
+      "kind": "npm",
+      "bin": "codegraph",
+      "pkg": "@colinchen/codegraph"
+    },
+    {
+      "id": "stryker",
+      "title": "Stryker 变异测试有牙实验器",
+      "repo": "stryker-mutator/stryker-js",
+      "version": "v8.7.1",
+      "kind": "npm",
+      "bin": "stryker",
+      "pkg": "@stryker-mutator/core"
+    },
+    {
+      "id": "actionlint",
+      "title": "Actionlint GitHub Actions 静态校验",
+      "repo": "rhysd/actionlint",
+      "version": "v1.7.4",
+      "kind": "go",
+      "bin": "actionlint",
+      "installCmd": "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.4"
+    }
+  ],
+  "groups": [
+    { "id": "grp-05-arch", "title": "反手搓、标识符防漂移与模块分层边界", "x": 28, "y": 42, "w": 1244, "h": 318, "color": "blue" },
+    { "id": "grp-05-teeth", "title": "改动波及分析、Stryker 有牙变异实验与 CI 门禁", "x": 1300, "y": 42, "w": 1236, "h": 334, "color": "emerald" }
+  ],
+  "nodes": [
+    {
+      "id": "tg-anti-slop",
+      "tplId": "tpl-anti-slop",
+      "title": "防 AI 手搓与有效行数护栏",
+      "tip": "拦截空 catch、TODO 占位、超长函数与单次提交越界（<= 8 文件 / <= 300 有效行）",
+      "repoSlug": "",
+      "repoUrl": "",
+      "pinnedVersion": "",
+      "latestUpstream": "",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 48,
+      "y": 96,
+      "w": 260,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "待审 PR 工作区", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_art", "name": "体量合规快照", "type": "ARTIFACT" },
+        { "id": "out_txt", "name": "卫生违规报告", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "as_1", "label": "提交体量与空 catch 放行", "wired": true, "boundOut": "out_art" },
+        { "id": "as_2", "label": "超标函数行号清单", "wired": true, "boundOut": "out_txt" }
+      ]
+    },
+    {
+      "id": "tg-biome",
+      "tplId": "tpl-adp-biome",
+      "title": "Biome 毫秒级语法静态检查",
+      "tip": "零容忍拦截 JS/TS 语法错误与可疑控制流写法",
+      "repoSlug": "biomejs/biome",
+      "repoUrl": "https://github.com/biomejs/biome",
+      "pinnedVersion": "v1.9.4",
+      "latestUpstream": "v1.9.4",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 352,
+      "y": 96,
+      "w": 256,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "源码快照", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 判定码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "错误明细", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "bi_1", "label": "Biome error 计数清零", "wired": true, "boundOut": "out_sig" },
+        { "id": "bi_2", "label": "诊断文件行号导出", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "tg-typos",
+      "tplId": "tpl-adp-typos",
+      "title": "Typos 标识符拼写防滑移",
+      "tip": "专门拦截小模型把字段名拼错一两个字母导致的静默 undefined 缺陷",
+      "repoSlug": "crate-ci/typos",
+      "repoUrl": "https://github.com/crate-ci/typos",
+      "pinnedVersion": "v1.28.4",
+      "latestUpstream": "v1.29.0",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 652,
+      "y": 96,
+      "w": 256,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "Lint 通过信号", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 拼写状态码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "可疑标识符清单", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "ty_1", "label": "标识符拼写错词清零", "wired": true, "boundOut": "out_sig" },
+        { "id": "ty_2", "label": "错词行号与修正建议", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "tg-depcruise",
+      "tplId": "tpl-adp-depcruise",
+      "title": "DepCruise 模块分层防腐墙",
+      "tip": "强制校验分层导入铁律（例如 UI 层严禁直连存储层、适配器严禁反向依赖裁决核）",
+      "repoSlug": "sverweij/dependency-cruiser",
+      "repoUrl": "https://github.com/sverweij/dependency-cruiser",
+      "pinnedVersion": "v16.8.0",
+      "latestUpstream": "v16.9.0",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 952,
+      "y": 96,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "源码导入图", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 边界合规码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "跨层违规边清单", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "dc_1", "label": "跨层非法导入零容忍", "wired": true, "boundOut": "out_sig" },
+        { "id": "dc_2", "label": "违规依赖路径原文", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "tg-codegraph",
+      "tplId": "tpl-adp-codegraph",
+      "title": "CodeGraph 循环依赖与波及域",
+      "tip": "静态检出新增循环依赖（D09），并精准算出本次改动受影响的下游测试集",
+      "repoSlug": "colinchen-333/codegraph",
+      "repoUrl": "https://github.com/colinchen-333/codegraph",
+      "pinnedVersion": "v1.6.0",
+      "latestUpstream": "v1.6.2",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1324,
+      "y": 96,
+      "w": 268,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "架构合规信号", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 无环状态码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "受波及模块清单", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "cg_1", "label": "静态依赖图零环路", "wired": true, "boundOut": "out_sig" },
+        { "id": "cg_2", "label": "受影响契约重验列表", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "tg-stryker",
+      "tplId": "tpl-adp-stryker",
+      "title": "Stryker 增量变异有牙实验",
+      "tip": "只对改动代码自动注入算子/条件翻转变异体：若改坏业务代码测试仍绿（存活变异体 > 0），当场判定假测试拦截",
+      "repoSlug": "stryker-mutator/stryker-js",
+      "repoUrl": "https://github.com/stryker-mutator/stryker-js",
+      "pinnedVersion": "v8.7.1",
+      "latestUpstream": "v8.8.0",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1636,
+      "y": 96,
+      "w": 272,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "受波及代码与测试", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 变异击杀码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "存活变异体位置", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "st_1", "label": "增量存活变异体清零", "wired": true, "boundOut": "out_sig" },
+        { "id": "st_2", "label": "假断言漏网行号报告", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "tg-router",
+      "tplId": "tpl-router-rule",
+      "title": "测试有牙度条件路由器",
+      "tip": "0 变异体全数击杀放行 CI 校验；1 存在存活变异体打回补强业务断言（上限 3 轮）",
+      "repoSlug": "",
+      "repoUrl": "",
+      "pinnedVersion": "",
+      "latestUpstream": "",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1952,
+      "y": 96,
+      "w": 256,
+      "h": null,
+      "inputs": [{ "id": "in_sig", "name": "0-3 击杀状态码", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_0", "name": "0 真测试过关放行", "type": "SIGNAL" },
+        { "id": "out_1", "name": "1 存活变异打回补测", "type": "TEXT" },
+        { "id": "out_3", "name": "2/3 降级回 DoneGate teeth", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "s_0", "label": "0 号口进入 CI 工作流校验", "wired": true, "boundOut": "out_0" },
+        { "id": "s_1", "label": "1 号口回流补断言 (maxLoops=3)", "wired": true, "boundOut": "out_1" },
+        { "id": "s_3", "label": "2/3 号口降级内置 breakPatch", "wired": true, "boundOut": "out_3" }
+      ]
+    },
+    {
+      "id": "tg-actionlint",
+      "tplId": "tpl-adp-actionlint",
+      "title": "Actionlint CI 工作流门禁",
+      "tip": "拦截 AI 编造的 GitHub Action 输入参数、错误矩阵语法与上下文注入风险，确保推上远端一次跑通",
+      "repoSlug": "rhysd/actionlint",
+      "repoUrl": "https://github.com/rhysd/actionlint",
+      "pinnedVersion": "v1.7.4",
+      "latestUpstream": "v1.7.4",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 2248,
+      "y": 96,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "门禁过关信号", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 CI 合法码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "YAML 错误行号", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "ac_1", "label": ".github/workflows 零语法错", "wired": true, "boundOut": "out_sig" },
+        { "id": "ac_2", "label": "Action 参数与表达式核验", "wired": true, "boundOut": "out_obs" }
+      ]
+    }
+  ],
+  "links": [
+    { "id": "tg-lk-1", "fromNode": "tg-anti-slop", "fromSlot": "out_art", "toNode": "tg-biome", "toSlot": "in_src", "type": "ARTIFACT" },
+    { "id": "tg-lk-2", "fromNode": "tg-biome", "fromSlot": "out_sig", "toNode": "tg-typos", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "tg-lk-3", "fromNode": "tg-typos", "fromSlot": "out_sig", "toNode": "tg-depcruise", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "tg-lk-4", "fromNode": "tg-depcruise", "fromSlot": "out_sig", "toNode": "tg-codegraph", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "tg-lk-5", "fromNode": "tg-codegraph", "fromSlot": "out_sig", "toNode": "tg-stryker", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "tg-lk-6", "fromNode": "tg-stryker", "fromSlot": "out_sig", "toNode": "tg-router", "toSlot": "in_sig", "type": "SIGNAL" },
+    { "id": "tg-lk-7", "fromNode": "tg-router", "fromSlot": "out_0", "toNode": "tg-actionlint", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "tg-lk-loop", "fromNode": "tg-router", "fromSlot": "out_1", "toNode": "tg-stryker", "toSlot": "in_src", "type": "TEXT", "maxLoops": 3 }
+  ]
+}

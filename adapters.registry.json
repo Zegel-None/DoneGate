@@ -291,6 +291,58 @@
       "blindSpots": [
         "仅静态校验工作流语法、内置上下文类型与公开 Action 元数据，不验证远端 Runner 真实密钥与网络连通性"
       ]
+    },
+    {
+      "id": "ui-interaction-matrix@stage4",
+      "tool": "ui-interaction-matrix",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-ui-interaction-matrix",
+      "entry": "skill/adapters/ui-interaction-matrix.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.1.0 <99.0.0",
+      "blindSpots": [
+        "仅按显式功能属性（选项数、即时性、可逆性）校验控件映射与五态覆盖，不替代真实用户可用性测试与视觉审美评审"
+      ]
+    },
+    {
+      "id": "vuln-merge@stage4",
+      "tool": "vuln-merge",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-vuln-merged-p0",
+      "entry": "skill/adapters/vuln-merge.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.1.0 <99.0.0",
+      "blindSpots": [
+        "仅对上游已产出的扫描报告执行确定性去重与优先级合并，本身不主动发起网络扫描或发现零日漏洞"
+      ]
+    },
+    {
+      "id": "syft@stage4",
+      "tool": "syft",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-sbom-generated",
+      "entry": "skill/adapters/syft-sbom.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.0.0 <2.0.0",
+      "blindSpots": [
+        "仅枚举构建物与锁文件中的软件物料清单（SBOM），本身不查询漏洞库也不判定安全风险"
+      ]
+    },
+    {
+      "id": "semgrep@stage4",
+      "tool": "semgrep",
+      "stage": 4,
+      "role": "hard",
+      "checkedBy": "c01/crit-sast-no-errors",
+      "entry": "skill/adapters/semgrep-sast.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=1.50.0 <2.0.0",
+      "blindSpots": [
+        "长于单文件与轻量跨文件模式匹配，深度跨模块污点追踪弱于发版前的 CodeQL 全量数据流分析"
+      ]
     }
   ]
 }

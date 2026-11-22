@@ -7,39 +7,27 @@ import { readJsonStrict } from '../../skill/io.mjs';
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const UPSTREAM_GITHUB_MAP = {
-  stryker: ['stryker-mutator/stryker-js', 'v8.7.1', 'v8.8.0'],
-  gitleaks: ['gitleaks/gitleaks', 'v8.18.4', 'v8.21.2'],
-  'osv-scanner': ['google/osv-scanner', 'v1.9.1', 'v1.9.2'],
-  depcruise: ['sverweij/dependency-cruiser', 'v16.8.0', 'v16.9.0'],
-  knip: ['webpro-nl/knip', 'v5.39.0', 'v5.41.0'],
-  biome: ['biomejs/biome', 'v1.9.4', 'v1.9.4'],
-  playwright: ['microsoft/playwright', 'v1.48.0', 'v1.49.1'],
-  semgrep: ['semgrep/semgrep', 'v1.99.0', 'v1.101.0'],
-  ruff: ['astral-sh/ruff', 'v0.8.2', 'v0.8.4'],
-  pyright: ['microsoft/pyright', 'v1.1.389', 'v1.1.390'],
-  vitest: ['vitest-dev/vitest', 'v2.1.6', 'v2.1.8'],
-  shellcheck: ['koalaman/shellcheck', 'v0.10.0', 'v0.10.0'],
-  hadolint: ['hadolint/hadolint', 'v2.12.0', 'v2.12.0'],
-  actionlint: ['rhysd/actionlint', 'v1.7.4', 'v1.7.4'],
-  sqlfluff: ['sqlfluff/sqlfluff', 'v3.2.5', 'v3.3.0'],
-  maestro: ['mobile-dev-inc/Maestro', 'v1.38.1', 'v1.39.0'],
-  openspec: ['Fission-AI/OpenSpec', 'v0.2.4', 'v0.3.0']
+  stryker: ['stryker-mutator/stryker-js', 'v8.7.1', 'v8.8.0'], gitleaks: ['gitleaks/gitleaks', 'v8.18.4', 'v8.21.2'],
+  'osv-scanner': ['google/osv-scanner', 'v1.9.1', 'v1.9.2'], depcruise: ['sverweij/dependency-cruiser', 'v16.8.0', 'v16.9.0'],
+  knip: ['webpro-nl/knip', 'v5.39.0', 'v5.41.0'], biome: ['biomejs/biome', 'v1.9.4', 'v1.9.4'],
+  playwright: ['microsoft/playwright', 'v1.48.0', 'v1.49.1'], semgrep: ['semgrep/semgrep', 'v1.99.0', 'v1.101.0'],
+  ruff: ['astral-sh/ruff', 'v0.8.2', 'v0.8.4'], pyright: ['microsoft/pyright', 'v1.1.389', 'v1.1.390'],
+  vitest: ['vitest-dev/vitest', 'v2.1.6', 'v2.1.8'], shellcheck: ['koalaman/shellcheck', 'v0.10.0', 'v0.10.0'],
+  hadolint: ['hadolint/hadolint', 'v2.12.0', 'v2.12.0'], actionlint: ['rhysd/actionlint', 'v1.7.4', 'v1.7.4'],
+  sqlfluff: ['sqlfluff/sqlfluff', 'v3.2.5', 'v3.3.0'], maestro: ['mobile-dev-inc/Maestro', 'v1.38.1', 'v1.39.0'],
+  openspec: ['Fission-AI/OpenSpec', 'v0.2.4', 'v0.3.0'], syft: ['anchore/syft', 'v1.18.0', 'v1.18.0'],
+  trivy: ['aquasecurity/trivy', 'v0.58.0', 'v0.58.0'], schemathesis: ['schemathesis/schemathesis', 'v4.0.0', 'v4.0.0'],
+  jscpd: ['kucherenko/jscpd', 'v4.0.5', 'v4.0.5'], typos: ['crate-ci/typos', 'v1.28.0', 'v1.28.0'],
+  'dotenv-linter': ['dotenv-linter/dotenv-linter', 'v4.0.0', 'v4.0.0'], 'ast-grep': ['ast-grep/ast-grep', 'v0.32.0', 'v0.32.0'],
+  beads: ['steveyegge/beads', 'v0.1.0', 'v0.1.0'], srclight: ['srclight/srclight', 'v0.25.0', 'v0.25.0'],
+  codegraph: ['codegraph/codegraph', 'v1.6.0', 'v1.6.0']
 };
 
 function defaultSavedState() {
   return {
-    schemaVersion: '1.0',
-    customPacks: {},
-    componentWorkflows: {},
-    hostNodeLayouts: {},
-    hostGroups: [],
-    hostSubgraphs: [],
-    workshopOverrides: {},
-    textOverrides: {},
-    textStyles: {},
-    controlStyles: {},
-    starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'],
-    updatedAt: null
+    schemaVersion: '1.0', customPacks: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
+    workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
+    starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'], updatedAt: null
   };
 }
 
@@ -228,9 +216,10 @@ function loadRegisteredAdapterTemplates(projectRoot) {
     const cardCfg = (capDoc.card && typeof capDoc.card === 'object') ? capDoc.card : {};
     const upCfg = (capDoc.upstream && typeof capDoc.upstream === 'object') ? capDoc.upstream : {};
     const obsList = Array.isArray(capDoc.observables) ? capDoc.observables.slice(0, 3) : [];
-    const up = UPSTREAM_GITHUB_MAP[tool] || [upCfg.repo || `opensource/${tool}`, adp.testedToolRange || 'v1.0.0', adp.testedToolRange || 'v1.0.0'];
-    const repoSlug = upCfg.repo || up[0];
-    const cat = cardCfg.category || (['gitleaks', 'osv-scanner', 'semgrep'].includes(tool)
+    const isZeroBin = (capDoc.archetype === 'knowledge-skill' || capDoc.archetype === 'aggregator') && !upCfg.repo;
+    const up = UPSTREAM_GITHUB_MAP[tool] || [isZeroBin ? '' : (upCfg.repo || `opensource/${tool}`), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0'), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0')];
+    const repoSlug = isZeroBin ? '' : (upCfg.repo || up[0]);
+    const cat = cardCfg.category || (['gitleaks', 'osv-scanner', 'semgrep', 'syft', 'trivy', 'vuln-merge'].includes(tool)
       ? '安全与运维'
       : (['playwright', 'maestro', 'vitest'].includes(tool) ? '端侧与构建' : '代码护栏'));
     const inputs = Array.isArray(cardCfg.inputs) && cardCfg.inputs.length > 0
@@ -252,7 +241,7 @@ function loadRegisteredAdapterTemplates(projectRoot) {
       archetype: capDoc.archetype || 'scanner',
       uiExternalUrl: upCfg.uiExternalUrl || null,
       repoSlug,
-      repoUrl: upCfg.homepage || `https://github.com/${repoSlug}`,
+      repoUrl: repoSlug ? (upCfg.homepage || `https://github.com/${repoSlug}`) : (upCfg.homepage || ''),
       pinnedVersion: up[1],
       latestUpstream: up[2],
       entryPath: adp.entry || `skill/adapters/${tool}.mjs`,

@@ -1,0 +1,53 @@
+{
+  "说明": "工件生成型积木（archetype: generator）：调用 Anchore Syft 生成 CycloneDX 标准 SBOM 清单并锁定产物 SHA-256 供下游漏洞覆盖族消费。",
+  "tool": "syft",
+  "registryId": "syft@stage4",
+  "role": "soft",
+  "stage": 4,
+  "archetype": "generator",
+  "upstream": {
+    "repo": "anchore/syft",
+    "extractMode": "cli",
+    "homepage": "https://github.com/anchore/syft"
+  },
+  "install": {
+    "kind": "binary",
+    "repo": "anchore/syft",
+    "version": "v1.18.0",
+    "bin": "syft"
+  },
+  "card": {
+    "title": "Syft SBOM 清单生成卡",
+    "category": "安全与运维",
+    "summary": "扫描构建目录或容器镜像产出 CycloneDX SBOM 物料清单，锁定 SHA-256 供 Grype/OSV/归并卡下游消费",
+    "inputs": [
+      { "id": "in_art", "name": "源码或构建制品", "type": "ARTIFACT" }
+    ],
+    "outputs": [
+      { "id": "out_sbom", "name": "CycloneDX SBOM", "type": "ARTIFACT" },
+      { "id": "out_sig", "name": "0-3 落盘状态码", "type": "SIGNAL" }
+    ],
+    "slots": [
+      { "id": "sy_1", "label": "生成 CycloneDX JSON 物料清单", "wired": true, "boundOut": "out_sbom" },
+      { "id": "sy_2", "label": "统计多语言包组件分布", "wired": true, "boundOut": "out_sig" }
+    ]
+  },
+  "observables": [
+    {
+      "id": "componentCount",
+      "from": "componentCount",
+      "kind": "artifact",
+      "assertableAs": ["non-empty"],
+      "wired": false,
+      "reason": "SBOM 只产生物料清单不做漏洞判定，交由下游覆盖族扫描器消费"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "仅枚举构建物与锁文件中的软件物料清单（SBOM），本身不查询漏洞库也不判定安全风险"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "阶段 7 安全覆盖族上游 SBOM 生成节点"
+  }
+}

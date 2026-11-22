@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "1.0",
+  "title": "DoneGate 前端交互模式与控件映射决策表（先定交互，再画界面）",
+  "source": "综合 Ant Design、Material UI、GitHub Primer、Adobe Spectrum、Radix Primitives 交互规范提炼",
+  "requiredPageStates": [
+    "empty_first_use",
+    "loading_skeleton",
+    "error_recoverable",
+    "permission_denied",
+    "populated_normal"
+  ],
+  "rules": [
+    {
+      "id": "UI-R01",
+      "condition": "选项数 >= 5 且选择后立即切换视图/排序/筛选",
+      "useControl": "select-dropdown",
+      "label": "下拉选择器 (Select)",
+      "avoidControls": ["radio-group", "modal"],
+      "rationale": "避免平铺超过 5 个单选按钮挤占主视区"
+    },
+    {
+      "id": "UI-R02",
+      "condition": "选项数 < 5 且需一眼看全对比切换",
+      "useControl": "segmented-or-radio",
+      "label": "分段控件 / 单选组 / Chip",
+      "avoidControls": ["select-dropdown"],
+      "rationale": "少于 5 项用下拉会平白多一次点击并隐藏候选"
+    },
+    {
+      "id": "UI-R03",
+      "condition": "布尔状态且点击后立即对系统生效",
+      "useControl": "switch",
+      "label": "即时开关 (Switch)",
+      "avoidControls": ["checkbox"],
+      "rationale": "复选框暗示需点保存才提交，即时生效必须用 Switch"
+    },
+    {
+      "id": "UI-R04",
+      "condition": "布尔选项但需随表单统一点击保存/提交",
+      "useControl": "checkbox",
+      "label": "表单复选框 (Checkbox)",
+      "avoidControls": ["switch"],
+      "rationale": "防止用户误以为拨动开关后已自动落盘"
+    },
+    {
+      "id": "UI-R05",
+      "condition": "允许自由输入同时存在可枚举候选集（5–100 项）",
+      "useControl": "combobox",
+      "label": "自动完成组合框 (Combobox)",
+      "avoidControls": ["select-dropdown", "plain-input"],
+      "rationale": "兼顾键盘检索过滤与候选枚举"
+    },
+    {
+      "id": "UI-R06",
+      "condition": "候选集 > 100 项或来自异步远端检索",
+      "useControl": "search-results-list",
+      "label": "搜索框 + 分页/虚拟结果列表",
+      "avoidControls": ["select-dropdown"],
+      "rationale": "杜绝百项长下拉造成的滚动地狱"
+    },
+    {
+      "id": "UI-R07",
+      "condition": "不可逆破坏性操作（删除仓库/吊销密钥/清空数据）",
+      "useControl": "confirm-modal",
+      "label": "二次确认模态框或键入资源名确认",
+      "avoidControls": ["tooltip", "toast-only"],
+      "rationale": "高危不可逆动作必须阻断确认并写明影响范围"
+    },
+    {
+      "id": "UI-R08",
+      "condition": "高频危险但技术上可逆的操作（归档/移入回收站/移除节点）",
+      "useControl": "undo-toast",
+      "label": "先执行 + 带撤销按钮的 Toast (Ctrl+Z)",
+      "avoidControls": ["confirm-modal"],
+      "rationale": "可逆操作优先提供撤销闭环，避免频繁弹窗形成确认疲劳"
+    },
+    {
+      "id": "UI-R09",
+      "condition": "简短字段说明、快捷键提示或指标口径解释",
+      "useControl": "tooltip-or-popover",
+      "label": "悬停气泡 / 轻量浮层 (Tooltip / Popover)",
+      "avoidControls": ["modal", "page-navigation"],
+      "rationale": "辅助解释不打断当前阅读与操作焦点"
+    },
+    {
+      "id": "UI-R10",
+      "condition": "长详情预览、分步配置表单或辅助上下文检查",
+      "useControl": "drawer-or-accordion",
+      "label": "侧边抽屉 / 折叠面板 (Drawer / Accordion)",
+      "avoidControls": ["tooltip-or-popover"],
+      "rationale": "保留主列表上下文的同时容纳多段结构化内容"
+    },
+    {
+      "id": "UI-R11",
+      "condition": "单条记录的标题、备注或数值微调",
+      "useControl": "inline-edit",
+      "label": "行内直接编辑 (Inline Edit)",
+      "avoidControls": ["page-navigation", "full-modal"],
+      "rationale": "局部单字段修改无需整页跳转"
+    },
+    {
+      "id": "UI-R12",
+      "condition": "对多条记录执行统一状态流转、导出或清理",
+      "useControl": "table-batch-bar",
+      "label": "表格多选框 + 顶部/底部浮动批量操作栏",
+      "avoidControls": ["row-by-row-modal"],
+      "rationale": "批量任务禁止逼用户逐行点开弹窗重复操作"
+    },
+    {
+      "id": "UI-R13",
+      "condition": "跨业务域或独立心智模型的主任务切换",
+      "useControl": "route-navigation",
+      "label": "侧边导航栏 / 顶栏路由（具备独立可分享 URL）",
+      "avoidControls": ["ephemeral-local-tab"],
+      "rationale": "主任务切换必须保留路由可回退与链接可分享能力"
+    },
+    {
+      "id": "UI-R14",
+      "condition": "同一份数据在同一上下文下的展示形态切换（流程图/树状图/表格）",
+      "useControl": "view-tabs-or-segmented",
+      "label": "同页标签页 / 视图分段器",
+      "avoidControls": ["full-page-reload"],
+      "rationale": "不改变底层数据集时严禁整页重载丢失滚动与选中态"
+    },
+    {
+      "id": "UI-R15",
+      "condition": "表单校验错误或局部字段提交反馈",
+      "useControl": "inline-field-feedback",
+      "label": "字段下方内联错误说明 + 全局非阻塞 Toast",
+      "avoidControls": ["blocking-alert-modal"],
+      "rationale": "精确定位出错字段，禁止使用阻塞式弹窗报错"
+    },
+    {
+      "id": "UI-R16",
+      "condition": "首次进入或过滤后零结果空状态",
+      "useControl": "guided-empty-state",
+      "label": "主动作引导卡 + 示例数据或清空筛选快捷入口",
+      "avoidControls": ["bare-no-data-text"],
+      "rationale": "空状态必须告诉用户下一步能做什么，禁止只写一句暂无数据"
+    }
+  ]
+}

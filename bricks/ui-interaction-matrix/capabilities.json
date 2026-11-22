@@ -1,0 +1,45 @@
+{
+  "说明": "知识与规则型积木（archetype: knowledge-skill）：把『先定交互模式、再画界面』的 16 条控件映射判据与五态矩阵固化为可哈希验真的开发流前置卡。",
+  "tool": "ui-interaction-matrix",
+  "registryId": "ui-interaction-matrix@stage4",
+  "role": "soft",
+  "stage": 4,
+  "archetype": "knowledge-skill",
+  "upstream": {
+    "extractMode": "skill-prompt"
+  },
+  "card": {
+    "title": "交互模式与控件决策表卡",
+    "category": "规划与设计",
+    "summary": "免外部二进制：锁定 16 条控件选型判据与五态矩阵，对功能清单做反模式核对并生成前端子代理硬约束提示词",
+    "inputs": [
+      { "id": "in_req", "name": "页面与功能盘点清单", "type": "SPEC" }
+    ],
+    "outputs": [
+      { "id": "out_prm", "name": "前端子代理交互约束", "type": "PROMPT" },
+      { "id": "out_spec", "name": "控件映射与五态清单", "type": "SPEC" }
+    ],
+    "slots": [
+      { "id": "uim_1", "label": "16 条控件选型反模式拦截", "wired": true, "boundOut": "out_spec" },
+      { "id": "uim_2", "label": "空/载/错/权/常五态矩阵注入", "wired": true, "boundOut": "out_prm" }
+    ]
+  },
+  "observables": [
+    {
+      "id": "antiPatternHitCount",
+      "from": "antiPatternHitCount",
+      "kind": "count",
+      "assertableAs": ["zero"],
+      "wired": false,
+      "reason": "作为阶段 4 前置设计规划卡接入，待具体前端契约认领后转为硬判据"
+    }
+  ],
+  "requiresProject": [],
+  "blindSpots": [
+    "仅按显式功能属性（选项数、即时性、可逆性）校验控件映射与五态覆盖，不替代真实用户可用性测试与视觉审美评审"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "阶段 4 前端开发流前置交互决策知识卡"
+  }
+}

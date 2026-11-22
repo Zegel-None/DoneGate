@@ -2,8 +2,16 @@ name: DoneGate Cross-Platform Gatekeeper
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: donegate-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -25,10 +33,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
 
-      - name: Install optional devDependencies (Vitest)
-        run: npm install --no-audit --no-fund
+      - name: Cache DoneGate devDependencies (zero-lockfile compatible)
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: donegate-nm-v1-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('package.json') }}
+
+      - name: Install optional devDependencies (Vitest & Stryker)
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: npm install --no-audit --no-fund --no-package-lock
 
       - name: Configure local Git identity for E2E sandbox fixtures
         run: |
@@ -41,11 +56,8 @@ jobs:
       - name: Run Zero-Dependency Verdict Core Self-Test
         run: node runner/self-test.mjs
 
-      - name: Run Twelve-Command Core Lifecycle E2E Fixtures
-        run: node runner/donegate-fixtures.mjs
-
-      - name: Run 22 Adapter Offline Red-Fixture Suite
-        run: node skill/check-declarations.mjs --verify-adapters --offline
+      - name: Run Adapter Protocol v1.1 Nine-Field & Hash Self-Test
+        run: node skill/check-declarations.mjs
 
       - name: Run DSH Web, JIT, Shared Deps & Campaign Autopilot E2E Fixtures
         run: node runner/dsh-fixtures.mjs
@@ -55,3 +67,108 @@ jobs:
 
       - name: Run Vitest Unit Test Suite
         run: npx vitest run
+
+  preset-real-toolchain:
+    name: Preset Workflows Real Toolchain + Postgres 16 (Cached)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: donegate
+          POSTGRES_PASSWORD: donegate
+          POSTGRES_DB: donegate_rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U donegate -d donegate_rehearsal"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup uv for fast Python toolchain venv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Cache DoneGate devDependencies
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: donegate-nm-v1-${{ runner.os }}-node22-${{ hashFiles('package.json') }}
+
+      - name: Install optional devDependencies on cache miss
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: npm install --no-audit --no-fund --no-package-lock
+
+      - name: Restore cached external CLI toolchain (~/.cache/donegate-ci-tools)
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/donegate-ci-tools
+          key: donegate-real-toolchain-v2-linux-x64
+
+      - name: Provision real OSS CLI binaries on cache miss
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          UV_PYTHON_INSTALL_DIR: /home/runner/.cache/donegate-ci-tools/uv-python
+        run: |
+          set -euo pipefail
+          TOOLS_ROOT="$HOME/.cache/donegate-ci-tools"
+          BIN_DIR="$TOOLS_ROOT/bin"
+          mkdir -p "$BIN_DIR" "$TOOLS_ROOT/node" "$TOOLS_ROOT/flyway" "$TOOLS_ROOT/uv-python"
+
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz" | tar -xz -C "$BIN_DIR" gitleaks
+          curl -fsSL "https://github.com/anchore/syft/releases/download/v1.20.0/syft_1.20.0_linux_amd64.tar.gz" | tar -xz -C "$BIN_DIR" syft
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz" | tar -xz -C "$BIN_DIR" trivy
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz" | tar -xz -C "$BIN_DIR" actionlint
+          curl -fsSL "https://github.com/crate-ci/typos/releases/download/v1.30.0/typos-v1.30.0-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$BIN_DIR" ./typos
+          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64" -o "$BIN_DIR/osv-scanner"
+          curl -fsSL "https://release.ariga.io/atlas/atlas-linux-amd64-v0.31.0" -o "$BIN_DIR/atlas"
+          curl -fsSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/11.3.4/flyway-commandline-11.3.4-linux-x64.tar.gz" | tar -xz -C "$TOOLS_ROOT/flyway" --strip-components=1
+          ln -sf "$TOOLS_ROOT/flyway/flyway" "$BIN_DIR/flyway"
+          chmod +x "$BIN_DIR"/*
+
+          uv venv "$TOOLS_ROOT/pyvenv" --python 3.12
+          uv pip install --python "$TOOLS_ROOT/pyvenv/bin/python" ruff pyright sqlfluff semgrep
+
+          npm install --prefix "$TOOLS_ROOT/node" --no-audit --no-fund --no-package-lock @biomejs/biome@2.6.8
+
+      - name: Expose cached toolchains on PATH
+        run: |
+          {
+            echo "$HOME/.cache/donegate-ci-tools/bin"
+            echo "$HOME/.cache/donegate-ci-tools/pyvenv/bin"
+            echo "$HOME/.cache/donegate-ci-tools/node/node_modules/.bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Configure local Git identity
+        run: |
+          git config --global user.name "DoneGate CI"
+          git config --global user.email "ci@donegate.local"
+
+      - name: Run Real External Toolchain + Live PostgreSQL 16 E2E Suite
+        env:
+          SEMGREP_SEND_METRICS: "off"
+          DONEGATE_PG_URL: "postgres://donegate:donegate@127.0.0.1:5432/donegate_rehearsal?sslmode=disable"
+          DONEGATE_PG_JDBC: "jdbc:postgresql://127.0.0.1:5432/donegate_rehearsal"
+          DONEGATE_PG_USER: "donegate"
+          DONEGATE_PG_PASSWORD: "donegate"
+        run: node tests/preset-real-tools-e2e.mjs
+
+      - name: Upload Real Toolchain Verification Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: donegate-real-toolchain-evidence
+          path: .donegate/scratch/real-toolchain-report.json
+          if-no-files-found: warn

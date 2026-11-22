@@ -1,0 +1,237 @@
+{
+  "id": "03-api-contract-and-fuzz",
+  "group": "预置全周期开发流",
+  "name": "03 · 阶段 3 · 后端契约先行、静态类型与属性 Fuzz 流",
+  "tip": "契约先行防接口幻觉：Spectral OpenAPI 规范审校 → Pyright 跨文件类型检查 → Ruff 快速 AST 护栏 → Schemathesis 自动生成畸形入参抓 500 崩溃（上限 4 轮回修）→ Hurl 多步业务断言。",
+  "deps": [
+    {
+      "id": "spectral",
+      "title": "Spectral OpenAPI/AsyncAPI 契约规则检查",
+      "repo": "stoplightio/spectral",
+      "version": "v6.14.2",
+      "kind": "npm",
+      "bin": "spectral",
+      "pkg": "@stoplight/spectral-cli"
+    },
+    {
+      "id": "pyright",
+      "title": "Pyright 跨文件静态类型检查",
+      "repo": "microsoft/pyright",
+      "version": "v1.1.389",
+      "kind": "npm",
+      "bin": "pyright",
+      "pkg": "pyright"
+    },
+    {
+      "id": "ruff",
+      "title": "Ruff Python AST 语法与未定义名拦截",
+      "repo": "astral-sh/ruff",
+      "version": "v0.8.4",
+      "kind": "pip",
+      "bin": "ruff",
+      "pkg": "ruff",
+      "installCmd": "pip install --target workflows/.deps/03-api-contract-and-fuzz/venv ruff==0.8.4"
+    },
+    {
+      "id": "schemathesis",
+      "title": "Schemathesis OpenAPI 属性模糊测试",
+      "repo": "schemathesis/schemathesis",
+      "version": "v3.39.5",
+      "kind": "pip",
+      "bin": "schemathesis",
+      "pkg": "schemathesis",
+      "installCmd": "pip install --target workflows/.deps/03-api-contract-and-fuzz/venv schemathesis==3.39.5"
+    },
+    {
+      "id": "hurl",
+      "title": "Hurl 纯文本链式 HTTP 场景回归",
+      "repo": "Orange-OpenSource/hurl",
+      "version": "v6.0.0",
+      "kind": "binary",
+      "bin": "hurl",
+      "installCmd": "下载 Hurl v6.0.0 可执行文件至 workflows/.deps/03-api-contract-and-fuzz/.bin/hurl"
+    }
+  ],
+  "groups": [
+    { "id": "grp-03-contract", "title": "OpenAPI 契约与反幻觉类型护栏", "x": 28, "y": 42, "w": 948, "h": 318, "color": "blue" },
+    { "id": "grp-03-fuzz", "title": "属性 Fuzz 500 猎杀与链式 HTTP 验收", "x": 1004, "y": 42, "w": 920, "h": 330, "color": "purple" }
+  ],
+  "nodes": [
+    {
+      "id": "api-spectral",
+      "tplId": "tpl-openspec",
+      "title": "Spectral OpenAPI 契约审查",
+      "tip": "在写接口逻辑前锁定请求入参、错误码枚举、分页信封与鉴权头定义",
+      "repoSlug": "stoplightio/spectral",
+      "repoUrl": "https://github.com/stoplightio/spectral",
+      "pinnedVersion": "v6.14.2",
+      "latestUpstream": "v6.14.3",
+      "requiresDep": true,
+      "bin": "spectral",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 48,
+      "y": 98,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_spec", "name": "openapi.yaml", "type": "SPEC" }],
+      "outputs": [
+        { "id": "out_rep", "name": "契约违规详情", "type": "TEXT" },
+        { "id": "out_sig", "name": "0-3 契约合规码", "type": "SIGNAL" }
+      ],
+      "slots": [
+        { "id": "sp_1", "label": "错误信封与鉴权声明完整", "wired": true, "boundOut": "out_sig" },
+        { "id": "sp_2", "label": "破坏性字段删改拦截", "wired": true, "boundOut": "out_rep" }
+      ]
+    },
+    {
+      "id": "api-pyright",
+      "tplId": "tpl-adp-pyright",
+      "title": "Pyright 跨文件类型对齐",
+      "tip": "拦截 AI 编造的跨模块属性、可空未判与 DTO 字段类型失配",
+      "repoSlug": "microsoft/pyright",
+      "repoUrl": "https://github.com/microsoft/pyright",
+      "pinnedVersion": "v1.1.389",
+      "latestUpstream": "v1.1.390",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 364,
+      "y": 98,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "后端服务源码", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 类型零错码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "类型失配定位", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "py_1", "label": "类型错误数清零", "wired": true, "boundOut": "out_sig" },
+        { "id": "py_2", "label": "属性幻觉行号清单", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "api-ruff",
+      "tplId": "tpl-adp-ruff",
+      "title": "Ruff 秒级 AST 护栏",
+      "tip": "拦截 F821 未定义名、吞异常裸 except 与未使用导入",
+      "repoSlug": "astral-sh/ruff",
+      "repoUrl": "https://github.com/astral-sh/ruff",
+      "pinnedVersion": "v0.8.2",
+      "latestUpstream": "v0.8.4",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 680,
+      "y": 98,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "类型通过源码", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 Lint 状态码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "AST 违规明细", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "rf_1", "label": "F821/E999 致命错误清零", "wired": true, "boundOut": "out_sig" },
+        { "id": "rf_2", "label": "可疑代码结构报告", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "api-schemathesis",
+      "tplId": "tpl-adp-schemathesis",
+      "title": "Schemathesis 属性模糊测试",
+      "tip": "按 OpenAPI Schema 自动构造空值、超长字符串、越界数值与乱序状态，捕获未声明 5xx 与响应失配",
+      "repoSlug": "schemathesis/schemathesis",
+      "repoUrl": "https://github.com/schemathesis/schemathesis",
+      "pinnedVersion": "v3.39.5",
+      "latestUpstream": "v4.0.1",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1028,
+      "y": 98,
+      "w": 272,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "运行中接口与契约", "type": "ARTIFACT" }],
+      "outputs": [
+        { "id": "out_sig", "name": "0-3 Fuzz 验收码", "type": "SIGNAL" },
+        { "id": "out_obs", "name": "最小复现 curl 样本", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "sc_1", "label": "零 500 崩溃与 Schema 一致", "wired": true, "boundOut": "out_sig" },
+        { "id": "sc_2", "label": "自动缩减最小复现反例", "wired": true, "boundOut": "out_obs" }
+      ]
+    },
+    {
+      "id": "api-router",
+      "tplId": "tpl-router-rule",
+      "title": "Fuzz 反例回修路由器",
+      "tip": "0 全部边界反例过关进入链式联调；1 捕获 500/契约失配打回修复（上限 4 轮）",
+      "repoSlug": "",
+      "repoUrl": "",
+      "pinnedVersion": "",
+      "latestUpstream": "",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1344,
+      "y": 98,
+      "w": 256,
+      "h": null,
+      "inputs": [{ "id": "in_sig", "name": "0-3 Fuzz 状态码", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_0", "name": "0 过关进入链式验收", "type": "SIGNAL" },
+        { "id": "out_1", "name": "1 携反例回流修复", "type": "TEXT" },
+        { "id": "out_3", "name": "2/3 服务未启动降级", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "s_0", "label": "0 号口放行 Hurl 场景流", "wired": true, "boundOut": "out_0" },
+        { "id": "s_1", "label": "1 号口回流重修 (maxLoops=4)", "wired": true, "boundOut": "out_1" },
+        { "id": "s_3", "label": "2/3 号口提示启动被测服务", "wired": true, "boundOut": "out_3" }
+      ]
+    },
+    {
+      "id": "api-hurl",
+      "tplId": "tpl-anti-slop",
+      "title": "Hurl 多步状态流转断言",
+      "tip": "补齐单端点 Fuzz 的盲区：验证登录取 Token -> 创建资源 -> 幂等重试 -> 越权 403 完整业务链路",
+      "repoSlug": "Orange-OpenSource/hurl",
+      "repoUrl": "https://github.com/Orange-OpenSource/hurl",
+      "pinnedVersion": "v6.0.0",
+      "latestUpstream": "v6.0.0",
+      "requiresDep": true,
+      "bin": "hurl",
+      "isBlank": false,
+      "isHumanGate": false,
+      "bypassed": false,
+      "collapsed": false,
+      "x": 1636,
+      "y": 98,
+      "w": 264,
+      "h": null,
+      "inputs": [{ "id": "in_src", "name": "Fuzz 放行信号", "type": "SIGNAL" }],
+      "outputs": [
+        { "id": "out_art", "name": "HTTP 链路证据包", "type": "ARTIFACT" },
+        { "id": "out_txt", "name": "断言失败详情", "type": "TEXT" }
+      ],
+      "slots": [
+        { "id": "hu_1", "label": "鉴权/幂等/越权链路通过", "wired": true, "boundOut": "out_art" },
+        { "id": "hu_2", "label": "响应体 JSONPath 证据", "wired": true, "boundOut": "out_txt" }
+      ]
+    }
+  ],
+  "links": [
+    { "id": "api-lk-1", "fromNode": "api-spectral", "fromSlot": "out_sig", "toNode": "api-pyright", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "api-lk-2", "fromNode": "api-pyright", "fromSlot": "out_sig", "toNode": "api-ruff", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "api-lk-3", "fromNode": "api-ruff", "fromSlot": "out_sig", "toNode": "api-schemathesis", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "api-lk-4", "fromNode": "api-schemathesis", "fromSlot": "out_sig", "toNode": "api-router", "toSlot": "in_sig", "type": "SIGNAL" },
+    { "id": "api-lk-5", "fromNode": "api-router", "fromSlot": "out_0", "toNode": "api-hurl", "toSlot": "in_src", "type": "SIGNAL" },
+    { "id": "api-lk-loop", "fromNode": "api-router", "fromSlot": "out_1", "toNode": "api-pyright", "toSlot": "in_src", "type": "TEXT", "maxLoops": 4 }
+  ]
+}

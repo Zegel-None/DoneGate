@@ -96,10 +96,8 @@ function resolveExecutable(spec, fallbackCandidates = []) {
   if (w.status === 0 && (w.stdout || '').trim()) {
     const lines = w.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     if (process.platform === 'win32') {
-      const exe = lines.find((l) => /\.exe$/i.test(l));
-      if (exe) return { cmd: exe, prefixArgs: [], isWinBatch: false };
-      const bat = lines.find((l) => /\.(cmd|bat)$/i.test(l));
-      if (bat) return { cmd: bat, prefixArgs: [], isWinBatch: true };
+      const winExec = lines.find((l) => /\.(exe|cmd|bat|com)$/i.test(l));
+      if (winExec) return { cmd: winExec, prefixArgs: [], isWinBatch: /\.(cmd|bat)$/i.test(winExec) };
       const firstExt = lines.find((l) => /\.[A-Za-z0-9]+$/.test(l));
       if (firstExt) return { cmd: firstExt, prefixArgs: [], isWinBatch: false };
     } else {

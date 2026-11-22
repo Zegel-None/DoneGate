@@ -517,17 +517,19 @@ export async function runAllDshChecks() {
       const sharedBin = join(tmp, "workflows", ".deps", "_shared", ".bin");
       mkdirSync(sharedBin, { recursive: true });
       const mockLeakTrigger = join(tmp, "LEAK_MODE.flag");
+      const mockGitleaksImpl = join(sharedBin, "mock-gitleaks-impl.cjs");
+      writeFileSync(mockGitleaksImpl, `const fs = require("fs");
+const a = process.argv.slice(2);
+if (a[0] === "version") { console.log("8.30.1"); process.exit(0); }
+const i = a.indexOf("--report-path");
+const leak = fs.existsSync(${JSON.stringify(mockLeakTrigger)});
+fs.writeFileSync(a[i + 1], JSON.stringify(leak ? [{ RuleID: "generic-api-key", File: "src/api/rate.mjs", StartLine: 1 }] : []));
+`, "utf8");
       const mockGitleaks = join(sharedBin, process.platform === "win32" ? "gitleaks.cmd" : "gitleaks");
       if (process.platform === "win32") {
-        writeFileSync(mockGitleaks, `@echo off
-if "%1"=="version" (echo 8.30.1 & exit /b 0)
-node -e "const fs=require('fs');const idx=process.argv.indexOf('--report-path');const rpt=process.argv[idx+1];const leak=fs.existsSync(${JSON.stringify(mockLeakTrigger)});fs.writeFileSync(rpt, JSON.stringify(leak?[{RuleID:'generic-api-key',File:'src/api/rate.mjs',StartLine:1}]:[]));" -- %*
-`, "utf8");
+        writeFileSync(mockGitleaks, `@echo off\r\n"${process.execPath}" "%~dp0mock-gitleaks-impl.cjs" %*\r\n`, "utf8");
       } else {
-        writeFileSync(mockGitleaks, `#!/usr/bin/env sh
-if [ "$1" = "version" ]; then echo "8.30.1"; exit 0; fi
-exec "${process.execPath}" -e 'const fs=require("fs");const a=process.argv.slice(1);const i=a.indexOf("--report-path");const leak=fs.existsSync(${JSON.stringify(mockLeakTrigger)});fs.writeFileSync(a[i+1], JSON.stringify(leak?[{RuleID:"generic-api-key",File:"src/api/rate.mjs",StartLine:1}]:[]));' -- "$@"
-`, { mode: 0o755 });
+        writeFileSync(mockGitleaks, `#!/usr/bin/env sh\nexec "${process.execPath}" "${mockGitleaksImpl}" "$@"\n`, { mode: 0o755 });
       }
       const apiNode = { id: "comp-api", title: "汇率鉴权接口", scopePaths: ["src/api/"], modules: [{ name: "rate", role: "接口", path: "src/api/rate.mjs" }] };
       const apiAssign = assignComponentWorkflow(tmp, apiNode, { actorRole: "super-agent", preferredMacroId: "pack-api-guard" });
