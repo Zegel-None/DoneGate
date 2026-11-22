@@ -1,4 +1,4 @@
-// skill/hash.mjs 的 vitest 测试：给变异测试（Stryker）提供完备断言覆盖。
+// skill/hash.mjs 的 vitest 测试：给变异测试（Stryker）提供 100% 无死角断言覆盖。
 import { describe, it, expect } from 'vitest';
 import { sha256, sha256Short, frozenHashOf, sortKeysDeep, materialFingerprintOf } from '../skill/hash.mjs';
 
@@ -93,17 +93,24 @@ describe('materialFingerprintOf：D01 统一材料指纹归一化', () => {
     expect(f1).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('缺字段或空输入安全兜底为确定性 64 位小写 hex', () => {
+  it('缺字段或空输入安全兜底为确定性 64 位小写 hex（含空路径真值与非行首 sha256: 锚点边界）', () => {
     const emptyArr = materialFingerprintOf([]);
     const emptyNull = materialFingerprintOf(null);
     const emptyUndef = materialFingerprintOf(undefined);
     expect(emptyArr).toBe(emptyNull);
     expect(emptyArr).toBe(emptyUndef);
     expect(materialFingerprintOf([null, { path: 'x.mjs' }])).not.toBe(emptyArr);
-    expect(materialFingerprintOf([{ sha256: h1 }])).toBe(materialFingerprintOf([{ path: '', sha256: h1 }]));
+    // 精确锁死缺 path 时的空串字面量兜底（杀死 path || '' -> 非空串变异体 #31）
+    expect(materialFingerprintOf([{ sha256: h1 }])).toBe(sha256(JSON.stringify([{ path: '', sha256: h1 }])));
+    expect(materialFingerprintOf([{ sha256: h1 }])).toBe(materialFingerprintOf({ '': h1 }));
     expect(materialFingerprintOf({ 'x.mjs': null })).toBe(materialFingerprintOf([{ path: 'x.mjs', sha256: '' }]));
     expect(materialFingerprintOf([{ path: 'x.mjs', sha256: 'sha256:sha256:' + h1 }])).not.toBe(materialFingerprintOf([{ path: 'x.mjs', sha256: h1 }]));
     expect(materialFingerprintOf({ 'x.mjs': 'sha256:sha256:' + h1 })).not.toBe(materialFingerprintOf({ 'x.mjs': h1 }));
+    // 精确锁死 /^sha256:/i 行首锚点：仅剥离字符串开头的 sha256:，不误删中间子串（杀死去 ^ 变异体 #42 与 #55）
+    const midTagged = 'prefix-sha256:' + h1;
+    const expectedMidFp = sha256(JSON.stringify([{ path: 'x.mjs', sha256: midTagged }]));
+    expect(materialFingerprintOf([{ path: 'x.mjs', sha256: midTagged }])).toBe(expectedMidFp);
+    expect(materialFingerprintOf({ 'x.mjs': midTagged })).toBe(expectedMidFp);
   });
 
   it('路径或哈希任一变化，指纹必变', () => {
