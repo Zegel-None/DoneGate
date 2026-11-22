@@ -1,4 +1,4 @@
-// Agent Native UI 看板前端控制器：编辑/测试双模切换、多套美学方案 0ms 秒切与锁定、类 Puck 拖拽积木、语音点选改 UI 与假动作转真后端接线台
+// Agent Native UI 看板前端控制器：编辑/测试双模切换、多套美学方案 0ms 秒切与锁定、类 Puck 拖拽布局块、语音点选改 UI 与假动作转真后端接线台
 import { buildInjectedUiBridgeScript } from '../dsh/ui-board-bridge.mjs';
 import { AESTHETIC_PROPOSALS } from '../dsh/ui-aesthetics.mjs';
 
@@ -241,7 +241,7 @@ function renderUiBoardDrawer(headEl, bodyEl, footEl) {
     proposalsHtml,
     '</div>',
     '<div class="flex flex-col gap-1 pt-2 border-t" style="border-color:var(--border-subtle);">',
-    '  <div class="px-1 text-[11px] font-semibold" style="color:var(--text-secondary);">2. 组件级积木添加与拖拽 (JSON)</div>',
+    '  <div class="px-1 text-[11px] font-semibold" style="color:var(--text-secondary);">2. 组件级布局块添加与拖拽 (JSON)</div>',
     blocksHtml,
     '</div>',
     '<div class="flex flex-col gap-1 pt-2 border-t" style="border-color:var(--border-subtle);">',

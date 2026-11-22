@@ -1,7 +1,7 @@
-// 砂浆适配器 · typos 源码标识符与配置键拼写幻觉观测（Mortar Protocol v1.1 · 0/2 归一化，委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · typos 源码标识符与配置键拼写幻觉观测（Adapter Protocol v1.1 · 0/2 归一化，委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'typos',
   defaultRole: 'soft',
   degradedTo: '人工审查新增标识符、配置键名与错误提示是否存在拼写滑移',

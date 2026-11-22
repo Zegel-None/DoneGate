@@ -40,4 +40,4 @@
 | `ui-views.mjs` / `ui-shell.mjs` | `buildViewsScript` / `buildShellScript` | 四标签活体全景体检弹窗、实时 SSE 水合刷新与单流/全项目拓扑过夜挂机入口 |
 | `wb-dsh-bridge.mjs` / `wb-dsh-shell.mjs` | `buildWbDshBridge` / `buildWbDshShell` | DSH Web `postMessage` 引用胶囊桥接与卡包抽卡式零缝隙主对话复刻抽屉 |
 | `wb-uiboard.mjs` | `buildWbUiBoardScript` | Agent Native UI 看板控制器：编辑/测试双模、美学方案锁定与真后端接线台 |
-| `wb-jit-workflow.mjs` | `buildWbJitWorkflowScript` | 预置宏打底 + 节点级即时变招（JIT）控制器：底座只增不减锁审批与一键沉淀为宏 |
+| `wb-jit-workflow.mjs` | `buildWbJitWorkflowScript` | 预置宏打底 + 节点级即时派生（JIT）控制器：底座只增不减锁审批与一键沉淀为宏 |

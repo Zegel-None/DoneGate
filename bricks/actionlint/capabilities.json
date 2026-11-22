@@ -1,5 +1,5 @@
 {
-  "说明": "砖头能力清单：actionlint GitHub Actions 工作流语法、表达式与 Action 参数静态检查。",
+  "说明": "工具能力清单：actionlint GitHub Actions 工作流语法、表达式与 Action 参数静态检查。",
   "tool": "actionlint",
   "registryId": "actionlint@stage4",
   "role": "hard",

@@ -1,9 +1,9 @@
-// 砂浆适配器 · OpenSpec 规格校验观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · OpenSpec 规格校验观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'openspec',
   defaultRole: 'soft',
   degradedTo: '人工按同一格式逐份核对规格文件格式与约束条文',

@@ -1,11 +1,11 @@
-// 砂浆适配器 · Stryker 有牙观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · Stryker 有牙观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
 const STATES = ['Killed', 'Survived', 'Timeout', 'NoCoverage', 'CompileError', 'RuntimeError', 'Ignored', 'Pending'];
 
-runMortarAdapter({
+runAdapter({
   tool: 'stryker',
   defaultRole: 'hard',
   requireRegistryId: true,

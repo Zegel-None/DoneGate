@@ -1,4 +1,4 @@
-// 开发流积木卡、项目看板模块卡、自适应组合框 (Group Frame) 与悬浮工具条渲染
+// 开发流节点卡、项目看板模块卡、自适应组合框 (Group Frame) 与悬浮工具条渲染
 export function buildWbRenderCards() {
   return [
   "    // 9. 卡片渲染（支持右下角任意拉伸尺寸 w/h + Subgraph 子节点样式 + 开源超链接与版本锁）",
@@ -116,7 +116,7 @@ export function buildWbRenderCards() {
   "      }).join('');",
   "",
   "      const slotsCapKey = `ws-cap:${node.id}`;",
-  "      const slotsCapText = node.slotsCaption || `转接器已适配功能 (${wiredCount}/${slots.length})`;",
+  "      const slotsCapText = node.slotsCaption || `适配器已适配功能 (${wiredCount}/${slots.length})`;",
   "      const blankHintKey = `ws-hint:${node.id}`;",
   "      const blankHintText = node.blankHint || '选中卡片后在右侧栏让子代理接入组件';",
   "      const editingTitle = state.editingCardTitleId === node.id;",
@@ -221,7 +221,7 @@ export function buildWbRenderCards() {
   "            const dotCls = tel ? (tel.state === 'running' ? 'is-running' : (tel.state === 'cached' ? 'is-cached' : (tel.state === 'pass' ? 'is-pass' : 'is-fail'))) : (missDep ? 'is-warn' : 'is-idle');",
   "            const stTxt = tel ? (tel.state === 'running' ? '运行中…' : (tel.state === 'cached' ? '⚡ 缓存免跑' : (tel.exitCode === 0 ? '0 过关' : `${tel.exitCode} 拦截`))) : (missDep ? '3 缺依赖' : '就绪待跑');",
   "            const durTxt = tel && typeof tel.durationMs === 'number' && tel.state !== 'running' ? ` · ${tel.durationMs}ms` : '';",
-  "            return `<div class=\"dg-card-telemetry\"><span class=\"dg-tel-badge\" style=\"color: var(--text-secondary);\"><span class=\"dg-breath-dot ${dotCls}\"></span><span>${esc(stTxt + durTxt)}</span></span><button type=\"button\" class=\"text-[10px] px-1.5 py-0.2 rounded hover:opacity-85\" style=\"background: var(--surface-soft); color: var(--primary);\" data-action=\"preview-node-obs\" data-node=\"${esc(node.id)}\" data-tip=\"在右栏直接查看该积木最新 observation.json 或门禁输出\">👁 观测</button></div>`;",
+  "            return `<div class=\"dg-card-telemetry\"><span class=\"dg-tel-badge\" style=\"color: var(--text-secondary);\"><span class=\"dg-breath-dot ${dotCls}\"></span><span>${esc(stTxt + durTxt)}</span></span><button type=\"button\" class=\"text-[10px] px-1.5 py-0.2 rounded hover:opacity-85\" style=\"background: var(--surface-soft); color: var(--primary);\" data-action=\"preview-node-obs\" data-node=\"${esc(node.id)}\" data-tip=\"在右栏直接查看该节点最新 observation.json 或门禁输出\">👁 观测</button></div>`;",
   "          })() : ''}",
   "",
   "          <div class=\"card-ports-zone px-3 py-2 border-t grid grid-cols-2 gap-2 items-center\" style=\"border-color: var(--border-subtle);\">",
@@ -631,7 +631,7 @@ export function buildWbRenderCards() {
   "            <span class=\"tb-sep\"></span>",
   "          ` : ''}",
   "          ${singleSubRepo ? `<button type=\"button\" class=\"tb-action\" style=\"color: var(--primary); font-weight: 600;\" data-action=\"drill-subrepo\" data-repo=\"${esc(singleSubRepo)}\">下钻看子仓</button><span class=\"tb-sep\"></span>` : ''}",
-  "          ${state.page === 'sandbox' && picked.length === 1 && !picked[0].isSubRepoRef ? `<button type=\"button\" class=\"tb-action\" style=\"font-weight: 600;\" data-jit-open=\"${esc(picked[0].id)}\" data-tip=\"查看该组件当前挂载连招，或按新需求即时派生变招\">⚡ 连招变招</button><span class=\"tb-sep\"></span>` : ''}",
+  "          ${state.page === 'sandbox' && picked.length === 1 && !picked[0].isSubRepoRef ? `<button type=\"button\" class=\"tb-action\" style=\"font-weight: 600;\" data-jit-open=\"${esc(picked[0].id)}\" data-tip=\"查看该组件当前挂载开发流，或按新需求即时节点派生\">⚡ 开发流派生</button><span class=\"tb-sep\"></span>` : ''}",
   "          <button type=\"button\" class=\"tb-action ${allBypassed ? 'is-active' : ''}\" data-tb-act=\"bypass\" data-tip=\"${allBypassed ? '当前已跳过（上游输入直通下游），再次点击恢复执行 (Ctrl+B)' : '跳过选中节点：上游输入直通下游 (Ctrl+B)'}\">跳过</button>",
   "          <button type=\"button\" class=\"tb-action\" data-tb-act=\"collapse\" data-tip=\"折叠或展开节点面板 (Alt+C)\">折叠</button>",
   "          <button type=\"button\" class=\"tb-action\" data-tb-act=\"copy-node\" data-tip=\"复制节点 (Ctrl+C)\">复制</button>",

@@ -1,9 +1,9 @@
-// 砂浆适配器 · osv-scanner 依赖漏洞观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · osv-scanner 依赖漏洞观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'osv-scanner',
   defaultRole: 'hard',
   degradedTo: '人工按同一格式核查 package-lock.json 新增依赖与安全公告',

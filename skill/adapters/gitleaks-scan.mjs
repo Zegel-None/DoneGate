@@ -1,9 +1,9 @@
-// 砂浆适配器 · gitleaks 密钥泄漏观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · gitleaks 密钥泄漏观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'gitleaks',
   defaultRole: 'hard',
   versionArgs: ['version'],

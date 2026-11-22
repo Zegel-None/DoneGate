@@ -1,4 +1,4 @@
-// 完结门原子积木真实执行桥：连接 JIT/预置宏节点与 22 个砂浆适配器及 check-brick-observations 断言器
+// 完结门原子节点真实执行桥：连接 JIT/预置宏节点与 22 个适配器及 check-brick-observations 断言器
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -78,7 +78,7 @@ export function buildBrickNodeExecSpec(tplId, tpl = {}, projectRoot = null) {
     const entry = regMap.get(tool);
     if (entry && entry.entry) {
       return {
-        kind: 'mortar_brick',
+        kind: 'adapter_node',
         tool,
         registryId: entry.id,
         entryRel: entry.entry,
@@ -139,7 +139,7 @@ export function executeBrickGateNode(projectRoot, workCwd, node, wfEnv) {
     };
   }
 
-  if (spec.kind === 'mortar_brick' && spec.entryRel) {
+  if (spec.kind === 'adapter_node' && spec.entryRel) {
     const adapterAbs = existsSync(join(root, spec.entryRel)) ? join(root, spec.entryRel) : join(DG_ROOT, spec.entryRel);
     const gitSt = spawnSync('git', ['-C', workCwd, 'status', '--porcelain'], { encoding: 'utf8', env, windowsHide: true });
     const isCleanGit = gitSt.status === 0 && gitSt.stdout.trim() === '';

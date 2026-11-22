@@ -1,4 +1,4 @@
-// 正式采证入口（Mortar Protocol v1.1 §4.5 & §7.2）：
+// 正式采证入口（Adapter Protocol v1.1 §4.5 & §7.2）：
 // 同一次运行内：检查干净工作区 → 清理旧产物 → 调用适配器 → 核侧单进程复算校验声明。
 // 用法：node runner/run-stage.mjs --registry-id <id> [--root <dir>] [--adapter <path>] [--out <claim.json>] [...透传给适配器]
 // 退出码（§八）：0 合法声明已落盘 / 2 协议事故（含拦截禁词） / 3 脏树或上游故障（原样透传，绝不吞码）。

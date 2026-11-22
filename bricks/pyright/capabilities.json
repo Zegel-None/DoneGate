@@ -1,5 +1,5 @@
 {
-  "说明": "砖头能力清单：Pyright 跨文件静态类型、属性与调用签名检查。",
+  "说明": "工具能力清单：Pyright 跨文件静态类型、属性与调用签名检查。",
   "tool": "pyright",
   "registryId": "pyright@stage4",
   "role": "soft",

@@ -1,7 +1,7 @@
-// 砂浆适配器 · dependency-cruiser 依赖方向与环路观测（Mortar Protocol v1.1 · 0 模块退 3，委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · dependency-cruiser 依赖方向与环路观测（Adapter Protocol v1.1 · 0 模块退 3，委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'depcruise',
   defaultRole: 'hard',
   degradedTo: '人工按同一格式静态核查模块 import 方向与循环依赖',

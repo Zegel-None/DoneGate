@@ -1,4 +1,4 @@
-// 开发流类 ComfyUI 依赖探针、跨连招共享底座池 (workflows/.deps/_shared/) 与按需补齐工单生成器
+// 开发流类 ComfyUI 依赖探针、跨开发流共享底座池 (workflows/.deps/_shared/) 与按需补齐工单生成器
 import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -130,7 +130,7 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
 function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missing) {
   const name = (pack && pack.name) || (pack && pack.id) || '当前开发流';
   if (!missing.length) return `开发流「${name}」所需的外部项目与环境依赖已全部就位（共享池：${sharedRelDir}，当前包：${relDepsDir}）。`;
-  const lines = [`请为开发流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，优先装入跨连招共享底座池 \`${sharedRelDir}/\`（一次安装供所有预置宏与节点级 JIT 派生连招复用）：`];
+  const lines = [`请为开发流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，优先装入跨开发流共享底座池 \`${sharedRelDir}/\`（一次安装供所有预置宏与节点级 JIT 派生开发流复用）：`];
   for (const m of missing) {
     const ver = m.version ? ` (${m.version})` : '';
     const src = m.repoUrl ? ` · ${m.repoUrl}` : '';

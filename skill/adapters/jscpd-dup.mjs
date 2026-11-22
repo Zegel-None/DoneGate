@@ -1,9 +1,9 @@
-// 砂浆适配器 · jscpd 重复率与克隆对观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · jscpd 重复率与克隆对观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'jscpd',
   defaultRole: 'soft',
   degradedTo: '人工按同一格式手写跨文件重复代码清单',

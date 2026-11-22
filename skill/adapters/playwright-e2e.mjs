@@ -1,9 +1,9 @@
-// 砂浆适配器 · Playwright Web 真实浏览器端到端观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · Playwright Web 真实浏览器端到端观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'playwright',
   defaultRole: 'hard',
   degradedTo: '人工在桌面与移动端浏览器逐页点测全部交互路径与控制台报错',

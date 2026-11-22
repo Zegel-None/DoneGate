@@ -1,6 +1,6 @@
 {
   "protocolVersion": "1.1",
-  "说明": "适配器注册清单。每条冻结 id / tool / stage / checkedBy / protocolVersion / testedToolRange / blindSpots，见 skill/17-砂浆适配器协议.md §一、§二。适配器只许按 --registry-id 原样抄录 stage 与 checkedBy，无权挑选或覆盖。",
+  "说明": "适配器注册表。每条冻结 id / tool / stage / checkedBy / protocolVersion / testedToolRange / blindSpots，见 skill/17-适配器协议.md §一、§二。适配器只许按 --registry-id 原样抄录 stage 与 checkedBy，无权挑选或覆盖。",
   "adapters": [
     {
       "id": "stryker@stage4",

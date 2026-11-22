@@ -1,9 +1,9 @@
-// 砂浆适配器 · Maestro 移动端模拟器 UI 流程观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · Maestro 移动端模拟器 UI 流程观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'maestro',
   defaultRole: 'hard',
   env: { MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true' },

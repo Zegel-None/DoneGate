@@ -417,7 +417,7 @@ export function auditCommitDiff(projectRoot, opts = {}) {
       if (isConcreteAdapter && existsSync(absFile)) {
         const adpLines = readFileSync(absFile, 'utf8').split(/\r?\n/).length;
         if (adpLines > 90) {
-          fails.push(`C6 具体适配器行数超限 (${p})：当前 ${adpLines} 行 > 上限 90 行（请复用 ./_shared.mjs 的 runMortarAdapter）`);
+          fails.push(`C6 具体适配器行数超限 (${p})：当前 ${adpLines} 行 > 上限 90 行（请复用 ./_shared.mjs 的 runAdapter）`);
         }
       }
       for (const line of f.added) {

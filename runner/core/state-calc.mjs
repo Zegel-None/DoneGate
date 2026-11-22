@@ -274,7 +274,7 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
     }
   }
 
-  // #10 汇总砖头技术栈分组统计（core vs 扩展生态旁注砖）
+  // #10 汇总工具技术栈分组统计（core vs 扩展生态旁注砖）
   const brickEcosystems = {};
   const lRes = readJsonStrict(join(projectRoot, 'ledger.json'));
   if (lRes.ok && Array.isArray(lRes.value?.bricks)) {

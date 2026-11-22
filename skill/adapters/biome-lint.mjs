@@ -1,7 +1,7 @@
-// 砂浆适配器 · Biome 静态检查观测（Mortar Protocol v1.1 · 遵守 .gitignore 排除生成物，委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · Biome 静态检查观测（Adapter Protocol v1.1 · 遵守 .gitignore 排除生成物，委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'biome',
   defaultRole: 'soft',
   degradedTo: '人工读 diff 并对照 Biome 规则文档逐条确认可疑写法',

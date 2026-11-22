@@ -44,7 +44,7 @@ jobs:
       - name: Run Twelve-Command Core Lifecycle E2E Fixtures
         run: node runner/donegate-fixtures.mjs
 
-      - name: Run 22 Mortar Adapter Offline Red-Fixture Suite
+      - name: Run 22 Adapter Offline Red-Fixture Suite
         run: node skill/check-declarations.mjs --verify-adapters --offline
 
       - name: Run DSH Web, JIT, Shared Deps & Campaign Autopilot E2E Fixtures

@@ -198,7 +198,7 @@ export async function runAllDshChecks() {
       mkdirSync(workRoot, { recursive: true });
       const runRes = await executeDeterministicWorkflowRun(workRoot, { ticketId: 'tkt-vm-1', targetUri: 'dg://node/g1', headline: '确定性门禁通过' }, {
         id: 'wf-ok', name: '门禁直通验证流',
-        nodes: [{ id: 'g1', title: '确定性门禁核验', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }],
+        nodes: [{ id: 'g1', title: '确定性门禁核验', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }],
         links: []
       });
       assert.equal(runRes.ok, true);
@@ -215,7 +215,7 @@ export async function runAllDshChecks() {
       const pack = {
         id: 'stage-sec-demo', name: '供应链漏洞核验流',
         deps: [{ id: 'mock-sec-cli', title: 'MockSec 开源扫描器', repo: 'acme/mock-sec-cli', version: 'v1.2.0', kind: 'binary', bin: 'mock-sec-cli-never-installed', allowHostEnv: false }],
-        nodes: [{ id: 'n-sec', title: 'MockSec 扫描卡', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'if (!process.env.DG_WORKFLOW_DEPS_DIR) process.exit(2); process.exit(0);'] } }],
+        nodes: [{ id: 'n-sec', title: 'MockSec 扫描卡', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'if (!process.env.DG_WORKFLOW_DEPS_DIR) process.exit(2); process.exit(0);'] } }],
         links: []
       };
       const blocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-1' }, pack);
@@ -263,10 +263,10 @@ export async function runAllDshChecks() {
         nodes: [
           {
             id: 's1', title: '空库迁移演练',
-            exec: { kind: 'mortar_gate', nodeArgs: ['-e', `const fs=require("fs");const n=Number(fs.readFileSync(${JSON.stringify(counterFile)},"utf8"))+1;fs.writeFileSync(${JSON.stringify(counterFile)},String(n));process.exit(0);`] }
+            exec: { kind: 'adapter_gate', nodeArgs: ['-e', `const fs=require("fs");const n=Number(fs.readFileSync(${JSON.stringify(counterFile)},"utf8"))+1;fs.writeFileSync(${JSON.stringify(counterFile)},String(n));process.exit(0);`] }
           },
           { id: 's2-gate', tplId: 'tpl-human-gate', isHumanGate: true, title: '不可逆迁移上线闸门', tip: '确认备份无误后放行' },
-          { id: 's3', title: '对账校验收尾', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }
+          { id: 's3', title: '对账校验收尾', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }
         ],
         links: [
           { id: 'l1', fromNode: 's1', fromSlot: 'out', toNode: 's2-gate', toSlot: 'in' },
@@ -290,7 +290,7 @@ export async function runAllDshChecks() {
 
       const loopPack = {
         id: 'pack-loop-burn', name: '死循环熔断测试流',
-        nodes: [{ id: 'bad1', title: '恒败单测', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(1)'] } }],
+        nodes: [{ id: 'bad1', title: '恒败单测', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(1)'] } }],
         links: [{ id: 'self-lk', fromNode: 'bad1', fromSlot: 'out', toNode: 'bad1', toSlot: 'in', maxLoops: 2 }]
       };
       const trippedLoop = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-loop' }, loopPack);
@@ -312,7 +312,7 @@ export async function runAllDshChecks() {
 
       const scopePack = {
         id: 'pack-scope', name: '越界写拦截测试流',
-        nodes: [{ id: 'rogue', title: '偷改禁区文件', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'require("fs").writeFileSync("secret/prod.env","KEY=2\\n");process.exit(0);'] } }],
+        nodes: [{ id: 'rogue', title: '偷改禁区文件', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'require("fs").writeFileSync("secret/prod.env","KEY=2\\n");process.exit(0);'] } }],
         links: []
       };
       const trippedScope = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-scope', mandate: { allowedWriteScopes: ['src/'] } }, scopePack);
@@ -321,7 +321,7 @@ export async function runAllDshChecks() {
       assert.equal(trippedScope.code, 'WRITE_SCOPE_VIOLATION');
       assert.equal(trippedScope.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
 
-      const trippedDirty = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-dirty' }, { id: 'p-clean', name: '净树检查流', nodes: [{ id: 'c1', title: '探针', exec: { kind: 'mortar_gate', nodeArgs: ['-e', 'process.exit(0)'] } }], links: [] }, { requireCleanGit: true });
+      const trippedDirty = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-dirty' }, { id: 'p-clean', name: '净树检查流', nodes: [{ id: 'c1', title: '探针', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }], links: [] }, { requireCleanGit: true });
       assert.equal(trippedDirty.ok, false);
       assert.equal(trippedDirty.code, 'DIRTY_WORKTREE_FAULT');
       assert.equal(trippedDirty.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
@@ -348,7 +348,7 @@ export async function runAllDshChecks() {
         id: "pack-wt-fail", name: "沙箱脏改熔断流",
         nodes: [{
           id: "dirty-fail", title: "改坏源码但测试不过",
-          exec: { kind: "mortar_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"BROKEN_NIGHT_CODE\\n\"); process.exit(1);"] }
+          exec: { kind: "adapter_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"BROKEN_NIGHT_CODE\\n\"); process.exit(1);"] }
         }],
         links: [{ id: "lk-f", fromNode: "dirty-fail", fromSlot: "out", toNode: "dirty-fail", toSlot: "in", maxLoops: 1 }]
       };
@@ -364,7 +364,7 @@ export async function runAllDshChecks() {
         id: "pack-wt-ok", name: "沙箱全绿合入流",
         nodes: [{
           id: "ok-edit", title: "修复并通过验收",
-          exec: { kind: "mortar_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"export const val = 42;\\n\"); process.exit(0);"] }
+          exec: { kind: "adapter_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"export const val = 42;\\n\"); process.exit(0);"] }
         }],
         links: []
       };
@@ -379,7 +379,7 @@ export async function runAllDshChecks() {
         id: "pack-fp-cache", name: "指纹免跑验证流",
         nodes: [{
           id: "fp-node", title: "昂贵静态扫描", inputs: ["src/"],
-          exec: { kind: "mortar_gate", nodeArgs: ["-e", `const fs=require("fs"),p=${JSON.stringify(markerPath)};fs.writeFileSync(p,String(Number(fs.existsSync(p)?fs.readFileSync(p,"utf8"):0)+1));process.exit(0);`] }
+          exec: { kind: "adapter_gate", nodeArgs: ["-e", `const fs=require("fs"),p=${JSON.stringify(markerPath)};fs.writeFileSync(p,String(Number(fs.existsSync(p)?fs.readFileSync(p,"utf8"):0)+1));process.exit(0);`] }
         }],
         links: []
       };
@@ -403,7 +403,7 @@ export async function runAllDshChecks() {
   });
 
 
-  await check("9. 预置宏打底 + 节点级即时变招 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为宏", () => {
+  await check("9. 预置宏打底 + 节点级即时派生 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为宏", () => {
     const tmp = mkdtempSync(join(tmpdir(), "dg-jit-wf-"));
     try {
       const uiComp = {
@@ -415,7 +415,7 @@ export async function runAllDshChecks() {
         scopePaths: ["src/core/"], modules: [{ name: "evalExpr", role: "逻辑", path: "src/core/eval.mjs" }]
       };
 
-      // (A) 执行端 Worker 严禁选配或篡改验收连招
+      // (A) 执行端 Worker 严禁选配或篡改验收开发流
       const deniedAssign = assignComponentWorkflow(tmp, engineComp, { actorRole: "worker" });
       assert.equal(deniedAssign.ok, false);
       assert.equal(deniedAssign.code, "WORKER_CANNOT_MUTATE_WORKFLOW");
@@ -429,7 +429,7 @@ export async function runAllDshChecks() {
       assert.equal(assignedEng.binding.baseMacroId, "pack-core-logic");
       assert.equal(assignedEng.binding.depsReady, true);
 
-      // (C) 改需求时在当前节点局部派生变招（不污染全局宏，且禁止注入非标脚本）
+      // (C) 改需求时在当前节点局部节点派生（不污染全局宏，且禁止注入非标脚本）
       const badBrick = mutateComponentWorkflowJit(tmp, engineComp, { actorRole: "super-agent", addTplIds: ["raw-shell-hack"] });
       assert.equal(badBrick.ok, false);
       assert.equal(badBrick.code, "UNKNOWN_BRICK_REJECTED");
@@ -468,11 +468,11 @@ export async function runAllDshChecks() {
       assert.ok(!humanOk.binding.tplIds.includes("tpl-gitleaks"));
       assert.ok(humanOk.binding.tplIds.includes("tpl-anti-slop"), "防手搓核心护栏仍保持守底");
 
-      // (E) 一键另存为全局工作流宏 (.workflow.json)
+      // (E) 一键另存为全局预置宏 (.workflow.json)
       const promoted = promoteComponentJitToMacro(tmp, engineComp.id, {
         actorRole: "human",
         macroId: "calc-formula-fx",
-        name: "公式与汇率联防连招"
+        name: "公式与汇率联防开发流"
       });
       assert.equal(promoted.ok, true);
       assert.ok(existsSync(join(tmp, "workflows", "calc-formula-fx.workflow.json")));
@@ -484,7 +484,7 @@ export async function runAllDshChecks() {
   });
 
 
-  await check("10. 真实砂浆适配器观测落盘与裁决、跨连招共享 .deps/_shared 池及多组件拓扑级项目挂机闭环", async () => {
+  await check("10. 真实适配器观测落盘与裁决、跨开发流共享 .deps/_shared 池及多组件拓扑级项目挂机闭环", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "dg-p0-full-"));
     try {
       const gitInit = (args) => spawnSync("git", ["-C", tmp, ...args], { encoding: "utf8" });
@@ -501,7 +501,7 @@ export async function runAllDshChecks() {
       gitInit(["add", "-A"]);
       gitInit(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init project"]);
 
-      // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 连招零重复下载直接复用
+      // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 开发流零重复下载直接复用
       const webPack = { id: "pack-web", name: "网页全栈开发包", nodes: [{ id: "n1", tplId: "tpl-playwright" }, { id: "n2", tplId: "tpl-biome-knip" }] };
       provisionWorkflowDeps(tmp, webPack, { markInstalledIds: ["playwright", "biome"] });
       const uiNode = { id: "comp-ui", title: "界面视图组件", scopePaths: ["src/ui/"], modules: [{ name: "view", role: "界面", path: "src/ui/view.mjs" }] };
@@ -510,10 +510,10 @@ export async function runAllDshChecks() {
       assert.equal(forkedUi.ok, true);
       provisionWorkflowDeps(tmp, { id: "seed-os", nodes: [{ id: "no", tplId: "tpl-openspec" }] }, { markInstalledIds: ["openspec"] });
       const depForked = inspectWorkflowDeps(tmp, forkedUi.binding.pack, { env: { PATH: "" } });
-      assert.equal(depForked.ready, true, "派生 JIT 新版连招必须直接命中 _shared 共享底座池就绪状态");
+      assert.equal(depForked.ready, true, "派生 JIT 新版开发流必须直接命中 _shared 共享底座池就绪状态");
       assert.ok(depForked.items.some((x) => x.resolvedVia === "shared-manifest"));
 
-      // (B) 真实砂浆适配器执行桥：构造共享池 mock gitleaks，验证真落盘 observation.json 并由 check-brick-observations 给出 1/0 裁决
+      // (B) 真实适配器执行桥：构造共享池 mock gitleaks，验证真落盘 observation.json 并由 check-brick-observations 给出 1/0 裁决
       const sharedBin = join(tmp, "workflows", ".deps", "_shared", ".bin");
       mkdirSync(sharedBin, { recursive: true });
       const mockLeakTrigger = join(tmp, "LEAK_MODE.flag");
@@ -539,7 +539,7 @@ exec "${process.execPath}" -e 'const fs=require("fs");const a=process.argv.slice
       const leakRun = await executeDeterministicWorkflowRun(tmp, { ticketId: "real-adp-fail" }, apiAssign.binding.pack, { useWorktreeSandbox: false, useFingerprintCache: false });
       assert.equal(leakRun.ok, false, "检出疑似密钥时必须经 check-brick-observations 判红返回 exit 1");
       assert.equal(leakRun.exitCode, 1);
-      assert.ok(existsSync(join(tmp, ".donegate/adapters/gitleaks/observation.json")), "必须真实调用砂浆适配器落盘 observation.json");
+      assert.ok(existsSync(join(tmp, ".donegate/adapters/gitleaks/observation.json")), "必须真实调用适配器落盘 observation.json");
 
       rmSync(mockLeakTrigger, { force: true });
       gitInit(["add", "-A"]);

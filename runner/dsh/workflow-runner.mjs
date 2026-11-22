@@ -1,4 +1,4 @@
-// 完结门开发流确定性运行引擎与挂机持久状态机（真实砂浆适配器接线 + 缺依赖禁跑 + Worktree 沙箱 + 指纹免跑缓存 + 三重熔断）
+// 完结门开发流确定性运行引擎与挂机持久状态机（真实适配器接线 + 缺依赖禁跑 + Worktree 沙箱 + 指纹免跑缓存 + 三重熔断）
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -64,7 +64,7 @@ export function preflightWorkflowPack(pack, opts = {}) {
   }
   const blankNode = pack.nodes.find((n) => (n.isBlank || n.tplId === 'tpl-blank') && !n.bypassed);
   if (blankNode) {
-    return { ok: false, exitCode: 3, code: 'BLANK_NODE', nodeId: blankNode.id, reason: `节点「${blankNode.title || blankNode.id}」仍是空白待定节点，请先绑定积木或开启跳过` };
+    return { ok: false, exitCode: 3, code: 'BLANK_NODE', nodeId: blankNode.id, reason: `节点「${blankNode.title || blankNode.id}」仍是空白待定节点，请先绑定节点或开启跳过` };
   }
   if (opts.enforceDeps !== false) {
     const depReport = inspectWorkflowDeps(opts.projectRoot || process.cwd(), pack);

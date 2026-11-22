@@ -466,7 +466,7 @@ export function buildWbRenderWires() {
   "        const [, nid, idxStr] = key.split(':');",
   "        const nd = getActiveNodesList().find((n) => n.id === nid);",
   "        const sl = nd && nd.slots ? nd.slots[Number(idxStr)] : null;",
-  "        return { key, text: sl ? sl.label : txt, roleLabel: '转接器功能项文本', ownerTitle: nd ? nd.title : '' };",
+  "        return { key, text: sl ? sl.label : txt, roleLabel: '适配器功能项文本', ownerTitle: nd ? nd.title : '' };",
   "      }",
   "      if (key.startsWith('ws-cap:') || key.startsWith('ws-hint:')) {",
   "        const [, nid] = key.split(':');",

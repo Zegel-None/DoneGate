@@ -1,4 +1,4 @@
-// 开发看板节点级即时配招/变招与沉淀宏同源 HTTP 子路由 (/donegate/api/jit/*)
+// 开发看板节点级即时选配/派生与沉淀宏同源 HTTP 子路由 (/donegate/api/jit/*)
 import { buildDashboardPayload } from '../core/dashboard.mjs';
 import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
 import {
@@ -53,7 +53,7 @@ export async function handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, 
       hub.emit({ type: 'jit_workflows_batch_assigned', bindings: results });
       hub.emit({
         type: 'dock_item',
-        item: { id: `jit-all-${Date.now()}`, kind: 'summary', tone: 'ok', title: `🎯 总控已完成看板 ${count} 个组件的连招自动选配（优先命中已就绪依赖宏）` }
+        item: { id: `jit-all-${Date.now()}`, kind: 'summary', tone: 'ok', title: `🎯 总控已完成看板 ${count} 个组件的开发流自动选配（优先命中已就绪依赖宏）` }
       });
       sendJson(res, 200, { ok: true, assignedCount: count, bindings: results });
       return true;
@@ -78,7 +78,7 @@ export async function handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, 
     hub.emit({ type: 'jit_workflow_updated', nodeId: target.id, binding: out.binding });
     hub.emit({
       type: 'dock_item',
-      item: { id: `jit-${target.id}`, kind: 'receipt', tone: 'ok', title: `🎯 「${target.title}」已挂载连招：${out.binding.baseMacroName}（共 ${out.binding.tplIds.length} 块积木）` }
+      item: { id: `jit-${target.id}`, kind: 'receipt', tone: 'ok', title: `🎯 「${target.title}」已挂载开发流：${out.binding.baseMacroName}（共 ${out.binding.tplIds.length} 个节点）` }
     });
     sendJson(res, 200, out);
     return true;
@@ -119,7 +119,7 @@ export async function handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, 
         id: `jit-mut-${target.id}`,
         kind: 'summary',
         tone: 'ok',
-        title: `⚡ 「${target.title}」已按新需求派生变招（+${out.binding.deltaCount} 积木，底座护栏已锁定）`
+        title: `⚡ 「${target.title}」已按新需求节点派生（+${out.binding.deltaCount} 节点，底座护栏已锁定）`
       }
     });
     sendJson(res, 200, out);
@@ -168,7 +168,7 @@ export async function handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, 
     hub.emit({ type: 'jit_workflow_updated', nodeId: body.nodeId, binding: out.binding });
     hub.emit({
       type: 'dock_item',
-      item: { id: `jit-save-${out.macroId}`, kind: 'summary', tone: 'ok', title: `💾 已将节点派生连招沉淀为全局宏「${out.macro.name}」（${out.filePath || out.macroId}）` }
+      item: { id: `jit-save-${out.macroId}`, kind: 'summary', tone: 'ok', title: `💾 已将节点派生开发流沉淀为全局宏「${out.macro.name}」（${out.filePath || out.macroId}）` }
     });
     sendJson(res, 200, out);
     return true;
@@ -189,7 +189,7 @@ export async function handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, 
     const binding = body.binding?.pack ? body.binding : ensured.binding;
     const ticket = {
       ticketId: body.runId || `jit-run-${target.id}-${Date.now()}`,
-      headline: `组件「${target.title}」连招验收`,
+      headline: `组件「${target.title}」开发流验收`,
       mandate: { allowedWriteScopes: Array.isArray(target.scopePaths) ? target.scopePaths : [] }
     };
     const runOut = await executeDeterministicWorkflowRun(root, ticket, binding.pack, {

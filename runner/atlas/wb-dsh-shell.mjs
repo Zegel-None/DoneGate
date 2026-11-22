@@ -369,7 +369,7 @@ export function buildWbDshShell() {
       if (blankBtn) {
         const nid = blankBtn.getAttribute('data-dock-confirm-blank');
         const nd = getActiveNodesList().find((n) => n.id === nid);
-        if (nd) { nd.isBlank = false; nd.title = '确定性门禁节点'; nd.sub = 'mortar_gate · exit 0/1/2/3'; }
+        if (nd) { nd.isBlank = false; nd.title = '确定性门禁节点'; nd.sub = 'adapter_gate · exit 0/1/2/3'; }
         dshRuntime.dockItems.shift(); renderAll(); renderDshStandaloneShell(); showToast('✓ 已挂载确定性门禁模块'); return;
       }
       if (e.target.closest('[data-close-rp]')) { dshRuntime.rightPreview.open = false; renderDshStandaloneShell(); return; }

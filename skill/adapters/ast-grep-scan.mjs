@@ -1,8 +1,8 @@
-// 砂浆适配器 · ast-grep 结构搜索观测（Mortar Protocol v1.1 · grep 语义 0=命中 / 1=无命中，委托 _shared.mjs）
+// 适配器 · ast-grep 结构搜索观测（Adapter Protocol v1.1 · grep 语义 0=命中 / 1=无命中，委托 _shared.mjs）
 import { relative, sep } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'ast-grep',
   defaultRole: 'soft',
   degradedTo: '人工按同一模式用编辑器正则或读代码逐处确认',

@@ -1,7 +1,7 @@
-// 砂浆适配器 · Ruff Python 静态错误与幻觉符号观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · Ruff Python 静态错误与幻觉符号观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'ruff',
   defaultRole: 'soft',
   degradedTo: '使用 python3 -m py_compile 逐文件验语法并人工排查未定义变量与裸 except',

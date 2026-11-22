@@ -1,8 +1,8 @@
-// 砂浆适配器 · srclight 索引新鲜度观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · srclight 索引新鲜度观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { resolve } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'srclight',
   defaultRole: 'soft',
   degradedTo: '人工按同一格式核查代码索引是否覆盖当前提交',

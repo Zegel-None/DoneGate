@@ -1,4 +1,4 @@
-// 预置宏打底 + 节点级即时变招（JIT 配招器）：总控/Worker 权限硬隔离、底座护栏只增不减锁、.deps 就绪度优先与一键沉淀宏
+// 预置宏打底 + 节点级即时派生（JIT 选配器）：总控/Worker 权限硬隔离、底座护栏只增不减锁、.deps 就绪度优先与一键沉淀宏
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'as_1', label: '合规代码快照放行通道', wired: true, boundOut: 'out_art' }]
   },
   'tpl-openspec': {
-    tplId: 'tpl-openspec', category: '筹备与润色', title: 'OpenSpec 规格审校积木',
+    tplId: 'tpl-openspec', category: '筹备与润色', title: 'OpenSpec 规格审校节点',
     repoSlug: 'Fission-AI/OpenSpec', repoUrl: 'https://github.com/Fission-AI/OpenSpec', pinnedVersion: 'v0.2.4',
     tip: '写码前扫描需求变更与公式/边界规格是否有冲突遗漏',
     inputs: [{ id: 'in_spec', name: '需求草案', type: 'SPEC' }],
@@ -40,7 +40,7 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'pg_1', label: '注入原语防手搓提示词', wired: true, boundOut: 'out_prm' }]
   },
   'tpl-biome-knip': {
-    tplId: 'tpl-biome-knip', category: '代码护栏', title: 'Biome 语法与死代码积木',
+    tplId: 'tpl-biome-knip', category: '代码护栏', title: 'Biome 语法与死代码节点',
     repoSlug: 'biomejs/biome', repoUrl: 'https://github.com/biomejs/biome', pinnedVersion: 'v1.9.4',
     tip: '静态语法错误检查与无用死代码清理',
     inputs: [{ id: 'in_art', name: 'JS/TS 源码', type: 'ARTIFACT' }],
@@ -66,7 +66,7 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'ai_ok', label: '达标放行出口', wired: true, boundOut: 'out_ok' }]
   },
   'tpl-playwright': {
-    tplId: 'tpl-playwright', category: '端侧与构建', title: 'Playwright 网页联调积木',
+    tplId: 'tpl-playwright', category: '端侧与构建', title: 'Playwright 网页联调节点',
     repoSlug: 'microsoft/playwright', repoUrl: 'https://github.com/microsoft/playwright', pinnedVersion: 'v1.48.0',
     tip: '真实无头浏览器端到端页面点击流与控制台红字捕获',
     inputs: [{ id: 'in_gate', name: '前置放行信号', type: 'SIGNAL' }],
@@ -82,7 +82,7 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'gr_1', label: '输出 APK 文件与哈希指纹', wired: true, boundOut: 'out_apk' }]
   },
   'tpl-maestro': {
-    tplId: 'tpl-maestro', category: '端侧与构建', title: 'Maestro 安卓交互积木',
+    tplId: 'tpl-maestro', category: '端侧与构建', title: 'Maestro 安卓交互节点',
     repoSlug: 'mobile-dev-inc/Maestro', repoUrl: 'https://github.com/mobile-dev-inc/Maestro', pinnedVersion: 'v1.38.1',
     tip: '驱动安卓模拟器执行核心用户点击流并捕获闪退',
     inputs: [{ id: 'in_apk', name: '待测 APK', type: 'ARTIFACT' }],
@@ -90,7 +90,7 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'ms_1', label: '核心页面可点通 0-3 裁决口', wired: true, boundOut: 'out_sig' }]
   },
   'tpl-gitleaks': {
-    tplId: 'tpl-gitleaks', category: '安全与运维', title: 'Gitleaks 密钥防泄漏积木',
+    tplId: 'tpl-gitleaks', category: '安全与运维', title: 'Gitleaks 密钥防泄漏节点',
     repoSlug: 'gitleaks/gitleaks', repoUrl: 'https://github.com/gitleaks/gitleaks', pinnedVersion: 'v8.18.4',
     tip: '拦截误提交的 API 密钥、私钥与数据库口令',
     inputs: [{ id: 'in_repo', name: '代码变更', type: 'ANY' }],
@@ -113,7 +113,7 @@ export function assertPlannerAuthority(actorRole = 'super-agent') {
       ok: false,
       exitCode: 2,
       code: 'WORKER_CANNOT_MUTATE_WORKFLOW',
-      reason: '权限隔离拦截：执行端 Worker 仅可按锁定连招过关，无权选配、篡改或删减验收连招（仅限总控 Super Agent 或人工操作）'
+      reason: '权限隔离拦截：执行端 Worker 仅可按锁定开发流过关，无权选配、篡改或删减验收开发流（仅限总控 Super Agent 或人工操作）'
     };
   }
   return { ok: true, role: norm === 'human' || norm === 'owner' ? 'human' : 'super-agent' };
@@ -142,10 +142,10 @@ export function listAtomicBrickCatalog(projectRoot) {
     const up = cap.upstream || {};
     const nodeStub = {
       tplId, tool, category: card.category || '代码护栏',
-      title: card.title || `${tool} 砂浆转接积木`,
+      title: card.title || `${tool} 适配器节点`,
       repoSlug: up.repo || '', repoUrl: up.homepage || (up.repo ? `https://github.com/${up.repo}` : ''),
       pinnedVersion: adp.testedToolRange || 'v1.0.0',
-      tip: card.summary || `砂浆协议确定性转接积木（${tool}）`,
+      tip: card.summary || `适配器协议确定性适配器节点（${tool}）`,
       inputs: Array.isArray(card.inputs) && card.inputs.length ? card.inputs : [{ id: 'in_src', name: '代码快照', type: 'ARTIFACT' }],
       outputs: Array.isArray(card.outputs) && card.outputs.length ? card.outputs : [{ id: 'out_sig', name: '0-3 判定码', type: 'SIGNAL' }],
       slots: [{ id: 'ob_0', label: `${tool} 核心门禁`, wired: true, boundOut: 'out_sig' }]
@@ -166,7 +166,7 @@ function arePortsCompatible(outType, inType) {
 export function composeBrickChainToPack(brickMap, tplIds, meta = {}) {
   const unknown = tplIds.filter((id) => !brickMap.has(id));
   if (unknown.length > 0) {
-    return { ok: false, exitCode: 2, code: 'UNKNOWN_BRICK_REJECTED', unknownTplIds: unknown, reason: `禁止手搓散装脚本：未注册的非标积木 ${unknown.join(', ')}` };
+    return { ok: false, exitCode: 2, code: 'UNKNOWN_BRICK_REJECTED', unknownTplIds: unknown, reason: `禁止手搓散装脚本：未注册的非标节点 ${unknown.join(', ')}` };
   }
   const nodes = tplIds.map((tplId, idx) => {
     const tpl = brickMap.get(tplId);
@@ -219,9 +219,9 @@ export function composeBrickChainToPack(brickMap, tplIds, meta = {}) {
     pack: {
       schemaVersion: '1.0',
       id: meta.id || 'jit-ephemeral',
-      name: meta.name || '节点即时连招',
-      group: meta.group || '节点派生连招',
-      tip: meta.tip || '由总控 Super Agent 从确定性原子积木池自动装配',
+      name: meta.name || '节点即时开发流',
+      group: meta.group || '节点派生开发流',
+      tip: meta.tip || '由总控 Super Agent 从确定性工具节点池自动装配',
       mandatoryTplIds: meta.floorSet ? [...meta.floorSet] : ['tpl-anti-slop'],
       matchProfile: meta.matchProfile || {},
       nodes,
@@ -348,10 +348,10 @@ function inferRequirementBrickAdditions(reqText, brickMap) {
     const biome = brickMap.get('tpl-biome-knip');
     if (stryker && stryker.ready) {
       append.push('tpl-adp-stryker');
-      reasons.push('追加本地已就绪 Stryker 变异测试积木');
+      reasons.push('追加本地已就绪 Stryker 变异测试节点');
     } else if (biome) {
       append.push('tpl-biome-knip');
-      reasons.push('优先选用静态语法与死代码积木（避免未就绪重依赖卡顿）');
+      reasons.push('优先选用静态语法与死代码节点（避免未就绪重依赖卡顿）');
     }
   }
   if (/上线|迁移|删库|不可逆|生产发版|人工确认/.test(q) && brickMap.has('tpl-human-gate')) {
@@ -413,7 +413,7 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
     const floorSet = new Set(['tpl-anti-slop']);
     const built = composeBrickChainToPack(brickMap, chain, {
       id: `jit-${componentNode.id}`,
-      name: `「${componentNode.title}」现场直拼连招`,
+      name: `「${componentNode.title}」现场直拼开发流`,
       floorSet
     });
     const dep = inspectWorkflowDeps(root, built.pack);
@@ -422,7 +422,7 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
       nodeTitle: componentNode.title,
       mode: 'jit-synthesized',
       baseMacroId: null,
-      baseMacroName: '现场直拼连招',
+      baseMacroName: '现场直拼开发流',
       pinnedByHuman: Boolean(opts.pinnedByHuman),
       mandatoryFloorTplIds: [...floorSet],
       tplIds: chain,
@@ -432,7 +432,7 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
       missingDepsCount: dep.missingCount,
       missingDeps: dep.missing,
       revision: (existing?.revision || 0) + 1,
-      reason: '未命中高分固定宏，总控已优先从本地就绪积木池现场直拼专属连招',
+      reason: '未命中高分固定宏，总控已优先从本地就绪节点池现场直拼专属开发流',
       pack: built.pack,
       updatedAt: new Date().toISOString()
     };
@@ -509,7 +509,7 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
       blockedTplIds: blockedFloor,
       blockedTitles,
       binding: nextWithPending,
-      reason: `触发「底座只增不减」安全锁：禁止自动卸载底线护栏积木（${blockedTitles.join('、')}）。若因需求降级确需移除，请由人工点击批准放行`
+      reason: `触发「底座只增不减」安全锁：禁止自动卸载底线护栏节点（${blockedTitles.join('、')}）。若因需求降级确需移除，请由人工点击批准放行`
     };
   }
 
@@ -520,7 +520,7 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   const explicitAdd = Array.isArray(opts.addTplIds) ? opts.addTplIds : [];
   for (const id of explicitAdd) {
     if (!brickMap.has(id)) {
-      return { ok: false, exitCode: 2, code: 'UNKNOWN_BRICK_REJECTED', unknownTplIds: [id], reason: `禁止注入非标手搓脚本：未知积木 ${id}` };
+      return { ok: false, exitCode: 2, code: 'UNKNOWN_BRICK_REJECTED', unknownTplIds: [id], reason: `禁止注入非标手搓脚本：未知节点 ${id}` };
     }
   }
 
@@ -540,9 +540,9 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   }
   const built = composeBrickChainToPack(brickMap, mergedChain, {
     id: `jit-${componentNode.id}-r${(base.revision || 1) + 1}`,
-    name: `${base.baseMacroName || componentNode.title} · 派生连招`,
-    group: '节点派生连招',
-    tip: opts.requirementText ? `按新需求微调：${String(opts.requirementText).slice(0, 80)}` : '节点私有派生连招',
+    name: `${base.baseMacroName || componentNode.title} · 派生开发流`,
+    group: '节点派生开发流',
+    tip: opts.requirementText ? `按新需求微调：${String(opts.requirementText).slice(0, 80)}` : '节点私有派生开发流',
     floorSet,
     originByTpl
   });
@@ -552,15 +552,15 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   const dep = inspectWorkflowDeps(root, built.pack);
   const summaryReasons = [...inferred.reasons];
   if (explicitAdd.length) summaryReasons.push(`手动挂载 ${explicitAdd.map((x) => brickMap.get(x)?.title || x).join('、')}`);
-  if (removeSet.size) summaryReasons.push(`移除非底座积木 ${[...removeSet].join('、')}`);
-  if (!summaryReasons.length) summaryReasons.push('已完成节点私有连招微调校验（底座护栏保持锁定）');
+  if (removeSet.size) summaryReasons.push(`移除非底座节点 ${[...removeSet].join('、')}`);
+  if (!summaryReasons.length) summaryReasons.push('已完成节点私有开发流微调校验（底座护栏保持锁定）');
 
   const updatedBinding = {
     nodeId: componentNode.id,
     nodeTitle: componentNode.title,
     mode: addedTplIds.length > 0 || removeSet.size > 0 ? 'jit-forked' : base.mode,
     baseMacroId: base.baseMacroId,
-    baseMacroName: base.baseMacroName || '节点专属连招',
+    baseMacroName: base.baseMacroName || '节点专属开发流',
     pinnedByHuman: true,
     mandatoryFloorTplIds: [...floorSet],
     tplIds: mergedChain,
@@ -588,11 +588,11 @@ export function promoteComponentJitToMacro(projectRoot, nodeId, macroMeta = {}) 
   const saved = readSavedWorkbenchState(root);
   const binding = (saved.componentWorkflows || {})[nodeId];
   if (!binding || !binding.pack || !Array.isArray(binding.pack.nodes)) {
-    return { ok: false, exitCode: 3, code: 'NO_COMPONENT_WORKFLOW', reason: `节点 ${nodeId} 尚未挂载可沉淀的连招` };
+    return { ok: false, exitCode: 3, code: 'NO_COMPONENT_WORKFLOW', reason: `节点 ${nodeId} 尚未挂载可沉淀的开发流` };
   }
   const rawId = macroMeta.macroId || `macro-${nodeId}-${Date.now().toString(36).slice(-4)}`;
   const safeId = String(rawId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 56) || 'custom-macro';
-  const macroName = String(macroMeta.name || `${binding.nodeTitle || nodeId}沉淀连招`).trim();
+  const macroName = String(macroMeta.name || `${binding.nodeTitle || nodeId}沉淀开发流`).trim();
   const keywords = String(macroMeta.keywords || binding.nodeTitle || '')
     .split(/[\s,，、/]+/).map((s) => s.trim()).filter((s) => s.length >= 2).slice(0, 8);
 
@@ -601,8 +601,8 @@ export function promoteComponentJitToMacro(projectRoot, nodeId, macroMeta = {}) 
     schemaVersion: '1.0',
     id: safeId,
     name: macroName,
-    group: macroMeta.group || '项目沉淀连招宏',
-    tip: macroMeta.tip || (binding.lastRequirement ? `由节点「${binding.nodeTitle}」实战变招沉淀：${binding.lastRequirement}` : `由节点「${binding.nodeTitle}」一键沉淀的确定性连招宏`),
+    group: macroMeta.group || '项目沉淀宏',
+    tip: macroMeta.tip || (binding.lastRequirement ? `由节点「${binding.nodeTitle}」实战派生沉淀：${binding.lastRequirement}` : `由节点「${binding.nodeTitle}」一键沉淀的确定性预置宏`),
     mandatoryTplIds: binding.mandatoryFloorTplIds || ['tpl-anti-slop'],
     matchProfile: { domains: macroMeta.domains || ['custom'], keywords },
     deps: Array.isArray(binding.pack.deps) ? binding.pack.deps : [],
@@ -625,7 +625,7 @@ export function promoteComponentJitToMacro(projectRoot, nodeId, macroMeta = {}) 
     addedTplIds: [],
     addedTitles: [],
     deltaCount: 0,
-    reason: `已沉淀为全局可复用工作流宏「${macroName}」`,
+    reason: `已沉淀为全局可复用预置宏「${macroName}」`,
     pack: normalizedPack,
     updatedAt: new Date().toISOString()
   };

@@ -1,6 +1,6 @@
 {
   "protocolVersion": "1.1",
-  "说明": "砖头入网台账（3 批硬淘汰制）。每条 { brick, registryId, wiredAtBatch, actionsChanged, evidenceRef?, note }；未接成判据（advisory）的砖头严禁虚报 actionsChanged > 0；连续 3 批 actionsChanged === 0 强制拔除接线。见 skill/17 §五。",
+  "说明": "工具入网台账（3 批硬淘汰制）。每条 { brick, registryId, wiredAtBatch, actionsChanged, evidenceRef?, note }；未接成判据（advisory）的工具严禁虚报 actionsChanged > 0；连续 3 批 actionsChanged === 0 强制拔除接线。见 skill/17 §五。",
   "bricks": [
     {
       "brick": "stryker",

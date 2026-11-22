@@ -1,7 +1,7 @@
-// 砂浆适配器 · Pyright 跨文件静态类型与属性签名观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · Pyright 跨文件静态类型与属性签名观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'pyright',
   defaultRole: 'soft',
   timeoutMs: 180000,

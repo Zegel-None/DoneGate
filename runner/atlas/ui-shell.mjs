@@ -1,4 +1,4 @@
-// 工作台实时后端桥接外壳：ATLAS 注水、SSE 脉冲呼吸灯、依赖补齐、过夜挂机、盲判打包与 .workflow.json 导入导出
+// 工作台实时后端桥接外壳：ATLAS 注水、SSE 脉冲呼吸灯、依赖补齐、过夜挂机、盲审打包与 .workflow.json 导入导出
 export function buildShellScript() {
   return String.raw`
 let liveServerConnected = false;
@@ -150,10 +150,10 @@ async function triggerJudgePackForCard(nodeId) {
     return;
   }
   if (!/^https?:$/i.test(location.protocol)) {
-    showToast('连接本地服务后可一键打包契约「' + cid + '」的门 5 盲判复核包');
+    showToast('连接本地服务后可一键打包契约「' + cid + '」的门 5 复核包');
     return;
   }
-  showToast('⚖️ 正在打包契约「' + cid + '」门 5 独立盲判材料包...');
+  showToast('⚖️ 正在打包契约「' + cid + '」门 5 独立复核包...');
   try {
     const r = await fetch('/donegate/api/judge/pack', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contractId: cid })
@@ -163,20 +163,20 @@ async function triggerJudgePackForCard(nodeId) {
       if (typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
         window.parent.postMessage({
           source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:insert-quote',
-          text: out.judgePrompt, summary: { label: '[盲判包] ' + cid, title: out.relPackDir, detail: 'SHA-256: ' + String(out.packageHash || '').slice(0, 12), body: out.judgePrompt }
+          text: out.judgePrompt, summary: { label: '[复核包] ' + cid, title: out.relPackDir, detail: 'SHA-256: ' + String(out.packageHash || '').slice(0, 12), body: out.judgePrompt }
         }, '*');
       }
       state.chatMessages.push({
         role: 'agent',
-        html: '⚖️ 契约「<b>' + esc(cid) + '</b>」门 5 盲判复核包已通过 INV-14 白名单校验并落盘：<br><code>' + esc(out.relPackDir) + '</code><br>可直接复制发给独立判方会话：<br><code>' + esc(out.judgePrompt) + '</code>'
+        html: '⚖️ 契约「<b>' + esc(cid) + '</b>」门 5 复核包已通过 INV-14 白名单校验并落盘：<br><code>' + esc(out.relPackDir) + '</code><br>可直接复制发给独立判方会话：<br><code>' + esc(out.judgePrompt) + '</code>'
       });
       renderAll();
-      showToast('⚖️ 盲判包已生成：' + out.relPackDir);
+      showToast('⚖️ 复核包已生成：' + out.relPackDir);
     } else {
       const msg = String((out && out.stderr) || '需先跑通 check 生成干净运行证据').split('\n')[0];
       showToast('⚖️ 暂无法打包：' + msg);
     }
-  } catch (err) { void err; showToast('盲判打包请求失败'); }
+  } catch (err) { void err; showToast('盲审打包请求失败'); }
 }
 
 function exportActiveWorkflowJson(packId) {

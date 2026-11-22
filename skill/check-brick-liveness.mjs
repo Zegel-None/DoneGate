@@ -1,8 +1,8 @@
-// 旁路检查层（按场景跑，不进十二条）：砖头 3 批硬淘汰制、注册表/台账一致性、声明挂靠、J3 过程信号旁注。
+// 旁路检查层（按场景跑，不进十二条）：工具 3 批硬淘汰制、注册表/台账一致性、声明挂靠、J3 过程信号旁注。
 // 用法：
 //   node skill/check-brick-liveness.mjs                    默认：自带夹具自检
 //   node skill/check-brick-liveness.mjs --root <项目根>    核验 ledger.json、batches.jsonl、adapters.registry.json 与 contracts/ 四方关系
-// 退出码（§八 四值）：0 三项都过 / 1 有应拔除砖头、注册表台账不一致，或有孤儿声明 / 2 结构损坏或 checkedBy 语法非法 / 3 材料缺失（含「本仓还没有 contracts/」）。
+// 退出码（§八 四值）：0 三项都过 / 1 有应拔除工具、注册表台账不一致，或有孤儿声明 / 2 结构损坏或 checkedBy 语法非法 / 3 材料缺失（含「本仓还没有 contracts/」）。
 //
 // 为什么要加「注册表 ↔ 台账」这一条：2026-11-20 通读时发现 skill/15 的状态列与 adapters.registry.json
 // 说的不是一回事（文档说「冻结」而注册表已入网），文档漂移没人守。这条检查把「登记」与「入网记账」绑在一起：
@@ -10,7 +10,7 @@
 //
 // 诚实边界：
 //   1. 只按 ledger.json 的 wiredAtBatch 与 batches.jsonl 批次数判定是否应强制拔除；不独立核验 actionsChanged 是否虚报。
-//   2. 一致性只查「有没有对上」（按 registryId 与 tool 双路匹配），不判断该不该接这块砖、也不核验 stage/checkedBy 抄得对不对（那是 check-declarations 的活）。
+//   2. 一致性只查「有没有对上」（按 registryId 与 tool 双路匹配），不判断该不该接这个工具、也不核验 stage/checkedBy 抄得对不对（那是 check-declarations 的活）。
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -123,7 +123,7 @@ function worstExitCode(codes) {
 }
 
 // ── 声明挂靠（wiring）：每条 registry.checkedBy 必须解析到本仓真实契约里真实存在的判据 ──
-// 为什么需要它：2026-11-20 发现 18 块砖的 checkedBy 全指向不存在的 c01/*——因为接砖时本仓还没有
+// 为什么需要它：2026-11-20 发现 18 个工具的 checkedBy 全指向不存在的 c01/*——因为接砖时本仓还没有
 // contracts/，只能照抄协议样例的占位；而核侧所有自动路径都 skipContractLookup，于是「声明没人认领」
 // 在流水线里完全隐形，18 条声明 + 0 条判据、三条门禁全绿。（详见 docs/plans/0.4.0-开发计划.md）
 // 这条门禁把「挂靠」变成机器可判：解析不到即红，不让新孤儿再溜进来。
@@ -365,7 +365,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const wire = evaluateBrickWiring(root);
 
     if (live.exitCode === 0) console.log(`bricks=${live.brickCount}, batches=${live.currentBatch} | ${live.j3Note}`);
-    else if (live.exitCode === 1) console.log(`需强制拔除的无效砖头：${live.deadBricks.map((d) => `${d.brick}(已跑${d.elapsed}批/0改动)`).join('、')} | ${live.j3Note}`);
+    else if (live.exitCode === 1) console.log(`需强制拔除的无效工具：${live.deadBricks.map((d) => `${d.brick}(已跑${d.elapsed}批/0改动)`).join('、')} | ${live.j3Note}`);
     else console.error(live.reason);
 
     if (cons.exitCode === 0) console.log(`注册表 ↔ 台账：双向一致（注册表 ${cons.regCount} 条 / 台账 ${cons.ledgerCount} 条）`);
@@ -383,10 +383,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
     const exitCode = worstExitCode([live.exitCode, cons.exitCode, wire.exitCode]);
     if (exitCode === 0) {
-      console.log('RESULT: PASS 砖头活跃度、注册表台账一致性、声明挂靠均通过');
+      console.log('RESULT: PASS 工具活跃度、注册表台账一致性、声明挂靠均通过');
     } else if (exitCode === 1) {
       const why = [];
-      if (live.exitCode === 1) why.push('存在连续 3 批未改变动作的砖头');
+      if (live.exitCode === 1) why.push('存在连续 3 批未改变动作的工具');
       if (cons.exitCode === 1) why.push(`注册表与台账 ${cons.issues.length} 处不一致`);
       if (wire.exitCode === 1) why.push(`声明挂靠 ${wire.issues.length} 处不合格`);
       console.log(`RESULT: FAIL ${why.join('；')}`);

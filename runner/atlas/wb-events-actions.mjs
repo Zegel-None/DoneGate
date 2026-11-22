@@ -394,7 +394,7 @@ export function buildWbEventsActions() {
   "              state.pendingVersionUpgrade = { nodeId, fromVer: nd.pinnedVersion, toVer: nd.latestUpstream };",
   "              state.chatMessages.push({",
   "                role: 'agent',",
-  "                html: `卡片「<b>${esc(nd.title)}</b>」当前已将 <a href=\"${esc(nd.repoUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline\" style=\"color:var(--primary);\">${esc(nd.repoSlug)}</a> 定死在 <b>${esc(nd.pinnedVersion)}</b>。<br><br>检测到上游有 <b>${esc(nd.latestUpstream)}</b>，是否测试转接器并手动更新锁死版本？`",
+  "                html: `卡片「<b>${esc(nd.title)}</b>」当前已将 <a href=\"${esc(nd.repoUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline\" style=\"color:var(--primary);\">${esc(nd.repoSlug)}</a> 定死在 <b>${esc(nd.pinnedVersion)}</b>。<br><br>检测到上游有 <b>${esc(nd.latestUpstream)}</b>，是否测试适配器并手动更新锁死版本？`",
   "              });",
   "            } else {",
   "              state.chatMessages.push({",

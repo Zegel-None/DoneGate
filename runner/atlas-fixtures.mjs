@@ -157,7 +157,7 @@ try {
   const webNode = hostSb?.nodes?.find((n) => (n.scopePaths || []).includes('apps/web/'));
   const hasAdpCatalog = Array.isArray(atlas.workbench?.registeredTemplates) &&
     atlas.workbench.registeredTemplates.some((t) => t.tplId === 'tpl-adp-stryker' && t.repoUrl.startsWith('https://github.com/'));
-  c.check('工作台按契约 scope[] 映射项目看板真实目录（ADR-005）并注入砂浆注册表开源积木与锁死版本',
+  c.check('工作台按契约 scope[] 映射项目看板真实目录（ADR-005）并注入适配器注册表外部工具与锁死版本',
     Boolean(hostSb && hostSb.isHost === true && hostSb.readonly === false && webNode && webNode.contractIds.includes('shop-main') && hasAdpCatalog));
 
   // 3. 核验零外网单文件工作台 HTML（含无界拖曳、100步 Ctrl+Z/Ctrl+Y、开发流一键补齐依赖按钮与右键菜单）
@@ -280,7 +280,7 @@ try {
       body: JSON.stringify({ contractId: "non-existent" })
     });
     const judgePreJson = await judgePreResp.json();
-    c.check("开发流 .workflow.json 导入落盘、积木 observation.json 直看与门 5 盲判打包接口全链路联通",
+    c.check("开发流 .workflow.json 导入落盘、适配器 observation.json 直看与门 5 盲审打包接口全链路联通",
       Boolean(
         wfSaveResp.ok && wfSaveJson.ok && existsSync(join(proj, "workflows/shared-comfy-flow.workflow.json")) &&
         obsPrevResp.ok && obsPrevJson.ok && obsPrevJson.content.includes('"checkedFiles": 12') &&

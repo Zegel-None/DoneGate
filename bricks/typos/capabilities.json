@@ -1,5 +1,5 @@
 {
-  "说明": "砖头能力清单：typos 跨语言源码标识符与配置键拼写滑移检查。",
+  "说明": "工具能力清单：typos 跨语言源码标识符与配置键拼写滑移检查。",
   "tool": "typos",
   "registryId": "typos@stage4",
   "role": "soft",

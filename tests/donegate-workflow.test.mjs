@@ -323,7 +323,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     const fileCmd = buildBrowserOpenCommand(winDashHtml, 'win32', win32);
     expect(fileCmd.args[3]).toBe(`"start "" "${winDashHtml}""`);
 
-    // 3. 砂浆适配器 Windows .cmd 批处理含空格/括号双路径安全封装
+    // 3. 适配器 Windows .cmd 批处理含空格/括号双路径安全封装
     const winBiomeCmd = win32.join('C:', 'Users', 'Dev User', 'AppData', 'Roaming', 'npm', 'biome.cmd');
     const winTargetSrc = win32.join('D:', 'DoneGate V4(完结门)', 'src');
     const wb = buildWinBatchSpawn(winBiomeCmd, ['check', winTargetSrc]);
@@ -393,7 +393,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     }
   });
 
-  it("混合配招与节点级即时变招 HTTP 闭环：Worker 403 拦截、需求变更局部变招、底座锁 409 拦截与一键沉淀宏", async () => {
+  it("混合选配与节点级即时派生 HTTP 闭环：Worker 403 拦截、需求变更局部派生、底座锁 409 拦截与一键沉淀宏", async () => {
     const dir = mkdtempSync(join(tmpdir(), "dg-jit-http-"));
     dispatchCommand(["init", "."], dir);
     mkdirSync(join(dir, "src/core"), { recursive: true });
@@ -418,7 +418,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       const jWorker = await rWorker.json();
       expect(jWorker.code).toBe("WORKER_CANNOT_MUTATE_WORKFLOW");
 
-      // 2) Super Agent 自动配招 + 按新需求即时变招
+      // 2) Super Agent 自动选配 + 按新需求即时派生
       const rAssign = await fetch(`${srv.url}donegate/api/jit/assign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
@@ -455,7 +455,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(jFloor.code).toBe("MANDATORY_FLOOR_LOCKED");
       expect(jFloor.requiresHumanApproval).toBe(true);
 
-      // 4) 一键另存为工作流宏 -> 写入 workflows/*.workflow.json
+      // 4) 一键另存为预置宏 -> 写入 workflows/*.workflow.json
       const rPromo = await fetch(`${srv.url}donegate/api/jit/promote-macro`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "human" },

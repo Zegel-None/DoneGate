@@ -1,4 +1,4 @@
-// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与砂浆注册表映射为「项目看板 + 开发流」交互模型（<= 300 行）
+// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 开发流」交互模型（<= 300 行）
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,7 +248,7 @@ function loadRegisteredAdapterTemplates(projectRoot) {
     templates.push({
       tplId: `tpl-adp-${tool}`,
       category: cat,
-      title: cardCfg.title || `${tool} 砂浆转接积木`,
+      title: cardCfg.title || `${tool} 适配器节点`,
       archetype: capDoc.archetype || 'scanner',
       uiExternalUrl: upCfg.uiExternalUrl || null,
       repoSlug,
@@ -257,7 +257,7 @@ function loadRegisteredAdapterTemplates(projectRoot) {
       latestUpstream: up[2],
       entryPath: adp.entry || `skill/adapters/${tool}.mjs`,
       brickDir: `bricks/${tool}/`,
-      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `砂浆协议 v${adp.protocolVersion} · 边界：${adp.blindSpots[0]}` : `砂浆协议外部工具转接卡（${tool}）`),
+      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `适配器协议 v${adp.protocolVersion} · 边界：${adp.blindSpots[0]}` : `适配器协议外部工具转接卡（${tool}）`),
       inputs,
       outputs,
       slots

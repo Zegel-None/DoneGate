@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 砂浆适配器普适填空式脚手架生成器（支持六大普适开源项目形态：诊断探针 / 工件生成 / 带UI去壳提取 / 运行时服务与状态 / 知识规则包 / 多源归并）
+// 适配器普适填空式脚手架生成器（支持六大普适开源项目形态：诊断探针 / 工件生成 / 带UI去壳提取 / 运行时服务与状态 / 知识规则包 / 多源归并）
 //
 // 用法：
 //   node skill/new-adapter.mjs <tool-name> [--archetype scanner|generator|ui-extract|runtime-service|knowledge-skill|aggregator] [--bin <bin>] [--role soft|hard] [--print] [--card-json] [--out <file>]
@@ -71,10 +71,10 @@ export function renderAdapterScaffold({ tool, bin = tool, role = 'soft', archety
   if (archetype === 'knowledge-skill' || archetype === 'aggregator') {
     const mode = archetype === 'knowledge-skill' ? 'knowledge' : 'artifact';
     const targetFlag = archetype === 'knowledge-skill' ? '--rules-file' : '--reports';
-    return `// 砂浆适配器 · ${tool}（形态：${archetype} · 免外部二进制，委托 ./_shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+    return `// 适配器 · ${tool}（形态：${archetype} · 免外部二进制，委托 ./_shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: '${tool}',
   mode: '${mode}',
   defaultRole: '${role}',
@@ -95,10 +95,10 @@ runMortarAdapter({
 `;
   }
   if (archetype === 'generator' || archetype === 'ui-extract') {
-    return `// 砂浆适配器 · ${tool}（形态：${archetype} · 去壳取核/产物落盘验真，委托 ./_shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+    return `// 适配器 · ${tool}（形态：${archetype} · 去壳取核/产物落盘验真，委托 ./_shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: '${tool}',
   defaultBin: '${bin}',
   defaultRole: '${role}',
@@ -123,10 +123,10 @@ runMortarAdapter({
 });
 `;
   }
-  return `// 砂浆适配器 · ${tool}（形态：${archetype} · 客观观测采集，委托 ./_shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+  return `// 适配器 · ${tool}（形态：${archetype} · 客观观测采集，委托 ./_shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: '${tool}',
   defaultBin: '${bin}',
   defaultRole: '${role}',

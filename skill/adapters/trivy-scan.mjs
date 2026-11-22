@@ -1,7 +1,7 @@
-// 砂浆适配器 · Trivy IaC/Dockerfile/文件系统安全配置与漏洞观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · Trivy IaC/Dockerfile/文件系统安全配置与漏洞观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'trivy',
   defaultRole: 'hard',
   degradedTo: '人工审查 Dockerfile、容器配置与 IaC 清单中的高危配置项',

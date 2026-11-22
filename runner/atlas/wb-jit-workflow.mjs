@@ -1,4 +1,4 @@
-// 开发看板「宏打底 + 节点级即时变招 (JIT)」前端控制器：卡片连招胶囊、需求变更派生微调、底座只增不减锁审批与一键沉淀为工作流宏
+// 开发看板「宏打底 + 节点级即时派生 (JIT)」前端控制器：卡片开发流胶囊、需求变更派生微调、底座只增不减锁审批与一键沉淀为预置宏
 export function buildWbJitWorkflowScript() {
   return String.raw`
 (function initDoneGateJitWorkflowModule() {
@@ -64,7 +64,7 @@ function inferClientDefaultMacroForNode(node) {
     deltaCount: 0,
     depsReady: (depSum.missingCount || 0) === 0,
     missingDepsCount: depSum.missingCount || 0,
-    reason: '总控按模块职责与路径自动预选基准连招宏'
+    reason: '总控按模块职责与路径自动预选基准预置宏'
   };
 }
 
@@ -87,14 +87,14 @@ window.renderSandboxWorkflowBadgeHtml = function renderSandboxWorkflowBadgeHtml(
   const dotColor = wf.depsReady === false ? 'var(--warn)' : 'var(--ok)';
   const deltaNum = wf.deltaCount || (wf.addedTplIds || []).length;
   const label = isForked
-    ? ('⚡ ' + (wf.baseMacroName || '派生连招') + ' (+' + deltaNum + ')')
-    : ('连招：' + (wf.baseMacroName || '基准护栏'));
+    ? ('⚡ ' + (wf.baseMacroName || '派生开发流') + ' (+' + deltaNum + ')')
+    : ('开发流：' + (wf.baseMacroName || '基准护栏'));
   const totalCount = (wf.tplIds || []).length;
   const tip = isForked
-    ? ('已按节点新需求局部变招（共 ' + totalCount + ' 块积木，底座护栏已锁死）· 点击打开连招微调与沉淀面板')
-    : ((wf.reason || '总控自动配招') + '（共 ' + totalCount + ' 块积木）· 点击可按新需求局部变招');
+    ? ('已按节点新需求局部派生（共 ' + totalCount + ' 个节点，底座护栏已锁死）· 点击打开开发流微调与沉淀面板')
+    : ((wf.reason || '总控自动选配') + '（共 ' + totalCount + ' 个节点）· 点击可按新需求局部派生');
   const rightPart = (!ro && isForked)
-    ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有连招一键另存为全局工作流宏">💾 存宏</button>')
+    ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有开发流一键另存为全局预置宏">💾 存宏</button>')
     : '<span class="text-[10px] shrink-0" style="color:var(--text-muted);" data-tip="底座护栏只增不减锁已生效">🔒底座</span>';
   return '<div class="dg-sb-wf-bar" data-stop-drag="1">'
     + '<button type="button" class="dg-sb-wf-pill ' + (isForked ? 'is-forked' : '') + '" data-jit-open="' + esc(node.id) + '" data-stop-drag="1" data-tip="' + esc(tip) + '">'
@@ -147,7 +147,7 @@ function applyOfflineJitMutation(node, opts) {
     addedTplIds: added,
     deltaCount: added.length,
     lastRequirement: String(opts.requirementText || '').trim(),
-    reason: opts.requirementText ? ('已按新需求「' + String(opts.requirementText).slice(0, 36) + '」局部变招') : '已更新节点私有连招',
+    reason: opts.requirementText ? ('已按新需求「' + String(opts.requirementText).slice(0, 36) + '」局部派生') : '已更新节点私有开发流',
     updatedAt: new Date().toISOString()
   };
   state.componentWorkflows[node.id] = next;
@@ -170,7 +170,7 @@ window.requestJitAssignNode = async function requestJitAssignNode(nodeId, prefer
         state.componentWorkflows[node.id] = j.binding;
         renderCanvas();
         if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-        showToast('🎯 已为「' + node.title + '」配招：' + j.binding.baseMacroName);
+        showToast('🎯 已为「' + node.title + '」选配：' + j.binding.baseMacroName);
         return j.binding;
       }
     } catch (err) { void err; }
@@ -187,7 +187,7 @@ window.requestJitAssignNode = async function requestJitAssignNode(nodeId, prefer
   state.componentWorkflows[node.id] = fallback;
   renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('🎯 已为「' + node.title + '」挂载连招：' + fallback.baseMacroName);
+  showToast('🎯 已为「' + node.title + '」挂载开发流：' + fallback.baseMacroName);
   return fallback;
 };
 
@@ -205,7 +205,7 @@ window.requestJitAssignAllSandbox = async function requestJitAssignAllSandbox() 
       if (r.ok && j && j.ok && j.bindings) {
         state.componentWorkflows = { ...(state.componentWorkflows || {}), ...j.bindings };
         renderCanvas();
-        showToast('🎯 总控已为全部 ' + j.assignedCount + ' 个看板组件自动配妥最佳连招');
+        showToast('🎯 总控已为全部 ' + j.assignedCount + ' 个看板组件自动配妥最佳开发流');
         return;
       }
     } catch (err) { void err; }
@@ -213,7 +213,7 @@ window.requestJitAssignAllSandbox = async function requestJitAssignAllSandbox() 
   if (!state.componentWorkflows) state.componentWorkflows = {};
   nodes.forEach((n) => { state.componentWorkflows[n.id] = inferClientDefaultMacroForNode(n); });
   renderCanvas();
-  showToast('🎯 总控已为全部 ' + nodes.length + ' 个组件匹配连招');
+  showToast('🎯 总控已为全部 ' + nodes.length + ' 个组件匹配开发流');
 };
 
 window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts = {}) {
@@ -238,7 +238,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
       });
       const j = await r.json();
       if (!r.ok || !j.ok) {
-        jitUiState.lastError = j.reason || j.error || '连招微调被安全护栏拦截';
+        jitUiState.lastError = j.reason || j.error || '开发流微调被安全护栏拦截';
         if (j.requiresHumanApproval) {
           jitUiState.pendingApproval = { nodeId: node.id, blockedTplIds: j.blockedTplIds || [], blockedTitles: j.blockedTitles || [], requirementText: opts.requirementText || '' };
         }
@@ -250,7 +250,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
       state.componentWorkflows[node.id] = j.binding;
       renderCanvas();
       if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-      showToast('⚡ 「' + node.title + '」已按新需求局部变招（+' + j.binding.deltaCount + ' 积木）');
+      showToast('⚡ 「' + node.title + '」已按新需求局部派生（+' + j.binding.deltaCount + ' 节点）');
       return j;
     } catch (err) { void err; }
   }
@@ -266,7 +266,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
   }
   renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('⚡ 「' + node.title + '」已按新需求局部变招（+' + off.binding.deltaCount + ' 积木）');
+  showToast('⚡ 「' + node.title + '」已按新需求局部派生（+' + off.binding.deltaCount + ' 节点）');
   return off;
 };
 
@@ -274,7 +274,7 @@ window.requestJitPromoteToMacro = async function requestJitPromoteToMacro(nodeId
   const node = getActiveNodesList().find((n) => n.id === nodeId);
   if (!node) return null;
   const wf = window.resolveClientComponentWorkflow(node);
-  const macroName = String(customName || (node.title + '沉淀连招')).trim();
+  const macroName = String(customName || (node.title + '沉淀开发流')).trim();
   if (/^https?:$/i.test(location.protocol)) {
     try {
       await window.requestJitAssignNode(node.id, wf.baseMacroId);
@@ -313,14 +313,14 @@ window.requestJitPromoteToMacro = async function requestJitPromoteToMacro(nodeId
       builtLinks.push({ id: 'ml-' + (i + 1), fromNode: a.id, fromSlot: a.outputs[0].id, toNode: b.id, toSlot: b.inputs[0].id, type: a.outputs[0].type || 'ANY' });
     }
   }
-  const newMacro = { id: macroId, group: '项目沉淀连招宏', name: macroName, tip: '由组件「' + node.title + '」一键沉淀复用', nodes: builtNodes, links: builtLinks, groups: [] };
+  const newMacro = { id: macroId, group: '项目沉淀宏', name: macroName, tip: '由组件「' + node.title + '」一键沉淀复用', nodes: builtNodes, links: builtLinks, groups: [] };
   WORKFLOW_PACKS[macroId] = newMacro;
-  if (!WORKFLOW_GROUPS.includes('项目沉淀连招宏')) WORKFLOW_GROUPS.push('项目沉淀连招宏');
+  if (!WORKFLOW_GROUPS.includes('项目沉淀宏')) WORKFLOW_GROUPS.push('项目沉淀宏');
   state.componentWorkflows[node.id] = { ...wf, mode: 'macro', baseMacroId: macroId, baseMacroName: macroName, addedTplIds: [], deltaCount: 0 };
   renderLeftDrawer();
   renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('💾 已另存为工作流宏「' + macroName + '」');
+  showToast('💾 已另存为预置宏「' + macroName + '」');
   return newMacro;
 };
 
@@ -330,7 +330,7 @@ window.handleSubagentJitChat = async function handleSubagentJitChat(node, text) 
     if (saved) {
       state.chatMessages.push({
         role: 'agent',
-        html: '已将节点「<b>' + esc(node.title) + '</b>」的私有连招一键沉淀为全局工作流宏「<b>' + esc(saved.name) + '</b>」，已同步至「开发流」列表供所有后续组件直接套用。'
+        html: '已将节点「<b>' + esc(node.title) + '</b>」的私有开发流一键沉淀为全局预置宏「<b>' + esc(saved.name) + '</b>」，已同步至「开发流」列表供所有后续组件直接套用。'
       });
       renderRightSidebar();
       return true;
@@ -341,7 +341,7 @@ window.handleSubagentJitChat = async function handleSubagentJitChat(node, text) 
     const chainNames = (res.binding.tplIds || []).map((id) => (BLOCK_TEMPLATES[id] && BLOCK_TEMPLATES[id].title) || id).join(' → ');
     state.chatMessages.push({
       role: 'agent',
-      html: '⚡ <b>总控已完成节点级即时变招</b>（执行端 Worker 只读锁定）：<br>• 适用组件：<b>' + esc(node.title) + '</b><br>• 当前连招链：<code>' + esc(chainNames) + '</code><br>• 底座护栏锁：<code>防 AI 手搓护栏套件</code> 保持锁死不可删减。'
+      html: '⚡ <b>总控已完成节点级即时派生</b>（执行端 Worker 只读锁定）：<br>• 适用组件：<b>' + esc(node.title) + '</b><br>• 当前开发流：<code>' + esc(chainNames) + '</code><br>• 底座护栏锁：<code>防 AI 手搓护栏套件</code> 保持锁死不可删减。'
     });
     renderRightSidebar();
     return true;
@@ -388,7 +388,7 @@ function renderJitWorkflowModal() {
     const isAdded = addedSet.has(tplId);
     const arrow = idx > 0 ? '<span class="text-xs opacity-60">→</span>' : '';
     const icon = isFloor ? '🔒' : (isAdded ? '⚡' : '•');
-    const rmTitle = isFloor ? '底座护栏默认锁死（点击将触发人工审批保护）' : '移除此增量积木';
+    const rmTitle = isFloor ? '底座护栏默认锁死（点击将触发人工审批保护）' : '移除此增量节点';
     return arrow
       + '<span class="dg-jit-chip ' + (isFloor ? 'is-floor ' : '') + (isAdded ? 'is-added' : '') + '">'
       + '<span>' + icon + ' ' + esc(tpl.title || tplId) + '</span>'
@@ -420,8 +420,8 @@ function renderJitWorkflowModal() {
   rootEl.innerHTML = '<div class="dg-jit-modal" data-stop-drag="1">'
     + '<div class="flex items-start justify-between gap-3">'
     + '<div>'
-    + '<div class="text-sm font-semibold">节点连招装配与即时变招 · 「' + esc(node.title) + '」</div>'
-    + '<div class="text-[11px] mt-0.5" style="color: var(--text-muted);">🛡️ 权限隔离：总控 (Super Agent) 动态配招变招 · 执行端 (Worker) 只读过关 · 底座护栏只增不减</div>'
+    + '<div class="text-sm font-semibold">节点开发流装配与即时派生 · 「' + esc(node.title) + '」</div>'
+    + '<div class="text-[11px] mt-0.5" style="color: var(--text-muted);">🛡️ 权限隔离：总控 (Super Agent) 动态选配派生 · 执行端 (Worker) 只读过关 · 底座护栏只增不减</div>'
     + '</div>'
     + '<button type="button" class="dg-jit-btn" data-jit-close="1">关闭</button>'
     + '</div>'
@@ -431,27 +431,27 @@ function renderJitWorkflowModal() {
     + '<select id="dg-jit-macro-select" class="dg-jit-input" style="width: auto; padding: 4px 8px;">' + macroOptions + '</select>'
     + '<button type="button" class="dg-jit-btn" data-jit-switch-macro="1">套用此宏</button>'
     + '</div>'
-    + '<span class="text-[11px]" style="color: var(--text-muted);">' + (wf.mode === 'jit-forked' ? '当前状态：节点私有派生连招（不污染全局宏）' : '当前状态：复用基准工作流宏') + '</span>'
+    + '<span class="text-[11px]" style="color: var(--text-muted);">' + (wf.mode === 'jit-forked' ? '当前状态：节点私有派生开发流（不污染全局宏）' : '当前状态：复用基准预置宏') + '</span>'
     + '</div>'
     + '<div>'
-    + '<div class="text-[11px] mb-1.5 font-medium" style="color: var(--text-secondary);">当前生效确定性连招链（共 ' + (wf.tplIds || []).length + ' 块积木）：</div>'
+    + '<div class="text-[11px] mb-1.5 font-medium" style="color: var(--text-secondary);">当前生效确定性开发流（共 ' + (wf.tplIds || []).length + ' 个节点）：</div>'
     + '<div class="dg-jit-chain">' + chainHtml + '</div>'
     + '</div>'
     + approvalHtml
     + '<div class="flex flex-col gap-1.5">'
-    + '<label class="text-[11px] font-medium" style="color: var(--text-secondary);">改需求即时变招（描述新需求，总控自动前置/追加匹配积木）：</label>'
+    + '<label class="text-[11px] font-medium" style="color: var(--text-secondary);">改需求即时派生（描述新需求，总控自动前置/追加匹配节点）：</label>'
     + '<div class="flex items-center gap-2">'
     + '<input id="dg-jit-req-input" type="text" class="dg-jit-input flex-1" placeholder="例如：改需求支持自定义公式解析，并联网拉取实时汇率 API..." value="' + esc(wf.lastRequirement || '') + '">'
-    + '<button type="button" class="dg-jit-btn is-solid shrink-0" data-jit-run-mutate="1">⚡ 按新需求变招</button>'
+    + '<button type="button" class="dg-jit-btn is-solid shrink-0" data-jit-run-mutate="1">⚡ 按新需求派生</button>'
     + '</div></div>'
     + '<div>'
-    + '<div class="text-[11px] mb-1.5" style="color: var(--text-secondary);">或从原子积木池手动点选追加：</div>'
+    + '<div class="text-[11px] mb-1.5" style="color: var(--text-secondary);">或从工具节点池手动点选追加：</div>'
     + '<div class="flex flex-wrap gap-1.5">' + addButtons + '</div>'
     + '</div>'
     + '<div class="pt-2 border-t flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border-subtle);">'
     + '<div class="flex items-center gap-2 flex-1 min-w-[220px]">'
-    + '<input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新工作流宏名称..." value="' + esc(node.title + '专属连招') + '">'
-    + '<button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为工作流宏</button>'
+    + '<input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新预置宏名称..." value="' + esc(node.title + '专属开发流') + '">'
+    + '<button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为预置宏</button>'
     + '</div>'
     + jumpBtnHtml
     + '</div></div>';

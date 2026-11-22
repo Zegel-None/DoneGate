@@ -1,4 +1,4 @@
-// 项目看板多组件拓扑级过夜挂机总控编排器（Campaign Autopilot）：按组件依赖顺序自动配招/变招、分组件校验写入范围、共享 Worktree 汇总合回
+// 项目看板多组件拓扑级过夜挂机总控编排器（Campaign Autopilot）：按组件依赖顺序自动选配/派生、分组件校验写入范围、共享 Worktree 汇总合回
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -146,7 +146,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
     hub.emit({
       type: 'gate_settled', nodeId: comp.id, exitCode: subOut.exitCode,
       durationMs: subOut.checkpoint?.completedNodes?.length || 0, cacheHit: false,
-      diagSummary: subOut.reason || `${binding.baseMacroName || '连招'} -> exit ${subOut.exitCode}`
+      diagSummary: subOut.reason || `${binding.baseMacroName || '开发流'} -> exit ${subOut.exitCode}`
     });
     componentReports.push({
       nodeId: comp.id, title: comp.title, workflowName: binding.baseMacroName || binding.pack?.name || binding.mode,
@@ -159,7 +159,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
       const campState = saveCampaignState(root, {
         campaignId, state: 'ABORTED_BREAKER', failedComponentId: comp.id, failedComponentTitle: comp.title,
         code: subOut.code || 'COMPONENT_FAILED',
-        reason: subOut.reason || subOut.breaker?.reason || `组件「${comp.title}」未通过连招门禁`,
+        reason: subOut.reason || subOut.breaker?.reason || `组件「${comp.title}」未通过开发流门禁`,
         orderedIds, completedComponentIds: [...completedComponentIds], componentReports,
         sandboxWorktree: quarantined, totalCacheHits
       });
@@ -190,7 +190,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
     type: 'dock_item',
     item: {
       id: campaignId, kind: 'summary', tone: 'ok',
-      title: `🌅 项目拓扑挂机完成：按序跑通 ${ordered.length}/${ordered.length} 个组件专属连招（缓存命中 ${totalCacheHits} 项）`,
+      title: `🌅 项目拓扑挂机完成：按序跑通 ${ordered.length}/${ordered.length} 个组件专属开发流（缓存命中 ${totalCacheHits} 项）`,
       card: summaryCard
     }
   });

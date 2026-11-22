@@ -1,9 +1,9 @@
-// 砂浆适配器 · dotenv-linter 环境变量文件规范与键对比观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · dotenv-linter 环境变量文件规范与键对比观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'dotenv-linter',
   defaultRole: 'soft',
   degradedTo: '人工逐键比对 .env.example 与本地 .env',

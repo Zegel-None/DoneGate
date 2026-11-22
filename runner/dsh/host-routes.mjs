@@ -1,4 +1,4 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包、UI看板、JIT配招与实时遥测）
+// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5复核包、UI看板、JIT选配与实时遥测）
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
@@ -106,7 +106,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const cid = String(body.contractId || '').trim();
       const resPack = cmdVerifyPack(root, { id: cid, base: body.base, head: body.head, out: body.out });
       const relPackDir = resPack.packDir ? normalizeSlashes(relative(root, resPack.packDir)) : null;
-      const judgePrompt = relPackDir ? `/donegate-judge 请对盲判复核包 ${relPackDir} 执行 V1–V5 独立盲审并给出 pass/fail/unknown 裁决` : '';
+      const judgePrompt = relPackDir ? `/donegate-judge 请对复核包 ${relPackDir} 执行 V1–V5 独立盲审并给出 pass/fail/unknown 裁决` : '';
       hub.emit({
         type: 'dock_item',
         item: {
@@ -114,8 +114,8 @@ export function createDoneGateWebRouteHandler(projectRoot) {
           kind: resPack.exitCode === 0 ? 'summary' : 'question',
           tone: resPack.exitCode === 0 ? 'ok' : 'warn',
           title: resPack.exitCode === 0
-            ? `⚖️ 契约「${cid}」门 5 盲判包已生成：${relPackDir}`
-            : `⚖️ 契约「${cid}」盲判打包未就绪（exit ${resPack.exitCode}）：${String(resPack.stderr || '').split('\n')[0]}`
+            ? `⚖️ 契约「${cid}」门 5 复核包已生成：${relPackDir}`
+            : `⚖️ 契约「${cid}」盲审打包未就绪（exit ${resPack.exitCode}）：${String(resPack.stderr || '').split('\n')[0]}`
         }
       });
       sendJson(res, 200, {
@@ -148,7 +148,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
           id: `japply-${Date.now()}`,
           kind: resApply.exitCode === 0 ? 'summary' : 'blocked',
           tone: resApply.exitCode === 0 ? 'ok' : 'bad',
-          title: resApply.exitCode === 0 ? '⚖️ 门 5 盲判裁决已验真并写入哈希链' : `⚖️ 门 5 盲判裁决未通过（exit ${resApply.exitCode}）`
+          title: resApply.exitCode === 0 ? '⚖️ 门 5 盲审裁决已验真并写入哈希链' : `⚖️ 门 5 盲审裁决未通过（exit ${resApply.exitCode}）`
         }
       });
       sendJson(res, 200, {
@@ -222,7 +222,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       sendJson(res, 200, {
         ok: true,
         sourcePath: tool ? `.donegate/adapters/${tool}/observation.json` : '尚未生成运行观测',
-        content: '// 该积木当前尚无本地运行观测产物；点击顶栏「▶ 运行检查」或「🌙 挂机」后即可在此实时检视结构化观测 JSON 与门禁输出。',
+        content: '// 该节点当前尚无本地运行观测产物；点击顶栏「▶ 运行检查」或「🌙 挂机」后即可在此实时检视结构化观测 JSON 与门禁输出。',
         telemetry: null
       });
       return true;

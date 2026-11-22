@@ -1,5 +1,5 @@
 {
-  "说明": "砖头能力清单：Ruff Python 静态语法与未定义符号检查。",
+  "说明": "工具能力清单：Ruff Python 静态语法与未定义符号检查。",
   "tool": "ruff",
   "registryId": "ruff@stage4",
   "role": "soft",

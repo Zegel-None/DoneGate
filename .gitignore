@@ -33,7 +33,7 @@ reports/
 coverage/
 # 开发流按需拉取的外部开源项目与专属隔离运行环境（类 ComfyUI 模型目录，不随仓库打包）
 workflows/.deps/
-# V4 adapter & evidence runtime outputs (Mortar Protocol v1.1)
+# V4 adapter & evidence runtime outputs (Adapter Protocol v1.1)
 .node-contract/adapters/
 .donegate/adapters/
 .donegate/evidence/

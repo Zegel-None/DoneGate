@@ -1,9 +1,9 @@
-// 砂浆适配器 · actionlint GitHub Actions 工作流静态核查观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
+// 适配器 · actionlint GitHub Actions 工作流静态核查观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'actionlint',
   defaultRole: 'hard',
   versionArgs: ['-version'],

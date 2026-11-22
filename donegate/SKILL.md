@@ -127,75 +127,38 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 
 先读完第零节，再来查这张表。任何只走表面口号、跳过真实证据与独立复核的做法，都会让你误以为自己已经被拦住了。
 
-## 八、全绿却出 Bug？漏网复盘与安全自迭代（五步闭环）
+## 八、漏网复盘与自迭代（五步闭环）
 
-只要出现「全套门禁都报全绿、但实际用起来还是出了 bug」，说明门禁存在盲区。修完当前症状不算完，必须走完五步闭环，**绝不允许小模型/补丁直接改完就提交**：
+若门禁全绿仍出线上/真机缺陷，修完症状后须走完五步闭环，禁直接提交：
+1. **定位盲区**：查清全绿漏检根因（跨平台路径/换行、边界顺序、工具参数等）。
+2. **同类横扫**：按同一根因排查其余脚本、卡片、适配器与模块，一次清净。
+3. **补独立门禁**：编写先红后绿的复现检查，运行 `node <DoneGate根>/skill/check-escapes.mjs --record ...` 记入 `.donegate/escapes.jsonl`。
+4. **全仓自检**：提交前必跑 `node <DoneGate根>/skill/check-escapes.mjs --self-check --project .`，未全绿禁 `git commit`。
+5. **反馈上游**：若盲区属 DoneGate 自身，征得用户同意后运行 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏草稿，可用 `gh issue create --repo q862877400-ux/DoneGate` 提交。
 
-1. **追问为什么没拦住**：找出当时全绿漏检的原因（例如跨平台换行、默认路径、边界顺序、外部工具参数），以及深层根因。
-2. **同类横扫**：按同一个根因把项目里其余脚本、卡片、适配器或模块全扫一遍，类似隐患一次改干净。
-3. **补一条独立门禁并登记**：写出一条能先红后绿的复现检查，用 `node <DoneGate根>/skill/check-escapes.mjs --record ...` 登记进项目 `.donegate/escapes.jsonl`（试跑不通过会直接拒绝登记）。
-4. **用项目自己完整核查一遍自己（必须先过这关才准提交生效）**：补完门禁或改完规则后，**提交前**必须跑一遍全套自我核查，确认没有把自己改崩：
-   `node <DoneGate根>/skill/check-escapes.mjs --self-check --project .`
-   任何一项报错，立刻修正或回滚，**未全绿前禁止 `git commit` 或宣布完成**。
-5. **若盲区在 DoneGate 自身，引导提 GitHub Issue**：在征得用户同意后，跑 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏 Issue 草稿；若本机已有已登录的 `gh` CLI，可协助用 `gh issue create --repo q862877400-ux/DoneGate` 提交，并转达这句社区约定：
+## 九、实时进度播报（机械现算，禁手编）
 
-> 众人拾柴火焰高——你踩过的坑反馈上来，修成一条新门禁，下次拉取更新时所有人的成果都能直接为你守门。欢迎提个 Issue，你也来添一把柴！
+1. **原样转发**：`init / contract new / contract freeze / check / teeth / status / handover / verify pack / verify apply / run-stage.mjs / check-escapes.mjs` 均现算输出 `#### 📊 DoneGate · 验收进度`，禁手估百分比或堆砌内部术语。
+2. **三档异常直报**：`⚠️ 阻断提醒（exit 3）` 报缺件与下一步命令；`❌ 检查未通过（exit 1）` 点名失败项修复；`🚨 严重事故（exit 2）` 遇哈希断链或越界立即停机待查。
+3. **扩展备注走脚本**：
+   - 报喜（必附真凭据）：`node <DoneGate根>/skill/progress-note.mjs --kind good --stage <1..4> --title "结论" --verify-cmd "<实跑命令>" --root .`
+   - 报忧：`node <DoneGate根>/skill/progress-note.mjs --kind worry --stage <1..4> --title "风险点" --detail "影响与待办" --root .`
+   - 禁伪造进度条或手改 `.donegate/notes.jsonl`（带 `noteHash` 封印）。
 
-## 九、全流程实时进度播报（机械触发，严禁手编）
+## 十、动工前澄清
 
-禁止在写完一大段代码后才闷头报告，也禁止用「frozenHash / 档 A / 算数 A1」这类黑话糊弄用户，更不许自己估算百分比：
+1. **老项目先探图**：存量代码先跑 `codegraph status / explore` 摸清依赖边界再划 `contracts/`。
+2. **聚焦追问（仅人类会话）**：每次问 `1` 个关键问题（或 `<=3` 题选项并附推荐项），最多 `5` 轮，聚焦成功判据、不做边界与异常口径；自主子代理按默认口径自决并记缺口。
+3. **落盘纪律**：禁另建 `PRD.md`；`functions/*.json` 的 `source` 须逐字摘录用户原话（`INV-18`）；`CONSTRAINTS.md` 仅放项目级红线（常驻 `<=6`、临时 `<=12`）。
+4. **按需查 API**：规划期禁拉第三方库文档；编码期遇不熟库再按需调用 Context7 查当前版本真实签名。
 
-1. **只转发脚本现算的卡片**：`init`、`contract new`、`contract freeze`、`check`、`teeth`、`status`、`handover`、`verify pack/apply`、`run-stage.mjs`、`check-escapes.mjs` 每次跑完都会从当前项目真实状态现算出一段 **`#### 📊 DoneGate · 验收进度`**（含分阶段顶格 + 空 2 格缩进子项 + 实时总进度条）。
-2. **三档报忧卡片，出事立刻照实报**：
-   - `⚠️ 阻断提醒（exit 3）`：前置环境/材料没备齐（如脏树、缺 `breakPatch`、未 `codegraph sync`），进度条暂停不涨，直接报缺失项与下一步命令。
-   - `❌ 检查未通过（exit 1）`：真正跑红（门 0/1/2 不过、检查项报错、变异存活、盲审打回），点名失败子项并定位修复。
-   - `🚨 严重事故（exit 2）`：哈希断链、疑似篡改、禁词越界、还原失败，立即停下等待核查。
-3. **开放扩展入口与防撒谎模板（用户 Agent 可按模板补充，但不许撒谎）**：
-   除机械状态外，允许用户项目里的 Agent 补充阶段性报喜或报忧，**必须走 `progress-note.mjs` 并严守两条铁律**（违者直接退 `1`/`2` 并标 `🚨 拦截·未验真`）：
-   - **报喜模板（`--kind good`，严禁空口白话，必附真凭据）**：
-     `node <DoneGate根>/skill/progress-note.mjs --kind good --stage <1..4> --title "简短实测结论" --verify-cmd "<实跑命令>" --root .`
-     （或用 `--evidence "<项目内非空证据文件>"` 锁死 SHA-256 指纹；命令退非 `0` 禁止报喜）
-   - **报忧/告警模板（`--kind worry|alert`）**：
-     `node <DoneGate根>/skill/progress-note.mjs --kind worry --stage <1..4> --title "客观风险点" --detail "影响与待办" --root .`
-   - **禁止篡改口径**：不许写假进度条（`██░`）、百分比或「全部通关/全部完成」，不许绕过脚本手改 `.donegate/notes.jsonl`（带 `noteHash` 封印，提交前由 `check-escapes.mjs --project` 复验）。
-4. **每轮对话必同步、简短肯定**：只要推进了一个节点就立刻把进度卡原样展示给用户（只用简短、肯定的技术语言，不要啰嗦）。
+## 十一、DeepSeek Harness Web 协同
 
-## 十、动工前澄清（融合 `grill-me` 拷问法与 `CodeGraph` 先探现状）
+1. **总控与执行隔离**：主会话（`dsh-donegate-router`）解析底部输入框蓝色引用胶囊（`[DG-TARGET uri=dg://...]`）、查 `status/gaps` 并通过 `subagent` 派发隔离执行端（`dsh-donegate-worker`）；执行端仅在契约 `scope[]` 内改码过 `0/1/2/3` 门禁，连续失败按干净摘要重启。
+2. **微卡与卡包顶栏**：`@local/dsh-donegate` 挂载顶栏「完结门」视图与输入框开关；节点回执浓缩为两行验真微卡，全局消息收拢至输入框上方无缝卡包抽拉浮层。
 
-在 `donegate init` 之后、建首个契约之前，如果需求还模糊，**不要直接猜着建契约或写代码**：
+## 十二、小模型增量提交纪律（`pre-commit` 强拦）
 
-1. **存量老项目先看图再划边界**：若仓库已有业务代码，先跑 `codegraph status` / `codegraph explore` 摸清现有模块与依赖边界，再切 `contracts/`，禁止盲划 `scope`。
-2. **决策树拷问澄清（融合 `grill-me` 思路，仅限人类交互会话）**：
-   - 一次只问 **1 个关键问题**（或不超过 3 题带 `A/B/C/D` 选项的速选题），附上你的推荐答案；能读代码确认的自己去查，不准问人。
-   - 最多追问 **5 轮**，聚焦三件事：什么算成功、什么明确不做、边界/异常怎么算。**自主子代理严禁停下来等回答**，需按卡的默认口径自决并写明缺口。
-3. **三条落盘红线（防与 DoneGate 规格冲突）**：
-   - **禁止额外写 `PRD.md`**：拷问结果直接落进 `INTENT.md`、`CONSTRAINTS.md` 与 `functions/*.json`。
-   - **守住 `INV-18`**：`functions/*.json` 的 `source` 必须**逐字摘录用户在追问中自己说出的原话**，不许用 AI 总结改写顶替。
-   - **守住 `链 F` 配额**：`CONSTRAINTS.md` 只放项目级红线（常驻 ≤6、临时 ≤12），单功能验收项写进对应 `contract.json` 的 `obligations`。
-4. **编码期防幻觉 API（`Context7` 可选引导）**：**不要在阶段 1 规划期拉取第三方库文档**（会挤爆规划上下文）；进入阶段 2 写代码时，若用到更新快或不熟悉的第三方库且本机配了 Context7 MCP，再按库名与当前版本查真实 API 签名，避免凭记忆编接口。
-
-## 十一、DeepSeek Harness Web 原生协同（Super Agent 调度、蓝色引用胶囊与三层输出）
-
-本项目深度绑定 **DeepSeek Harness (`DSH` Web UI)** 生态（不提供桌面端，不保留其他宿主兼容分叉），按以下分工运转：
-
-1. **Super Agent 主会话调度 + Worker 干净子代理施工**：
-   - 主会话（`dsh-donegate-router` 预设）只负责理解用户在底部原生输入框累加的蓝色引用胶囊（`[DG-TARGET uri=dg://...]`）、跑 `status` / `gaps`、遇到空白待定节点向用户追问拍板，并通过 `subagent`（`provider: spawn`）将具体契约与工作流派发给隔离工兵（`dsh-donegate-worker`）；
-   - 工兵子代理仅在授权契约 `scope[]` 内改码，并接受完结门 `0/1/2/3` 确定性退出码门禁验真；红灯超限时按 `fresh_ralph` 干净交接摘要重启，严禁在单会话腐烂上下文中死磕。
-2. **画布视图夺舍与零废话微卡回传**：
-   - 通过 `@local/dsh-donegate` 插件挂载会话顶栏「完结门」视图（`conversation.view`）与输入框左侧「⛩ 完结门」开关，仅接管消息记录区并保留底部原生输入框；
-   - 完工回执严禁刷屏长文，统一浓缩为锚定在目标节点上的**两行确定性验真微卡**（退出码门禁结果 + 改动文件统计 + `👁 右栏看改动` 直达 `sidebarRight` + `↩ 撤销`），无目标全局回复与追问统一收拢至输入框正上方的 `conversation.input.dock` 悬停折叠扁条。
-
-## 十二、小模型防翻车铁律（每轮提交量级预算与 `pre-commit` 硬拦截）
-
-当执行者是上下文较短或容易偷懒的小模型时，必须严守以下四条增量纪律（已由 `.githooks/pre-commit` 与 `check-commit-hygiene.mjs` 在 `git commit` 时自动强制拦截）：
-
-1. **老项目接手先装钩子**：`donegate init` 会自动写入 `.githooks/pre-commit`；存量仓库首次启用请先跑 `node <DoneGate根>/skill/install-hooks.mjs --root .`，确保每次 `git commit` 自动触发提交前检查，不靠模型自觉记忆。
-2. **严控单次提交量级（小步快跑）**：单次 `git commit` 新增代码不得超过 **300 行**、涉及代码文件不得超过 **8 个**、单个源码文件总长不得超过 **700 行**（可在 `thresholds.json` 调整）；超限必须拆分成多次可独立跑绿的小提交，严禁攒上千行一次性盲交。
-3. **严禁改测试凑绿与留空壳代码**：暂存区 diff 中禁止新增 `.skip` / `.only` / `.todo`、恒真假断言（`expect(true).toBe(true)`）、linter 强行豁免（`eslint-disable` / `biome-ignore` / `@ts-ignore`）、净删既有断言、未完成占位符（`TODO` / `FIXME` / `Not implemented`）或空 `catch {}` 吞异常。
-4. **逃生口必须留痕备查**：确属清理临时文件等合理特例时，只许写 `// dg-allow: <至少6字具体原因>`，系统会自动记入 `.donegate/hygiene-bypasses.jsonl`；写无理由敷衍词直接判协议事故（退 `2`）。
-
-## 十三、小模型施工防翻车纪律（草稿箱、契约认领与单轮预算）
-
-1. **一次性试验脚本只准放 `.donegate/scratch/`**：调错或试跑严禁在仓库根私建 `_xxx/`、`tmp/` 等野目录；凡放入 `.donegate/scratch/` 的临时文件会在 `check-escapes.mjs --self-check` 全绿后自动清空。
-2. **新增业务源码必须先挂入契约 `scope[]`**：在已有活跃契约的项目中，新创建的业务代码文件必须归属至少一个未退役 `contracts/<id>/contract.json` 的 `scope`；未认领的未跟踪野文件可跑 `node <DoneGate根>/skill/check-commit-hygiene.mjs --quarantine` 安全移入 `.donegate/quarantine/` 隔离留底（绝不直接物理删除）。
-3. **严禁懒惰省略注释与超量提交**：禁止用 `// ... existing code ...` 或 `# 其余代码保持不变` 省略原文件逻辑；单次提交严控 `≤ 300` 行新增代码、`≤ 8` 个代码文件、单文件总长 `≤ 700` 行，提交前跑通 `check-module-integrity.mjs` 与 `--self-check`。
+1. **先装钩子**：首次接手存量仓先跑 `node <DoneGate根>/skill/install-hooks.mjs --root .`。
+2. **单步预算**：单次提交新增代码 `<=300` 行、涉及源码文件 `<=8` 个、单文件有效代码 `600` 行预警 / `850` 行硬顶（见 `thresholds.json`），禁使用 `// ... existing code ...` 省略逻辑。
+3. **禁凑绿与野文件**：禁 `.skip/.only/.todo`、恒真断言、linter 豁免、`TODO/FIXME` 或空 `catch {}`；临时脚本仅放 `.donegate/scratch/`；新增业务源码须归入活跃契约 `scope[]`（未认领文件用 `check-commit-hygiene.mjs --quarantine` 隔离）；特例逃生须写 `// dg-allow: <至少6字原因>`。

@@ -1,9 +1,9 @@
-// 砂浆层唯一公共运行器（Mortar Protocol v1.1 · IoC 模板底座，仅依赖 Node 内置模块）
+// 适配器层唯一公共运行器（Adapter Protocol v1.1 · IoC 模板底座，仅依赖 Node 内置模块）
 //
 // 为什么存在本模块：
 //   消除 22 个具体适配器里重复手搓的参数解析、--stage/--checked-by 越权拦截、注册表校验、
 //   跨平台二进制查找与版本提取、semver 范围核对、git 脏树拒收、SHA-256 哈希与严格九字段落盘。
-//   所有具体适配器禁止直接 import node:crypto 或 node:child_process，必须统一调用 runMortarAdapter。
+//   所有具体适配器禁止直接 import node:crypto 或 node:child_process，必须统一调用 runAdapter。
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -126,7 +126,7 @@ function resolveExecutable(spec, fallbackCandidates = []) {
   return null;
 }
 
-export function runMortarAdapter(spec) {
+export function runAdapter(spec) {
   const argv = process.argv.slice(2);
   if (argv.includes('--stage') || argv.includes('--checked-by')) {
     fail(2, '协议违规：禁止传入 --stage 或 --checked-by（仅从 registry 抄录）');

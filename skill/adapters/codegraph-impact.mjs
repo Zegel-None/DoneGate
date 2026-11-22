@@ -1,7 +1,7 @@
-// 砂浆适配器 · codegraph 影响面与循环依赖观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · codegraph 影响面与循环依赖观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'codegraph',
   defaultRole: 'hard',
   requireRegistryId: true,

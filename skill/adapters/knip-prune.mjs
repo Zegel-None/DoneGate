@@ -1,7 +1,7 @@
-// 砂浆适配器 · Knip 死代码与无用依赖观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · Knip 死代码与无用依赖观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'knip',
   defaultRole: 'soft',
   degradedTo: '人工核对 package.json 依赖清单与各模块未引用文件',

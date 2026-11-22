@@ -1,7 +1,7 @@
-// 砂浆适配器 · fuck-u-code 复杂度观测（Mortar Protocol v1.1 · 委托 _shared.mjs）
-import { runMortarAdapter } from './_shared.mjs';
+// 适配器 · fuck-u-code 复杂度观测（Adapter Protocol v1.1 · 委托 _shared.mjs）
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'fuck-u-code',
   defaultRole: 'soft',
   degradedTo: '人工按同一格式手写圈复杂度与高风险文件清单',

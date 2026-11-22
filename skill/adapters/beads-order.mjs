@@ -1,9 +1,9 @@
-// 砂浆适配器 · Beads 只读依赖排序（Mortar Protocol v1.1 · 严禁回写状态，委托 _shared.mjs）
+// 适配器 · Beads 只读依赖排序（Adapter Protocol v1.1 · 严禁回写状态，委托 _shared.mjs）
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runMortarAdapter } from './_shared.mjs';
+import { runAdapter } from './_shared.mjs';
 
-runMortarAdapter({
+runAdapter({
   tool: 'beads',
   defaultBin: 'bd',
   defaultRole: 'soft',

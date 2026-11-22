@@ -541,10 +541,10 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
 
     if (/^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(rel)) {
       if (lines > 90) {
-        fails.push(`M6 具体适配器超长疑似手搓样板 (${rel})：当前 ${lines} 行 > 上限 90 行（请委托 ./_shared.mjs 的 runMortarAdapter）`);
+        fails.push(`M6 具体适配器超长疑似手搓样板 (${rel})：当前 ${lines} 行 > 上限 90 行（请委托 ./_shared.mjs 的 runAdapter）`);
       }
       if (!info.imports.some((imp) => imp.spec === './_shared.mjs')) {
-        fails.push(`M6 具体适配器未调用公共底座 (${rel})：必须从 ./_shared.mjs 导入 runMortarAdapter`);
+        fails.push(`M6 具体适配器未调用公共底座 (${rel})：必须从 ./_shared.mjs 导入 runAdapter`);
       }
       for (const imp of info.imports) {
         if (/^(?:node:)?(?:crypto|child_process)$/.test(imp.spec)) {
@@ -646,7 +646,7 @@ function runRedSelfTest(rootDir) {
       r6.exitCode === 1 && r6.fails.some((x) => x.startsWith('M5')));
 
     const p7 = mkProj('handroll', {
-      'skill/adapters/_shared.mjs': 'export function runMortarAdapter() {}\n',
+      'skill/adapters/_shared.mjs': 'export function runAdapter() {}\n',
       'skill/adapters/rogue.mjs': 'import { spawnSync } from "node:child_process";\nexport const x = spawnSync;\n',
       'runner/dup-hash.mjs': 'import { createHash } from "node:crypto";\nexport const h = (s) => createHash("sha256").update(s).digest("hex");\n'
     });
