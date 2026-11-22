@@ -3,7 +3,7 @@ name: donegate
 description: >-
   一个人的长周期项目里，把「这一轮做完没有」从人回忆改成冻结判据加一次真实运行。
   用户说「这轮做完了吗」「判据怎么定」「为什么不算完」「哪些没验证」「交接一下」时用。
-  写判据、冻结签字、有牙实验、证据三件套、六道门、五状态六栏总账都在这里。
+  写判据、冻结签字、有牙实验、证据三件套、六道门、五状态六栏总账与局部切片都在这里。
   NOT for: 前端手感与体验类需求（判不成一条命令）、一次性小改、团队协作与权限、需求管理。
   也 NOT for 判方视角（那是 donegate-judge，只能人手动在 DeepSeek Harness Web UI 中用 /donegate-judge 调起）。
 ---
@@ -147,7 +147,7 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 
 ## 十、动工前澄清
 
-1. **老项目先探图**：存量代码先跑 `codegraph status / explore` 摸清依赖边界再划 `contracts/`。
+1. **老项目先探图**：存量代码先跑 `codegraph status / explore` 摸清依赖边界再划 `contracts/`，拆卡时把每张卡的 `scope[]` 有效代码控制在单胶囊 `160k` Tokens 以内，并给模块子目录设 `index.mjs` 或 `contract.mjs` 单点门面出口。
 2. **聚焦追问（仅人类会话）**：每次问 `1` 个关键问题（或 `<=3` 题选项并附推荐项），最多 `5` 轮，聚焦成功判据、不做边界与异常口径；自主子代理按默认口径自决并记缺口。
 3. **落盘纪律**：禁另建 `PRD.md`；`functions/*.json` 的 `source` 须逐字摘录用户原话（`INV-18`）；`CONSTRAINTS.md` 仅放项目级红线（常驻 `<=6`、临时 `<=12`）。
 4. **按需查 API**：规划期禁拉第三方库文档；编码期遇不熟库再按需调用 Context7 查当前版本真实签名。
@@ -162,3 +162,11 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 1. **先装钩子**：首次接手存量仓先跑 `node <DoneGate根>/skill/install-hooks.mjs --root .`。
 2. **单步预算**：单次提交新增代码 `<=300` 行、涉及源码文件 `<=8` 个、单文件有效代码 `600` 行预警 / `850` 行硬顶（见 `thresholds.json`），禁使用 `// ... existing code ...` 省略逻辑。
 3. **禁凑绿与野文件**：禁 `.skip/.only/.todo`、恒真断言、linter 豁免、`TODO/FIXME` 或空 `catch {}`；临时脚本仅放 `.donegate/scratch/`；新增业务源码须归入活跃契约 `scope[]`（未认领文件用 `check-commit-hygiene.mjs --quarantine` 隔离）；特例逃生须写 `// dg-allow: <至少6字原因>`。
+
+## 十三、密封契约切片与阅后即焚局部派工（禁扫全仓）
+
+任何零记忆会话或子代理接手项目时，**严禁开场通读全仓目录源码**，统一走三级渐进上下文流水线（默认按 `1M 窗口 × 40% = 400,000 Tokens` 五段预算配额）：
+
+1. **先读 L0 路由表定位目标卡**：运行 `node <DoneGate根>/runner/donegate.mjs slice --router-only --root .`，仅读生成的 `.donegate/ROUTER.md`（约数百 Tokens）确定目标节点 `nodeId` 与上下游拓扑。
+2. **领单卡 L2 密封胶囊局部读写**：运行 `node <DoneGate根>/runner/donegate.mjs slice <nodeId> --freeze-stub --root .`（小窗口子代理可加 `--context-window 128000 --utilization 0.4`），只读 `.donegate/capsules/<nodeId>.capsule.md`（本卡 `0-Hop` 全量源码与关联单测 `160k` + 上下游 `1-Hop` 含 JSDoc 的只读 `.stub.d.ts` 存根 `48k`；`2-Hop` 以外节点物理屏蔽）。
+3. **跑单卡微门禁并交回轻量回执**：改码后执行 `node <DoneGate根>/runner/donegate.mjs check-node <nodeId> --allow-dirty --receipt --root .` 拦截越界改文件、私改冻结导出签名、跨门面私引与未声明红线依赖；退出码为 `0` 后，子代理只将 `500` Tokens 以内的结构化 JSON 回执交回总控并销毁子会话上下文。
