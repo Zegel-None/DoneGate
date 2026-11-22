@@ -19,9 +19,11 @@ runAdapter({
       rawText = r.stdout || '';
     }
     const parsed = ctx.parseJsonOrFail(rawText, 'osv-scanner');
-    if (!parsed || !Array.isArray(parsed.results)) ctx.fail(3, 'osv-scanner 报告缺少 results 数组');
+    if (!parsed || typeof parsed !== 'object' || !('results' in parsed) || (parsed.results !== null && !Array.isArray(parsed.results))) {
+      ctx.fail(3, 'osv-scanner 报告缺少 results 数组');
+    }
     const vulnerabilities = [], severityCounts = {};
-    for (const res of parsed.results) {
+    for (const res of (parsed.results || [])) {
       for (const pkg of (res.packages || [])) {
         for (const v of (pkg.vulnerabilities || [])) {
           const sev = String((v && v.database_specific && v.database_specific.severity) || 'UNKNOWN').toUpperCase();

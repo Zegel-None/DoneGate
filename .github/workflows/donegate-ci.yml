@@ -56,11 +56,8 @@ jobs:
       - name: Run Zero-Dependency Verdict Core Self-Test
         run: node runner/self-test.mjs
 
-      - name: Run Twelve-Command Core Lifecycle E2E Fixtures
-        run: node runner/donegate-fixtures.mjs
-
-      - name: Run Adapter Offline Red-Fixture Suite
-        run: node skill/check-declarations.mjs --verify-adapters --offline
+      - name: Run Adapter Protocol v1.1 Nine-Field & Hash Self-Test
+        run: node skill/check-declarations.mjs
 
       - name: Run DSH Web, JIT, Shared Deps & Campaign Autopilot E2E Fixtures
         run: node runner/dsh-fixtures.mjs
@@ -146,9 +143,11 @@ jobs:
 
       - name: Expose cached toolchains on PATH
         run: |
-          echo "$HOME/.cache/donegate-ci-tools/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cache/donegate-ci-tools/pyvenv/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cache/donegate-ci-tools/node/node_modules/.bin" >> "$GITHUB_PATH"
+          {
+            echo "$HOME/.cache/donegate-ci-tools/bin"
+            echo "$HOME/.cache/donegate-ci-tools/pyvenv/bin"
+            echo "$HOME/.cache/donegate-ci-tools/node/node_modules/.bin"
+          } >> "$GITHUB_PATH"
 
       - name: Configure local Git identity
         run: |

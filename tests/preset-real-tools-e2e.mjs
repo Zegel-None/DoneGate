@@ -83,6 +83,13 @@ function seedRealSampleWorkspace(dir) {
     ''
   ].join('\n'), 'utf8');
 
+  writeFileSync(join(dir, '.sqlfluff'), [
+    '[sqlfluff]',
+    'dialect = postgres',
+    'rules = ST06,AM04,CV06',
+    ''
+  ].join('\n'), 'utf8');
+
   writeFileSync(join(dir, 'migrations', 'V1__create_ledger_tables.sql'), [
     'CREATE TABLE accounts (',
     '    id BIGINT PRIMARY KEY,',
@@ -136,13 +143,13 @@ function runRealAdapter(tmpDir, entryRel, regId, outSub, extraArgs = []) {
     return null;
   }
   const claimAbs = join(tmpDir, claimRel);
-  const verified = verifyClaimInMemory(claimAbs, tmpDir, { skipContractCheck: true });
+  const verified = verifyClaimInMemory(claimAbs, tmpDir, { skipContractLookup: true });
   const obsAbs = join(tmpDir, '.donegate', 'adapters', outSub, 'observation.json');
   const obs = existsSync(obsAbs) ? JSON.parse(readFileSync(obsAbs, 'utf8')) : null;
   record(
     `Adapter ${regId} (真实 CLI + SHA-256 九字段验真)`,
     verified.exitCode === 0 && Boolean(obs),
-    verified.exitCode === 0 ? `ver=${JSON.parse(readFileSync(claimAbs, 'utf8')).version}` : verified.errors.join('; ')
+    verified.exitCode === 0 ? `ver=${JSON.parse(readFileSync(claimAbs, 'utf8')).version}` : String(verified.reason || 'claim 校验未过')
   );
   return obs;
 }
@@ -160,7 +167,10 @@ async function main() {
   ]);
   if (alSelf.status === 0) {
     const parsed = JSON.parse(alSelf.stdout);
-    record('DoneGate 自身 .github/workflows/donegate-ci.yml (actionlint)', parsed.observation.errorCount === 0, `errors=${parsed.observation.errorCount}`);
+    const errDetail = parsed.observation.errorCount === 0
+      ? 'errors=0'
+      : `errors=${parsed.observation.errorCount} ${JSON.stringify(parsed.rawJson || []).slice(0, 220)}`;
+    record('DoneGate 自身 .github/workflows/donegate-ci.yml (actionlint)', parsed.observation.errorCount === 0, errDetail);
   } else {
     record('DoneGate 自身 .github/workflows/donegate-ci.yml (actionlint)', false, (alSelf.stderr || '').trim().slice(0, 180));
   }
@@ -204,7 +214,7 @@ async function main() {
       ], { cwd: tmp });
       record('Stage 2 Flyway 真实 PostgreSQL 16 唯一真值迁移演练', fwMigrate.status === 0, fwMigrate.status === 0 ? 'V1 migrated' : (fwMigrate.stderr || fwMigrate.stdout || '').slice(0, 160));
 
-      const atlasInspect = runCmd('atlas', ['schema', 'inspect', '-u', pgUrl, '--format', '{{ sql . }}'], { cwd: tmp });
+      const atlasInspect = runCmd('atlas', ['schema', 'inspect', '-u', pgUrl], { cwd: tmp });
       const ddl = atlasInspect.stdout || '';
       const hasTables = ddl.includes('accounts') && ddl.includes('ledger_entries');
       record('Stage 2 Atlas 只读连接真实 PostgreSQL 16 对账零漂移', atlasInspect.status === 0 && hasTables, hasTables ? 'tables=accounts,ledger_entries' : (atlasInspect.stderr || ddl).slice(0, 160));
