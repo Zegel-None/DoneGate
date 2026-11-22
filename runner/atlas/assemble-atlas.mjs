@@ -1,7 +1,7 @@
 // 项目活体全景账本拼装器：合并全栈入口、跨语言调用链、Git 分支雷达与契约状态，产出 atlas.json / PROJECT-MAP.md / project.c4（<= 300 行）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { computeProjectStatus } from '../core/gates.mjs';
+import { computeProjectStatus } from '../core/contract.mjs';
 import { readMaybe } from '../../skill/io.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import {

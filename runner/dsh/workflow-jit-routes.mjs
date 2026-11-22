@@ -1,5 +1,5 @@
 // 开发看板节点级即时选配/派生与沉淀宏同源 HTTP 子路由 (/donegate/api/jit/*)
-import { buildDashboardPayload } from '../core/dashboard.mjs';
+import { buildDashboardPayload } from '../core/index.mjs';
 import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
 import {
   assignComponentWorkflow,

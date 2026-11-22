@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
-import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
+import { readSavedWorkbenchState } from '../atlas/contract.mjs';
 import { inspectWorkflowDeps } from './workflow-deps.mjs';
 import { buildBrickNodeExecSpec } from './brick-exec.mjs';
 

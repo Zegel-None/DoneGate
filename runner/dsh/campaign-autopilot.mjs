@@ -2,8 +2,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
-import { buildDashboardPayload } from '../core/dashboard.mjs';
-import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
+import { buildDashboardPayload } from '../core/index.mjs';
+import { readSavedWorkbenchState } from '../atlas/contract.mjs';
 import { approveAutopilotHumanGate } from './autopilot-state.mjs';
 import { finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot-worktree.mjs';
 import { assignComponentWorkflow } from './workflow-jit.mjs';

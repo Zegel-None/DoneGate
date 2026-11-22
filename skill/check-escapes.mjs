@@ -23,7 +23,7 @@ import Module from 'node:module';
 import { fileURLToPath } from 'node:url';
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { appendProgressNote, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from '../runner/core/progress.mjs';
+import { appendProgressNote, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from '../runner/core/index.mjs';
 import { walkByExt } from './fs-walk.mjs';
 import { cleanScratchDir } from './check-commit-hygiene.mjs';
 

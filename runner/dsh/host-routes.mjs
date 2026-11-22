@@ -1,9 +1,8 @@
 // DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5复核包、UI看板、JIT选配与实时遥测）
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
-import { cmdCheckNode, cmdSlice, cmdVerifyApply, cmdVerifyPack } from '../core/commands-b.mjs';
-import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
+import { buildDashboardPayload, cmdCheckNode, cmdSlice, cmdVerifyApply, cmdVerifyPack, exportDashboardHtml } from '../core/index.mjs';
+import { readSavedWorkbenchState } from '../atlas/contract.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer, resolveSafeWorkspaceFolders } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';

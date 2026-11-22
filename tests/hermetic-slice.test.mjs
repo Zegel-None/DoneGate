@@ -207,24 +207,25 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
     }
   });
 
-  it('同时兼容契约仓（DoneGate-V4）与纯画布拓扑仓（DoneGate 公开精简仓）：160k 装下中型子系统且对超限巨型模块自动保顶', () => {
+  it('100% 自举验证：母仓全部 7 张契约卡均零截断装入 160k 胶囊且零红线/零越界门面私引，公开精简仓支持画布零契约切片', () => {
     if (existsSync(join(REPO_ROOT, 'contracts/gate-tooling/contract.json'))) {
       const res = dispatchCommand(['slice', '--router-only', '--json'], REPO_ROOT);
       expect(res.exitCode).toBe(0);
+      expect(res.router.nodes.length).toBe(7);
       expect(res.router.budgetProfile.totalSessionBudgetTokens).toBe(400000);
+      expect(res.router.topoOrder).toContain('atlas-workbench');
+      expect(res.router.topoOrder).toContain('dsh-orchestrator');
+      expect(res.router.redImports).toEqual([]);
+      expect(res.router.facadeViolations).toEqual([]);
       expect(res.router.savingsPct).toBeGreaterThan(95);
 
-      const gateCap = dispatchCommand(['slice', 'gate-tooling', '--json'], REPO_ROOT);
-      expect(gateCap.exitCode).toBe(0);
-      expect(gateCap.capsule.truncatedFiles).toEqual([]);
-      expect(gateCap.capsule.omittedTwoHopNodes).toContain('masonry-adapters');
-
-      const megaCap = dispatchCommand(['slice', 'verdict-core', '--json'], REPO_ROOT);
-      expect(megaCap.exitCode).toBe(0);
-      expect(megaCap.capsule.truncatedFiles.length).toBeGreaterThan(0);
-      expect(megaCap.capsule.capsuleTokens).toBeLessThanOrEqual(megaCap.capsule.budgetProfile.capsuleInitialMaxTokens);
+      for (const n of res.router.nodes) {
+        const cap = dispatchCommand(['slice', n.id, '--json'], REPO_ROOT);
+        expect(cap.exitCode).toBe(0);
+        expect(cap.capsule.truncatedFiles).toEqual([]);
+        expect(cap.capsule.capsuleTokens).toBeLessThanOrEqual(cap.capsule.budgetProfile.capsuleInitialMaxTokens);
+      }
     } else {
-      // 公开精简仓不随包携带母仓内部 contracts/，无节点时诚实退 3；挂载画布组件节点后即可直接生成路由与胶囊
       const emptyRes = dispatchCommand(['slice', '--router-only'], REPO_ROOT);
       expect(emptyRes.exitCode).toBe(3);
 

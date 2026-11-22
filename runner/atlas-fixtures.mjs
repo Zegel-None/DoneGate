@@ -10,7 +10,7 @@ import { createChecks } from '../skill/assert.mjs';
 import { dispatchCommand } from './donegate.mjs';
 import { buildProjectAtlas } from './atlas/assemble-atlas.mjs';
 import { startAtlasHttpServer } from './atlas/serve-atlas.mjs';
-import { exportDashboardHtml } from './core/dashboard.mjs';
+import { exportDashboardHtml } from './core/index.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const c = createChecks();

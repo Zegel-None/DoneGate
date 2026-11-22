@@ -16,7 +16,7 @@
 //
 // 退出码：0 成功；1 校验失败/验证命令没过/缺证据；2 越权伪造或篡改事故
 import { resolve } from 'node:path';
-import { appendProgressNote, clearCustomNotes, renderProgressBlock, verifyProjectNotes } from '../runner/core/progress.mjs';
+import { appendProgressNote, clearCustomNotes, renderProgressBlock, verifyProjectNotes } from '../runner/core/index.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (k, d = null) => {

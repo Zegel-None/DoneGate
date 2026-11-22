@@ -1,6 +1,5 @@
 // Agent Native UI 看板前端控制器：编辑/测试双模切换、多套美学方案 0ms 秒切与锁定、类 Puck 拖拽布局块、语音点选改 UI 与假动作转真后端接线台
-import { buildInjectedUiBridgeScript } from '../dsh/ui-board-bridge.mjs';
-import { AESTHETIC_PROPOSALS } from '../dsh/ui-aesthetics.mjs';
+import { AESTHETIC_PROPOSALS, buildInjectedUiBridgeScript } from '../dsh/contract.mjs';
 
 export function buildWbUiBoardScript() {
   const embeddedProposalsJson = JSON.stringify(AESTHETIC_PROPOSALS.slice(0, 3));

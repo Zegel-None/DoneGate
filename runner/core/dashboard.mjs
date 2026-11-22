@@ -3,8 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { computeProjectStatus } from './gates.mjs';
-import { buildProjectAtlas, writeAtlasSidecars } from '../atlas/assemble-atlas.mjs';
-import { renderAtlasWorkbenchHtml } from '../atlas/render-html.mjs';
+import { buildProjectAtlas, renderAtlasWorkbenchHtml, writeAtlasSidecars } from '../atlas/contract.mjs';
 
 function computeDefaultPct(st) {
   const active = (st?.contractSummaries || []).filter((c) => !c.retired);

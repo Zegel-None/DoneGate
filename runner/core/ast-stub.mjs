@@ -1,4 +1,4 @@
-// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 完整类型/常量结构，仅剥离私有实现体）
+// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 桶文件门面与显式入口混合识别）
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
@@ -185,7 +185,8 @@ export function extractFileInterfaceStub(source, relPath = '') {
 }
 
 export function resolveNodeScopeFiles(projectRoot, scopes = []) {
-  const found = new Set(), relatedTests = new Set();
+  const found = new Set(), relatedTests = new Set(), publicEntries = new Set();
+  let hasBarrel = false;
   for (const rawScope of (Array.isArray(scopes) ? scopes : [])) {
     const clean = String(rawScope || '').replace(/\\/g, '/').replace(/^\.\//, '');
     if (!clean) continue;
@@ -195,29 +196,32 @@ export function resolveNodeScopeFiles(projectRoot, scopes = []) {
     try { st = statSync(abs); } catch (err) { void err; continue; }
     if (st.isFile() && CODE_EXTS.has(extname(clean).toLowerCase())) {
       if (/\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(clean)) relatedTests.add(clean);
-      else found.add(clean);
+      else { found.add(clean); publicEntries.add(clean); }
     } else if (st.isDirectory()) {
+      const dirClean = clean.replace(/\/+$/, '');
+      const dirCodeFiles = [];
       for (const f of walk(abs, { skipDirs: SKIP_DIRS }).files) {
         const rel = relative(projectRoot, f).replace(/\\/g, '/');
         if (!CODE_EXTS.has(extname(rel).toLowerCase())) continue;
         if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(rel)) relatedTests.add(rel);
-        else found.add(rel);
+        else { found.add(rel); dirCodeFiles.push(rel); }
+      }
+      const barrels = dirCodeFiles.filter((f) => {
+        const slash = f.lastIndexOf('/');
+        const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
+        return dir === dirClean && FACADE_BASENAMES.has(base);
+      });
+      if (barrels.length > 0) {
+        hasBarrel = true;
+        for (const b of barrels) publicEntries.add(b);
+      } else {
+        for (const df of dirCodeFiles) publicEntries.add(df);
       }
     }
   }
   const scopeFiles = [...found].sort();
-  const dirScopes = (Array.isArray(scopes) ? scopes : []).map((s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean);
-  const facadeFiles = scopeFiles.filter((f) => {
-    const slash = f.lastIndexOf('/');
-    const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
-    return FACADE_BASENAMES.has(base) && (dirScopes.includes(dir) || dirScopes.length === 1);
-  });
-  return {
-    scopeFiles,
-    relatedTestFiles: [...relatedTests].sort(),
-    facadeMode: facadeFiles.length > 0 ? 'barrel' : 'module-exports',
-    facadeFiles: facadeFiles.length > 0 ? facadeFiles : scopeFiles
-  };
+  const facadeFiles = publicEntries.size > 0 ? [...publicEntries].sort() : scopeFiles;
+  return { scopeFiles, relatedTestFiles: [...relatedTests].sort(), facadeMode: hasBarrel ? 'barrel' : 'module-exports', facadeFiles };
 }
 
 export function buildNodeInterfaceStub(projectRoot, node) {

@@ -5,10 +5,9 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import path, { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../skill/hash.mjs';
-import { exportDashboardHtml, openInSystemBrowser } from '../core/dashboard.mjs';
+import { exportDashboardHtml, openInSystemBrowser } from '../core/index.mjs';
 import { readSavedWorkbenchState } from './hydrate-workbench.mjs';
-import { createDoneGateWebRouteHandler } from '../dsh/host-routes.mjs';
-import { resolveSafeWorkspaceFolders } from '../dsh/win-paths.mjs';
+import { createDoneGateWebRouteHandler, resolveSafeWorkspaceFolders } from '../dsh/index.mjs';
 export { resolveSafeWorkspaceFolders };
 
 const THIS_FILE = fileURLToPath(import.meta.url);
