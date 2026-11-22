@@ -75,15 +75,32 @@ export function scanJsModuleTokens(source) {
         if (source[i] === '$' && source[i + 1] === '{') {
           i += 2;
           let depth = 1;
+          let prevSig = '{';
           while (i < n && depth > 0) {
-            if (source[i] === "'" || source[i] === '"' || source[i] === '`') {
+            const tc = source[i];
+            if (tc === "'" || tc === '"' || tc === '`') {
               const sq = source[i++];
               while (i < n && source[i] !== sq) { if (source[i] === '\\') i += 2; else i++; }
               i++;
+              prevSig = sq;
               continue;
             }
-            if (source[i] === '{') depth++;
-            else if (source[i] === '}') depth--;
+            if (tc === '/' && /[=([,:!&|?;{]/.test(prevSig) && source[i + 1] !== '/' && source[i + 1] !== '*') {
+              i++;
+              let inCls = false;
+              while (i < n && source[i] !== '\n') {
+                if (source[i] === '\\') { i += 2; continue; }
+                if (source[i] === '[') inCls = true;
+                else if (source[i] === ']') inCls = false;
+                else if (source[i] === '/' && !inCls) { i++; break; }
+                i++;
+              }
+              prevSig = '/';
+              continue;
+            }
+            if (tc === '{') depth++;
+            else if (tc === '}') depth--;
+            if (!/\s/.test(tc)) prevSig = tc;
             i++;
           }
           continue;

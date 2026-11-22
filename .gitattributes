@@ -1,0 +1,11 @@
+# 统一跨平台换行规范：源码/配置/钩子保持 LF，Windows 原生批处理脚本强制 CRLF
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.woff2 binary

@@ -7,7 +7,8 @@ import {
   AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
   lockDesignSystemMaster, readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
-import { provisionWorkflowDeps } from './workflow-deps.mjs';
+import { buildWinBatchSpawn } from '../../skill/adapters/_shared.mjs';
+import { findExecutableInDirs, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
 
 export const UI_TOOLCHAIN_DEPS_PACK = {
   id: 'uiboard',
@@ -321,12 +322,20 @@ export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
 
   let cliUsed = 'builtin-dom-probe';
   let cliSnapSummary = null;
-  const localAbBin = join(root, 'workflows', '.deps', 'uiboard', 'node_modules', '.bin', process.platform === 'win32' ? 'agent-browser.cmd' : 'agent-browser');
-  if (opts.liveUrl && existsSync(localAbBin)) {
-    const snap = spawnSync(localAbBin, ['open', opts.liveUrl], { encoding: 'utf8', timeout: 8000 });
+  const uiPaths = getWorkflowDepsPaths(root, 'uiboard');
+  const localAbBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir]);
+  const runAb = (abArgs) => {
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(localAbBin)) {
+      const wb = buildWinBatchSpawn(localAbBin, abArgs);
+      return spawnSync(wb.cmd, wb.args, { encoding: 'utf8', timeout: 8000, ...wb.extraOpts });
+    }
+    return spawnSync(localAbBin, abArgs, { encoding: 'utf8', timeout: 8000, windowsHide: true });
+  };
+  if (opts.liveUrl && localAbBin && existsSync(localAbBin)) {
+    const snap = runAb(['open', opts.liveUrl]);
     if (snap.status === 0) {
       cliUsed = 'agent-browser';
-      const s2 = spawnSync(localAbBin, ['snapshot', '-i'], { encoding: 'utf8', timeout: 8000 });
+      const s2 = runAb(['snapshot', '-i']);
       cliSnapSummary = (s2.stdout || '').slice(0, 600);
     }
   }

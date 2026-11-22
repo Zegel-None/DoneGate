@@ -1,4 +1,4 @@
-// 生成符合 DSH dsh-doc 规范的浏览器端模块（挂载 conversation.view + input.dock 悬停弹出聊天记录窗 + input.left + Quote 累加）
+// 生成符合 DSH dsh-doc 与 web-styling/ui-radius 官方规范的浏览器端模块（全屏画布铺底 + 输入框悬浮 + 等宽同材质顶部消息条）
 import { DSH_BUNDLE_NAME } from './bundle-templates.mjs';
 
 export function renderDshClientBundleJs() {
@@ -11,24 +11,69 @@ export function renderDshClientBundleJs() {
     var NS = "dshDonegate";
     var zh = {
       "view.donegate": "完结门",
-      "switch.label": "⛩ 完结门",
-      "switch.back": "↗ 切回全屏对话",
-      "dock.bar": "💬 对话记录与回执栏（鼠标移入弹出聊天窗口 · 移开自动回到工作台）",
-      "dock.question": "❓ 待你拍板",
-      "dock.receipt": "⚡ 完结门回执",
-      "dock.fly": "🎯 飞去节点",
-      "dock.empty": "暂无历史对话消息，直接在下方原生输入框发指令即可驱动工作台。"
+      "switch.label": "完结门",
+      "switch.back": "切回对话页",
+      "dock.bar": "悬停查看对话消息与门禁回执 · 移开自动回到工作台",
+      "dock.label": "对话与回执",
+      "dock.question": "待确认",
+      "dock.receipt": "门禁回执",
+      "dock.fly": "定位节点",
+      "dock.empty": "当前暂无对话消息，在下方输入框直接发送指令即可驱动工作台。"
     };
     var en = {
       "view.donegate": "DoneGate",
-      "switch.label": "⛩ DoneGate",
-      "switch.back": "↗ Full chat view",
-      "dock.bar": "💬 Chat history & receipts (hover to pop out · leave to return)",
-      "dock.question": "❓ Action needed",
-      "dock.receipt": "⚡ DoneGate update",
-      "dock.fly": "🎯 Locate node",
-      "dock.empty": "No messages yet. Type in the chat box below to drive the workbench."
+      "switch.label": "DoneGate",
+      "switch.back": "Chat view",
+      "dock.bar": "Hover to view chat history & gate receipts",
+      "dock.label": "Messages",
+      "dock.question": "Action needed",
+      "dock.receipt": "Receipt",
+      "dock.fly": "Locate",
+      "dock.empty": "No messages yet. Type below to drive the workbench."
     };
+
+    var HOST_OVERLAY_CSS = [
+      "[data-conversation-scroll]:has([data-donegate-overlay]) {",
+      "  overflow: hidden !important;",
+      "  margin-right: 0 !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] {",
+      "  background: transparent !important;",
+      "  right: 0 !important;",
+      "  pointer-events: none !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-donegate-dock-wrap],",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-card],",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-dock] > * {",
+      "  pointer-events: auto !important;",
+      "}"
+    ].join("\\n");
+
+    function ensureHostOverlayStyle() {
+      if (typeof document === "undefined" || !document.head) return function () {};
+      var id = "dsh-donegate-overlay-style";
+      var el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement("style");
+        el.id = id;
+        el.textContent = HOST_OVERLAY_CSS;
+        document.head.appendChild(el);
+      }
+      return function () {
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      };
+    }
+
+    function detectDshDarkTheme() {
+      if (typeof document === "undefined" || !document.body) return true;
+      if (document.body.hasAttribute("data-ds-dark-theme")) return true;
+      try {
+        var bg = window.getComputedStyle(document.body).backgroundColor || "";
+        var m = bg.match(/\\d+/g);
+        if (m && m.length >= 3) return (Number(m[0]) + Number(m[1]) + Number(m[2])) < 380;
+      } catch (err) { void err; }
+      return false;
+    }
 
     function createDockStore() {
       var state = { items: [], messages: [], expanded: false };
@@ -93,6 +138,7 @@ export function renderDshClientBundleJs() {
       var inputActions = props.inputActions;
       var openRightResource = props.openRightResource;
       var frameRef = React.useRef(null);
+      var initialDarkRef = React.useRef(detectDshDarkTheme());
 
       React.useEffect(function () {
         if (frameRef.current) iframeBySession.set(sessionId, frameRef.current);
@@ -110,27 +156,40 @@ export function renderDshClientBundleJs() {
           }
         }
         window.addEventListener("message", onMessage);
+
+        var obs = null;
+        if (typeof MutationObserver === "function" && typeof document !== "undefined" && document.body) {
+          obs = new MutationObserver(function () {
+            var ifr = frameRef.current;
+            if (ifr && ifr.contentWindow) {
+              ifr.contentWindow.postMessage({
+                source: "donegate-host",
+                type: "dg:theme-sync",
+                theme: detectDshDarkTheme() ? "dark" : "light"
+              }, "*");
+            }
+          });
+          obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme", "class", "style"] });
+        }
+
         return function () {
           window.removeEventListener("message", onMessage);
+          if (obs) obs.disconnect();
           if (iframeBySession.get(sessionId) === frameRef.current) iframeBySession.delete(sessionId);
         };
       }, [sessionId, inputActions, openRightResource]);
 
-      var isDarkHost = true;
-      try {
-        var bg = window.getComputedStyle(document.body).backgroundColor || "";
-        var m = bg.match(/\\d+/g);
-        if (m && m.length >= 3) isDarkHost = (Number(m[0]) + Number(m[1]) + Number(m[2])) < 380;
-      } catch (err) { void err; }
-      var src = "/donegate/api/canvas?dsh=1&theme=" + (isDarkHost ? "dark" : "light") + "&sessionId=" + encodeURIComponent(sessionId);
+      var src = "/donegate/api/canvas?dsh=1&theme=" + (initialDarkRef.current ? "dark" : "light") + "&sessionId=" + encodeURIComponent(sessionId);
       return h("div", {
+        "data-conversation-composer-overlay": "",
+        "data-donegate-overlay": "",
         style: {
-          width: "100%",
-          height: "calc(var(--dsh-conversation-viewport-height, 78vh) - var(--dsh-composer-height, 118px) - 8px)",
-          minHeight: "420px",
           position: "relative",
-          overflow: "hidden",
-          borderRadius: "10px"
+          width: "100%",
+          height: "100%",
+          flex: "1 1 0%",
+          minHeight: "0",
+          overflow: "hidden"
         }
       }, h("iframe", {
         ref: frameRef,
@@ -138,6 +197,19 @@ export function renderDshClientBundleJs() {
         title: "DoneGate V4 Workbench",
         style: { width: "100%", height: "100%", border: "0", display: "block", background: "transparent" }
       }));
+    }
+
+    function renderChatGlyph() {
+      return h("svg", { width: "14", height: "14", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", style: { flexShrink: 0, color: "var(--dsw-alias-label-tertiary, #81858c)" } },
+        h("path", { d: "M2.5 3.8C2.5 2.97 3.17 2.3 4 2.3h8c.83 0 1.5.67 1.5 1.5v5.4c0 .83-.67 1.5-1.5 1.5H6.4L3.3 13v-2.3H4c-.83 0-1.5-.67-1.5-1.5V3.8Z", stroke: "currentColor", strokeWidth: "1.3", strokeLinejoin: "round" })
+      );
+    }
+
+    function renderChevronGlyph(open) {
+      return h("svg", {
+        width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true",
+        style: { flexShrink: 0, color: "var(--dsw-alias-label-tertiary, #81858c)", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.16s ease" }
+      }, h("path", { d: "M4 10L8 6L12 10", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }));
     }
 
     function DoneGateInputDock(props) {
@@ -166,35 +238,79 @@ export function renderDshClientBundleJs() {
         }
       }
 
-      var borderCol = top && top.tone === "bad"
-        ? "rgba(239,68,68,0.45)"
-        : (isQuestion ? "rgba(245,158,11,0.55)" : "rgba(59,130,246,0.38)");
-      var barHeadline = top
+      var strokeVar = isQuestion
+        ? "var(--dsw-alias-state-warn-primary, rgba(245, 158, 11, 0.55))"
+        : "var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.14))";
+      var barShadow = "0 0 0 0.5px " + strokeVar + ", 0 4px 16px 0 rgba(0, 0, 0, 0.03), 0 0 24px 0 rgba(0, 0, 0, 0.03)";
+      var panelShadow = "0 0 0 0.5px " + strokeVar + ", 0 6px 24px 0 rgba(0, 0, 0, 0.08), 0 0 20px 0 rgba(0, 0, 0, 0.04)";
+      var barSummary = top
         ? String(top.title || "")
-        : (lastMsg ? ((lastMsg.role === "user" ? "你：" : "Agent：") + lastMsg.text) : t("dock.bar"));
+        : (lastMsg ? ((lastMsg.role === "user" ? "你 · " : "Agent · ") + lastMsg.text) : t("dock.bar"));
 
       return h("div", {
-        onMouseEnter: function () { dockStore.setExpanded(true); },
-        onMouseLeave: function () { if (!isQuestion) dockStore.setExpanded(false); },
-        style: { position: "relative", width: "100%", boxSizing: "border-box", marginBottom: "6px" }
+        "data-donegate-dock-wrap": "",
+        onMouseEnter: function (e) {
+          if (e && e.pointerType === "touch") return;
+          dockStore.setExpanded(true);
+        },
+        onMouseLeave: function () {
+          if (!isQuestion) dockStore.setExpanded(false);
+        },
+        style: {
+          boxSizing: "border-box",
+          position: "relative",
+          margin: "0 auto",
+          width: "calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))",
+          maxWidth: "var(--dsh-composer-card-max-width, 760px)",
+          fontFamily: "var(--dsw-font-family, inherit)"
+        }
       },
         expanded ? h("div", {
+          "data-donegate-dock-popout": "",
           style: {
-            position: "absolute", left: 0, right: 0, bottom: "calc(100% + 4px)", zIndex: 60,
-            maxHeight: "300px", overflowY: "auto", padding: "10px 12px", borderRadius: "12px",
-            border: "1px solid " + borderCol,
-            background: "var(--dsh-surface-elevated, rgba(17, 20, 27, 0.97))",
-            boxShadow: "0 -10px 28px rgba(0,0,0,0.34)",
-            color: "var(--dsh-text-primary, #e5e7eb)", fontSize: "12px",
-            display: "flex", flexDirection: "column", gap: "8px"
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: "100%",
+            paddingBottom: "6px",
+            zIndex: 60
+          }
+        }, h("div", {
+          style: {
+            boxSizing: "border-box",
+            maxHeight: "280px",
+            overflowY: "auto",
+            padding: "12px 14px",
+            borderRadius: "var(--dsw-radius-xl, 20px)",
+            border: "0",
+            background: "var(--dsw-specific-menu, rgba(44, 44, 46, 0.92))",
+            backdropFilter: "var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%))",
+            WebkitBackdropFilter: "var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%))",
+            boxShadow: panelShadow,
+            color: "var(--dsw-alias-label-primary, #f9fafb)",
+            fontSize: "13px",
+            lineHeight: "20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px"
           }
         },
-          h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(148,163,184,0.18)", paddingBottom: "6px" } },
-            h("strong", { style: { color: "#93c5fd", fontSize: "12px" } }, "💬 最近对话记录与门禁回执（移开鼠标自动收起回工作台）"),
+          h("div", {
+            style: {
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
+              paddingBottom: "8px", borderBottom: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.14))"
+            }
+          },
+            h("span", { style: { fontWeight: 500, fontSize: "12.5px", color: "var(--dsw-alias-label-secondary, #cfd3d6)" } }, t("dock.label")),
             typeof props.toggleDoneGateView === "function" ? h("button", {
               type: "button",
               onClick: function () { props.toggleDoneGateView(sessionId); },
-              style: { padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(147,197,253,0.35)", background: "transparent", color: "#93c5fd", cursor: "pointer", fontSize: "11px" }
+              style: {
+                height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
+                border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
+                background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.08))",
+                color: "var(--dsw-alias-label-secondary, #cfd3d6)", cursor: "pointer", fontSize: "12px"
+              }
             }, t("switch.back")) : null
           ),
           chatList.length ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
@@ -203,51 +319,94 @@ export function renderDshClientBundleJs() {
               return h("div", {
                 key: m.id,
                 style: {
-                  alignSelf: isUser ? "flex-end" : "flex-start", maxWidth: "88%",
-                  padding: "6px 10px", borderRadius: "9px", lineHeight: "1.45",
-                  background: isUser ? "rgba(37,99,235,0.22)" : "rgba(148,163,184,0.12)",
-                  border: isUser ? "1px solid rgba(59,130,246,0.4)" : "1px solid rgba(148,163,184,0.2)"
+                  alignSelf: isUser ? "flex-end" : "flex-start",
+                  maxWidth: "88%",
+                  padding: isUser ? "6px 12px" : "4px 6px",
+                  borderRadius: "var(--dsw-radius-lg, 16px)",
+                  background: isUser ? "var(--dsw-specific-bubble, rgba(128,128,128,0.14))" : "transparent",
+                  color: "var(--dsw-alias-label-primary, #f9fafb)",
+                  fontSize: "13px",
+                  lineHeight: "20px"
                 }
-              }, h("span", { style: { fontWeight: 700, marginRight: "6px", color: isUser ? "#93c5fd" : "#a7f3d0" } }, isUser ? "你" : "Agent"), m.text);
+              }, m.text);
             })
-          ) : h("div", { style: { opacity: 0.72, fontSize: "11.5px" } }, t("dock.empty")),
-          items.length ? h("div", { style: { borderTop: "1px solid rgba(148,163,184,0.16)", paddingTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "11.5px" } },
-            items.slice(0, 6).map(function (it) {
-              return h("div", { key: it.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } },
-                h("span", null, "⚡ " + String(it.title || "")),
+          ) : h("div", { style: { color: "var(--dsw-alias-label-tertiary, #81858c)", fontSize: "12.5px", padding: "2px 0" } }, t("dock.empty")),
+          items.length ? h("div", {
+            style: {
+              borderTop: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.14))",
+              paddingTop: "8px", display: "flex", flexDirection: "column", gap: "4px"
+            }
+          },
+            items.slice(0, 5).map(function (it) {
+              return h("div", {
+                key: it.id,
+                style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", fontSize: "12.5px", color: "var(--dsw-alias-label-secondary, #cfd3d6)" }
+              },
+                h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(it.title || "")),
                 it.targetNodeId ? h("button", {
                   type: "button",
                   onClick: function () { flyToNode(it.targetNodeId); },
-                  style: { padding: "1px 7px", borderRadius: "6px", border: "1px solid rgba(147,197,253,0.35)", background: "transparent", color: "#93c5fd", cursor: "pointer", fontSize: "11px" }
+                  style: {
+                    height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
+                    border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
+                    background: "transparent", color: "var(--dsw-alias-label-primary, #f9fafb)", cursor: "pointer", fontSize: "11.5px", flexShrink: 0
+                  }
                 }, t("dock.fly")) : null
               );
             })
           ) : null
-        ) : null,
+        )) : null,
         h("div", {
+          "data-donegate-dock-card": "",
           style: {
-            width: "100%", boxSizing: "border-box", padding: "4px 12px",
-            borderRadius: "10px", border: "1px solid " + borderCol,
-            background: "var(--dsh-surface-elevated, rgba(22, 24, 29, 0.92))",
-            color: "var(--dsh-text-primary, #e5e7eb)", fontSize: "12px",
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", cursor: "pointer"
+            boxSizing: "border-box",
+            width: "100%",
+            minHeight: "36px",
+            padding: "6px 12px 6px 14px",
+            borderRadius: "var(--dsw-radius-xl, 20px)",
+            border: "0",
+            background: "var(--dsw-specific-input-major, #2c2c2e)",
+            boxShadow: barShadow,
+            color: "var(--dsw-alias-label-secondary, #cfd3d6)",
+            fontSize: "13px",
+            lineHeight: "20px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "10px",
+            cursor: "pointer"
           }
         },
-          h("div", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } },
-            h("strong", { style: { marginRight: "6px", color: "#93c5fd" } }, top ? (isQuestion ? t("dock.question") : t("dock.receipt")) : "💬 聊天窗"),
-            barHeadline
+          h("div", { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 } },
+            renderChatGlyph(),
+            h("span", { style: { fontWeight: 500, color: "var(--dsw-alias-label-primary, #f9fafb)", flexShrink: 0 } },
+              top ? (isQuestion ? t("dock.question") : t("dock.receipt")) : t("dock.label")
+            ),
+            h("span", {
+              style: {
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: "var(--dsw-alias-label-tertiary, #81858c)", flex: 1, minWidth: 0
+              }
+            }, barSummary)
           ),
           h("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 } },
             top && top.targetNodeId ? h("button", {
               type: "button",
               onClick: function () { flyToNode(top.targetNodeId); },
-              style: { padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(147,197,253,0.4)", background: "transparent", color: "#93c5fd", cursor: "pointer", fontSize: "11.5px" }
+              style: {
+                height: "24px", padding: "0 8px", borderRadius: "var(--dsw-radius-sm, 8px)",
+                border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.18))",
+                background: "transparent", color: "var(--dsw-alias-label-secondary, #cfd3d6)", cursor: "pointer", fontSize: "12px"
+              }
             }, t("dock.fly")) : null,
             top ? h("button", {
               type: "button",
               onClick: function () { dockStore.setItems(items.slice(1), syncedMsgs); },
-              style: { padding: "2px 6px", borderRadius: "6px", border: "none", background: "transparent", color: "#9ca3af", cursor: "pointer", fontSize: "12px" }
-            }, "×") : h("span", { style: { fontSize: "11px", opacity: 0.72 } }, "▲ 悬停看对话")
+              style: {
+                width: "24px", height: "24px", borderRadius: "var(--dsw-radius-sm, 8px)",
+                border: "none", background: "transparent", color: "var(--dsw-alias-label-tertiary, #81858c)", cursor: "pointer", fontSize: "14px"
+              }
+            }, "×") : renderChevronGlyph(expanded)
           )
         )
       );
@@ -261,15 +420,27 @@ export function renderDshClientBundleJs() {
         type: "button",
         onClick: function () { props.toggleDoneGateView(sessionId); },
         style: {
-          padding: "2px 8px", borderRadius: "999px", border: "1px solid rgba(59,130,246,0.35)",
-          background: "rgba(36,123,191,0.12)", color: "inherit", fontSize: "11.5px", cursor: "pointer", lineHeight: "18px"
+          display: "inline-flex", alignItems: "center", gap: "5px",
+          height: "28px", padding: "0 10px", boxSizing: "border-box",
+          borderRadius: "var(--dsw-radius-sm, 8px)",
+          border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.16))",
+          background: "transparent",
+          color: "var(--dsw-alias-label-secondary, inherit)",
+          fontFamily: "var(--dsw-font-family, inherit)",
+          fontSize: "12.5px", fontWeight: 500, cursor: "pointer", lineHeight: "20px"
         }
-      }, t("switch.label"));
+      },
+        h("svg", { width: "13", height: "13", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" },
+          h("path", { d: "M2.5 5.2h11M4.2 5.2v7.3M11.8 5.2v7.3M2 3.2h12", stroke: "currentColor", strokeWidth: "1.35", strokeLinecap: "round" })
+        ),
+        t("switch.label")
+      );
     }
 
     return {
       inject: ["slots", "locale"],
       apply: function apply(ctx) {
+        ctx.effect(function () { return ensureHostOverlayStyle(); }, "dsh-donegate: overlay-css");
         ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "dsh-donegate: locale");
         var t = ctx.locale.bind(NS);
 

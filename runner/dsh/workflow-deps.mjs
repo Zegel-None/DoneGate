@@ -21,7 +21,7 @@ const KNOWN_TEMPLATE_BINS = {
 
 const sanitizeId = (s) => String(s || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'default';
 
-export function getWorkflowDepsPaths(projectRoot, packId) {
+export function getWorkflowDepsPaths(projectRoot, packId, platform = process.platform) {
   const root = resolve(projectRoot);
   const safeId = sanitizeId(packId);
   const relDir = `workflows/.deps/${safeId}`;
@@ -32,14 +32,16 @@ export function getWorkflowDepsPaths(projectRoot, packId) {
     planPath: join(absDir, 'PROVISION-PLAN.json'),
     binDir: join(absDir, '.bin'),
     npmBinDir: join(absDir, 'npm', 'node_modules', '.bin'),
-    venvBinDir: process.platform === 'win32' ? join(absDir, 'venv', 'Scripts') : join(absDir, 'venv', 'bin'),
+    venvBinDir: platform === 'win32' ? join(absDir, 'venv', 'Scripts') : join(absDir, 'venv', 'bin'),
     reposDir: join(absDir, 'repos')
   };
 }
 
-function findExecutableInDirs(binName, searchDirs) {
+export function findExecutableInDirs(binName, searchDirs, platform = process.platform) {
   if (!binName) return null;
-  const exts = process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat', '.ps1'] : [''];
+  const exts = platform === 'win32'
+    ? (/\.(exe|cmd|bat|com|ps1)$/i.test(binName) ? [''] : ['.exe', '.cmd', '.bat', '.com', '.ps1'])
+    : [''];
   for (const dir of searchDirs) {
     if (!dir || !existsSync(dir)) continue;
     for (const ext of exts) {
@@ -137,14 +139,18 @@ function buildProvisionAgentPrompt(pack, relDepsDir, missing) {
   return lines.join('\n');
 }
 
-export function inspectWorkflowDeps(projectRoot, pack) {
+export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
+  const platform = opts.platform || process.platform;
+  const env = opts.env || process.env;
   const root = resolve(projectRoot || process.cwd());
   const packId = (pack && pack.id) || 'default';
-  const paths = getWorkflowDepsPaths(root, packId);
+  const paths = getWorkflowDepsPaths(root, packId, platform);
   const manifestRes = existsSync(paths.manifestPath) ? readJsonStrict(paths.manifestPath) : { ok: false };
   const installedMap = (manifestRes.ok && manifestRes.value && manifestRes.value.installed) || {};
   const localBins = [paths.binDir, paths.npmBinDir, paths.venvBinDir];
-  const hostBins = [join(root, 'node_modules', '.bin'), join(DG_ROOT, 'node_modules', '.bin'), ...String(process.env.PATH || '').split(delimiter).filter(Boolean)];
+  const pathSep = platform === 'win32' ? ';' : delimiter;
+  const rawPath = String(env.PATH ?? env.Path ?? env.path ?? '');
+  const hostBins = [join(root, 'node_modules', '.bin'), join(DG_ROOT, 'node_modules', '.bin'), ...rawPath.split(pathSep).filter(Boolean)];
 
   const items = resolveWorkflowDepItems(root, pack).map((it) => {
     const rec = installedMap[it.id];
@@ -154,10 +160,10 @@ export function inspectWorkflowDeps(projectRoot, pack) {
     if (rec && rec.ready === true && (!rec.verifyPath || existsSync(resolve(root, rec.verifyPath)))) {
       resolvedVia = 'workflow-manifest'; resolvedPath = rec.verifyPath || paths.relDir;
     } else if (it.bin) {
-      const inWf = findExecutableInDirs(it.bin, localBins);
+      const inWf = findExecutableInDirs(it.bin, localBins, platform);
       if (inWf) { resolvedVia = 'workflow-deps'; resolvedPath = normalizeSlashes(inWf); }
       else if (it.allowHostEnv) {
-        const inHost = findExecutableInDirs(it.bin, hostBins);
+        const inHost = findExecutableInDirs(it.bin, hostBins, platform);
         if (inHost) { resolvedVia = 'host-env'; resolvedPath = normalizeSlashes(inHost); }
       }
     } else if (existsSync(repoCloneDir)) {
@@ -175,11 +181,33 @@ export function inspectWorkflowDeps(projectRoot, pack) {
   };
 }
 
-export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env) {
-  const paths = getWorkflowDepsPaths(projectRoot, packId);
+export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env, platform = process.platform) {
+  const paths = getWorkflowDepsPaths(projectRoot, packId, platform);
   const extraBins = [paths.binDir, paths.npmBinDir, paths.venvBinDir].filter((d) => existsSync(d));
-  const curPath = baseEnv.PATH || baseEnv.Path || '';
-  return { ...baseEnv, PATH: extraBins.length ? [...extraBins, curPath].filter(Boolean).join(delimiter) : curPath, DG_WORKFLOW_DEPS_DIR: paths.absDir };
+  const pathSep = platform === 'win32' ? ';' : delimiter;
+  const curPath = String(baseEnv.PATH ?? baseEnv.Path ?? baseEnv.path ?? '');
+  const nextEnv = { ...baseEnv };
+  delete nextEnv.Path;
+  delete nextEnv.path;
+  nextEnv.PATH = extraBins.length ? [...extraBins, curPath].filter(Boolean).join(pathSep) : curPath;
+  nextEnv.DG_WORKFLOW_DEPS_DIR = paths.absDir;
+  return nextEnv;
+}
+
+export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.platform) {
+  if (!/^[a-zA-Z0-9@/._-]+$/.test(String(spec || ''))) return { status: 2, error: new Error('非法包名规格') };
+  const npmArgs = ['install', '--no-audit', '--no-fund', '--prefix', prefixDir, spec];
+  const cliCands = [
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  ];
+  const npmCli = cliCands.find((p) => existsSync(p));
+  if (npmCli) return spawnSync(process.execPath, [npmCli, ...npmArgs], { cwd, encoding: 'utf8', timeout: 180000, windowsHide: true });
+  if (platform === 'win32') {
+    const cmdLine = `"npm.cmd install --no-audit --no-fund --prefix "${String(prefixDir).replace(/"/g, '')}" "${spec}""`;
+    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], { cwd, encoding: 'utf8', timeout: 180000, windowsVerbatimArguments: true, windowsHide: true });
+  }
+  return spawnSync('npm', npmArgs, { cwd, encoding: 'utf8', timeout: 180000 });
 }
 
 export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
@@ -198,7 +226,7 @@ export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
     for (const m of before.missing) {
       if (m.kind === 'npm' && m.pkg) {
         const spec = m.version ? `${m.pkg}@${m.version.replace(/^v/, '')}` : m.pkg;
-        const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', '--prefix', join(paths.absDir, 'npm'), spec], { cwd: root, encoding: 'utf8', timeout: 180000 });
+        const r = runNpmPrefixInstall(join(paths.absDir, 'npm'), spec, root);
         if (r.status === 0) installed[m.id] = { ready: true, updatedAt: new Date().toISOString(), source: 'npm-prefix' };
       }
     }

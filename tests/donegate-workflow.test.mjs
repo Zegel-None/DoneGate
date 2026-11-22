@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dispatchCommand } from '../runner/donegate.mjs';
+import { buildBrowserOpenCommand } from '../runner/core/dashboard.mjs';
+import { buildSanitizedEnv } from '../runner/core/isolation.mjs';
+import { resolveSafeWorkspaceFolders, startAtlasHttpServer } from '../runner/atlas/serve-atlas.mjs';
+import { checkWriteScopeMandate, collectGitDiffStats, getRunEventHub } from '../runner/dsh/workflow-runner.mjs';
+import { buildWinBatchSpawn } from '../skill/adapters/_shared.mjs';
 import { computeProjectStatus } from '../runner/core/state-calc.mjs';
 import { countEffectiveCodeLines } from '../skill/check-commit-hygiene.mjs';
 import { auditHtmlAntiAiSlop, recommendAestheticProposals } from '../runner/dsh/ui-aesthetics.mjs';
@@ -291,5 +296,100 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     expect(resolveSkillPrefix('/workspace/DoneGate', '/workspace/DoneGate', posix)).toBe('skill');
     expect(resolveSkillPrefix('/workspace', '/workspace/DoneGate', posix)).toBe('/workspace/DoneGate/skill');
     expect(resolveSkillPrefix('/tmp/demo-proj', '/workspace/DoneGate', posix)).toBe('/workspace/DoneGate/skill');
+  });
+
+  it('Windows (win32) 专项回归：跨盘符越界拦截、浏览器 URL 直开、.cmd 含空格双引号转义、白名单环境与中文路径写范围核验', async () => {
+    // 1. Windows 跨盘符 path.win32.relative 越界防护
+    const winWorkApp = win32.join('D:', 'Work', 'MyApp');
+    const winSys32 = win32.join('C:', 'Windows', 'System32');
+    const folders = resolveSafeWorkspaceFolders(winWorkApp, [
+      winSys32,
+      win32.join('..', '..', 'Secret'),
+      win32.join('..', 'SharedLib')
+    ], win32);
+    expect(folders[0].blocked).toBe(true);
+    expect(folders[0].absPath).toBeNull();
+    expect(folders[1].blocked).toBe(true);
+    expect(folders[2].blocked).toBe(false);
+
+    // 2. openInSystemBrowser / buildBrowserOpenCommand 不再用 path.resolve 破坏 http:// URL 且开启 verbatim 参数
+    const urlCmd = buildBrowserOpenCommand('http://127.0.0.1:43180/', 'win32', win32);
+    expect(urlCmd.cmd).toBe('cmd.exe');
+    expect(urlCmd.args).toEqual(['/d', '/s', '/c', '"start "" "http://127.0.0.1:43180/""']);
+    expect(urlCmd.opts.windowsVerbatimArguments).toBe(true);
+    expect(urlCmd.opts.windowsHide).toBe(true);
+
+    const winDashHtml = win32.join('D:', 'My Project', '.donegate', 'dashboard.html');
+    const fileCmd = buildBrowserOpenCommand(winDashHtml, 'win32', win32);
+    expect(fileCmd.args[3]).toBe(`"start "" "${winDashHtml}""`);
+
+    // 3. 砂浆适配器 Windows .cmd 批处理含空格/括号双路径安全封装
+    const winBiomeCmd = win32.join('C:', 'Users', 'Dev User', 'AppData', 'Roaming', 'npm', 'biome.cmd');
+    const winTargetSrc = win32.join('D:', 'DoneGate V4(完结门)', 'src');
+    const wb = buildWinBatchSpawn(winBiomeCmd, ['check', winTargetSrc]);
+    expect(wb.args).toEqual([
+      '/d', '/s', '/c',
+      `""${winBiomeCmd}" check "${winTargetSrc}""`
+    ]);
+    expect(wb.extraOpts.windowsVerbatimArguments).toBe(true);
+
+    // 4. 隔离运行器环境白名单保留 Windows 关键目录并合并 Path -> PATH，同时剥离敏感密钥
+    const winNodeDir = win32.join('C:', 'Program Files', 'nodejs');
+    const winAppData = win32.join('C:', 'Users', 'Dev', 'AppData', 'Roaming');
+    const winLocalAppData = win32.join('C:', 'Users', 'Dev', 'AppData', 'Local');
+    const winDir = win32.join('C:', 'Windows');
+    const san = buildSanitizedEnv({
+      Path: `${winSys32};${winNodeDir}`,
+      APPDATA: winAppData,
+      LOCALAPPDATA: winLocalAppData,
+      SystemDrive: 'C:',
+      WINDIR: winDir,
+      OPENAI_API_KEY: 'sk-should-not-leak'
+    });
+    expect(san.PATH).toContain(winNodeDir);
+    expect(san.APPDATA).toBe(winAppData);
+    expect(san.LOCALAPPDATA).toBe(winLocalAppData);
+    expect(san.SystemDrive).toBe('C:');
+    expect(san.OPENAI_API_KEY).toBeUndefined();
+
+    // 5. 中文路径 git diff (core.quotepath=false) 写范围校验 + /file-preview 目录 EISDIR 与同前缀越界防护
+    const baseTmp = mkdtempSync(join(tmpdir(), 'dg-win-audit-'));
+    const dir = join(baseTmp, 'proj');
+    const siblingDir = join(baseTmp, 'proj-secret');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(siblingDir, 'leak.txt'), 'TOP_SECRET\n', 'utf8');
+    writeFileSync(join(dir, '.gitignore'), '.donegate/\n', 'utf8');
+    writeFileSync(join(dir, 'docs/说明文档.md'), '# 初版\n', 'utf8');
+    spawnSync('git', ['-C', dir, 'init', '-q']);
+    spawnSync('git', ['-C', dir, 'config', 'user.email', 't@local']);
+    spawnSync('git', ['-C', dir, 'config', 'user.name', 'T']);
+    spawnSync('git', ['-C', dir, 'add', '.']);
+    spawnSync('git', ['-C', dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
+
+    writeFileSync(join(dir, 'docs/说明文档.md'), '# 第二版（中文路径不触发八进制转义误判）\n', 'utf8');
+    const diff = collectGitDiffStats(dir);
+    expect(diff.files).toEqual(['docs/说明文档.md']);
+    expect(checkWriteScopeMandate(diff.files, ['DOCS/'], 'win32').ok).toBe(true);
+    expect(getRunEventHub(dir)).toBe(getRunEventHub(dir));
+
+    dispatchCommand(['init', '.'], dir);
+    const srv = await startAtlasHttpServer(dir, { port: 0, idleExitSec: 15 });
+    try {
+      const rRootDir = await fetch(`${srv.url}donegate/api/file-preview?path=`);
+      expect(rRootDir.status).toBe(404);
+      const rSubDir = await fetch(`${srv.url}donegate/api/file-preview?path=docs`);
+      expect(rSubDir.status).toBe(404);
+      const rSibling = await fetch(`${srv.url}donegate/api/file-preview?path=../proj-secret/leak.txt`);
+      expect(rSibling.status).toBe(404);
+      const rValid = await fetch(`${srv.url}donegate/api/file-preview?path=${encodeURIComponent('docs/说明文档.md')}`);
+      expect(rValid.status).toBe(200);
+      const body = await rValid.json();
+      expect(body.ok).toBe(true);
+      expect(body.content).toContain('第二版');
+    } finally {
+      srv.server.close();
+      rmSync(baseTmp, { recursive: true, force: true });
+    }
   });
 });

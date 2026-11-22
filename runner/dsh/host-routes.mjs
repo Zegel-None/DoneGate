@@ -1,6 +1,6 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包打包/裁决、工作流导入导出与实时节点遥测）
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5盲判包、UI看板与实时遥测）
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, exportDashboardHtml } from '../core/dashboard.mjs';
 import { cmdVerifyApply, cmdVerifyPack } from '../core/cmd-handover-verify.mjs';
 import { readSavedWorkbenchState } from '../atlas/hydrate-workbench.mjs';
@@ -365,7 +365,13 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
       const rel = normalizeSlashes(u.searchParams.get('path') || '').replace(/^\/+/, '');
       const full = resolve(root, rel);
-      if (!normalizeSlashes(full).startsWith(normalizeSlashes(root)) || !existsSync(full)) {
+      const rawRel = relative(root, full);
+      const relCheck = normalizeSlashes(rawRel);
+      let isRegFile = false;
+      if (relCheck && !isAbsolute(rawRel) && !/^[A-Za-z]:/.test(relCheck) && !relCheck.startsWith('..') && existsSync(full)) {
+        try { isRegFile = statSync(full).isFile(); } catch (err) { void err; }
+      }
+      if (!isRegFile) {
         sendJson(res, 404, { ok: false, error: '文件不存在或越界' });
         return true;
       }

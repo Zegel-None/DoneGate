@@ -23,9 +23,13 @@ const 首词 = (cmd) => { const m = cmd.trim().match(/^"([^"]+)"|^(\S+)/); retur
 const 可执行 = (tok) => {
   if (!tok) return false;
   if (内置命令.has(tok.toLowerCase())) return true;
-  if (isAbsolute(tok) || /^[A-Za-z]:[\\/]/.test(tok)) return existsSync(tok);
   const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
-  for (const p of (process.env.PATH || '').split(delimiter)) {
+  if (isAbsolute(tok) || /^[A-Za-z]:[\\/]/.test(tok) || /[\\/]/.test(tok)) {
+    const base = /^[A-Za-z]:[\\/]/.test(tok) && !isAbsolute(tok) ? tok : resolve(process.cwd(), tok);
+    return ['', ...exts].some((e) => existsSync(base + e));
+  }
+  const pathRaw = process.env.PATH || process.env.Path || '';
+  for (const p of pathRaw.split(delimiter)) {
     if (!p) continue;
     for (const e of ['', ...exts]) { if (existsSync(join(p, tok + e))) return true; }
   }

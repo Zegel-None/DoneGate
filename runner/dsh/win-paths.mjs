@@ -49,12 +49,19 @@ export function toSafeFileUrl(absPath) {
   return pathToFileURL(resolve(raw)).href;
 }
 
+export function normalizeWinDriveKey(rawPath) {
+  const clean = normalizeSlashes(rawPath).replace(/\/+$/, '');
+  return /^[a-z]:(?=\/|$)/.test(clean) ? clean[0].toUpperCase() + clean.slice(1) : clean;
+}
+
 export function buildDshFileResourceAddress(sessionId, projectRoot, targetRelOrAbs) {
   const sid = encodeURIComponent(String(sessionId || '').trim());
   const rootPosix = normalizeSlashes(projectRoot).replace(/\/+$/, '');
   const rawPosix = normalizeSlashes(targetRelOrAbs).replace(/^\.\//, '');
   let rel = rawPosix;
   if (rawPosix.startsWith(rootPosix + '/')) {
+    rel = rawPosix.slice(rootPosix.length + 1);
+  } else if (/^[A-Za-z]:\//.test(rootPosix) && rawPosix.toLowerCase().startsWith(rootPosix.toLowerCase() + '/')) {
     rel = rawPosix.slice(rootPosix.length + 1);
   }
   const encodedSegments = rel.split('/').filter(Boolean).map((seg) => encodeURIComponent(seg)).join('/');

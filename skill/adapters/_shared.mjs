@@ -69,38 +69,58 @@ export function checkFreshFileOrFail(absPath, displayRel, dryRun, headCommitSec,
   return buf;
 }
 
+export function buildWinBatchSpawn(batPath, args = []) {
+  const quoteCmd = (raw) => {
+    const s = String(raw ?? '');
+    if (!s) return '""';
+    return /[\s"&|<>^()]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const inner = [quoteCmd(batPath), ...args.map(quoteCmd)].join(' ');
+  return {
+    cmd: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${inner}"`],
+    extraOpts: { windowsVerbatimArguments: true, windowsHide: true }
+  };
+}
+
 function resolveExecutable(spec, fallbackCandidates = []) {
   if (/[\\/]/.test(spec)) {
     if (!existsSync(spec)) return null;
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spec)) {
-      return { cmd: 'cmd.exe', prefixArgs: ['/d', '/c', spec] };
+      return { cmd: spec, prefixArgs: [], isWinBatch: true };
     }
-    return { cmd: spec, prefixArgs: [] };
+    return { cmd: spec, prefixArgs: [], isWinBatch: false };
   }
   const finder = process.platform === 'win32' ? 'where.exe' : 'which';
-  const w = spawnSync(finder, [spec], { encoding: 'utf8' });
+  const w = spawnSync(finder, [spec], { encoding: 'utf8', windowsHide: true });
   if (w.status === 0 && (w.stdout || '').trim()) {
     const lines = w.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     if (process.platform === 'win32') {
       const exe = lines.find((l) => /\.exe$/i.test(l));
-      if (exe) return { cmd: exe, prefixArgs: [] };
-      const bat = lines.find((l) => /\.(cmd|bat)$/i.test(l)) || lines[0];
-      return { cmd: 'cmd.exe', prefixArgs: ['/d', '/c', bat] };
+      if (exe) return { cmd: exe, prefixArgs: [], isWinBatch: false };
+      const bat = lines.find((l) => /\.(cmd|bat)$/i.test(l));
+      if (bat) return { cmd: bat, prefixArgs: [], isWinBatch: true };
+      const firstExt = lines.find((l) => /\.[A-Za-z0-9]+$/.test(l));
+      if (firstExt) return { cmd: firstExt, prefixArgs: [], isWinBatch: false };
+    } else {
+      return { cmd: lines[0], prefixArgs: [], isWinBatch: false };
     }
-    return { cmd: lines[0], prefixArgs: [] };
   }
   const home = process.env.USERPROFILE || homedir();
+  const appDataNpm = process.platform === 'win32' && process.env.APPDATA ? join(process.env.APPDATA, 'npm') : null;
   const cands = [
     ...fallbackCandidates,
+    ...(appDataNpm ? [join(appDataNpm, spec + '.cmd'), join(appDataNpm, spec + '.exe')] : []),
     process.platform === 'win32' ? join(home, 'bin', spec + '.exe') : join(home, 'bin', spec),
+    process.platform === 'win32' ? join(home, 'bin', spec + '.cmd') : null,
     process.platform === 'win32' ? join(home, '.local', 'bin', spec + '.exe') : join(home, '.local', 'bin', spec)
   ];
   for (const c of cands) {
     if (c && existsSync(c)) {
       if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(c)) {
-        return { cmd: 'cmd.exe', prefixArgs: ['/d', '/c', c] };
+        return { cmd: c, prefixArgs: [], isWinBatch: true };
       }
-      return { cmd: c, prefixArgs: [] };
+      return { cmd: c, prefixArgs: [], isWinBatch: false };
     }
   }
   return null;
@@ -164,12 +184,20 @@ export function runMortarAdapter(spec) {
   } else {
     const resolved = resolveExecutable(binSpec, typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : []);
     if (!resolved) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
-    runBin = (args, opts = {}) => spawnSync(resolved.cmd, [...resolved.prefixArgs, ...args], {
-      cwd: opts.cwd || rootDir,
-      env: opts.env ? { ...customEnv, ...opts.env } : customEnv,
-      encoding: 'utf8',
-      timeout: opts.timeout || timeoutMs
-    });
+    runBin = (args, opts = {}) => {
+      const baseOpts = {
+        cwd: opts.cwd || rootDir,
+        env: opts.env ? { ...customEnv, ...opts.env } : customEnv,
+        encoding: 'utf8',
+        timeout: opts.timeout || timeoutMs,
+        windowsHide: true
+      };
+      if (resolved.isWinBatch) {
+        const wb = buildWinBatchSpawn(resolved.cmd, args);
+        return spawnSync(wb.cmd, wb.args, { ...baseOpts, ...wb.extraOpts });
+      }
+      return spawnSync(resolved.cmd, [...resolved.prefixArgs, ...args], baseOpts);
+    };
     const verArgs = spec.versionArgs || ['--version'];
     const verR = runBin(verArgs, { timeout: 20000 });
     if (verR.error || verR.status !== 0) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);

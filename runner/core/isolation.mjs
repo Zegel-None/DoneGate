@@ -10,7 +10,13 @@ export const DEFAULT_RUNNER_CONFIG = {
   maxOutputChars: 262144
 };
 
-const ENV_WHITELIST = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'LANG', 'LC_ALL', 'TEMP', 'TMP', 'PATHEXT', 'ComSpec'];
+const ENV_WHITELIST = [
+  'PATH', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'SystemDrive', 'WINDIR',
+  'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)',
+  'LANG', 'LC_ALL', 'TEMP', 'TMP', 'PATHEXT', 'ComSpec',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE'
+];
 
 export function ensureRunnerConfig(projectRoot) {
   const p = join(projectRoot, '.donegate', 'runner.json');
@@ -24,10 +30,13 @@ export function ensureRunnerConfig(projectRoot) {
   return { ...DEFAULT_RUNNER_CONFIG, ...r.value, path: p };
 }
 
-export function buildSanitizedEnv() {
+export function buildSanitizedEnv(baseEnv = process.env) {
   const env = {};
   for (const k of ENV_WHITELIST) {
-    if (process.env[k] !== undefined) env[k] = process.env[k];
+    if (baseEnv[k] !== undefined) env[k] = baseEnv[k];
+  }
+  if (env.PATH === undefined && (baseEnv.Path !== undefined || baseEnv.path !== undefined)) {
+    env.PATH = baseEnv.Path ?? baseEnv.path;
   }
   return env;
 }

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
-import { normalizeLf, normalizeSlashes } from './win-paths.mjs';
+import { normalizeLf, normalizeSlashes, normalizeWinDriveKey } from './win-paths.mjs';
 import { buildWorkflowDepEnv, inspectWorkflowDeps } from './workflow-deps.mjs';
 import {
   AUTOPILOT_STATES, createInitialCheckpoint, isHumanGateNode,
@@ -15,7 +15,7 @@ import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-ca
 const HUB_MAP = new Map();
 
 export function getRunEventHub(projectRoot) {
-  const key = normalizeSlashes(resolve(projectRoot));
+  const key = normalizeWinDriveKey(resolve(projectRoot));
   if (!HUB_MAP.has(key)) {
     const listeners = new Set();
     const recentEvents = [];
@@ -80,9 +80,10 @@ export function preflightWorkflowPack(pack, opts = {}) {
   return { ok: true, exitCode: 0 };
 }
 
-function collectGitDiffStats(cwd) {
-  const r = spawnSync('git', ['-C', cwd, 'diff', '--numstat', 'HEAD'], { encoding: 'utf8', env: cleanGitEnv() });
-  const rFallback = r.status === 0 ? r : spawnSync('git', ['-C', cwd, 'diff', '--numstat'], { encoding: 'utf8', env: cleanGitEnv() });
+export function collectGitDiffStats(cwd) {
+  const gitOpts = { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true };
+  const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'diff', '--numstat', 'HEAD'], gitOpts);
+  const rFallback = r.status === 0 ? r : spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'diff', '--numstat'], gitOpts);
   const files = new Set();
   let added = 0;
   let removed = 0;
@@ -95,7 +96,7 @@ function collectGitDiffStats(cwd) {
       if (/^\d+$/.test(d)) removed += Number(d);
     }
   }
-  const untracked = spawnSync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'], { encoding: 'utf8', env: cleanGitEnv() });
+  const untracked = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard'], gitOpts);
   if (untracked.status === 0) {
     for (const u of normalizeLf(untracked.stdout).split('\n').map((s) => s.trim()).filter(Boolean)) {
       const norm = normalizeSlashes(u);
@@ -105,11 +106,15 @@ function collectGitDiffStats(cwd) {
   return { files: [...files], added, removed };
 }
 
-function checkWriteScopeMandate(files, allowedScopes) {
+export function checkWriteScopeMandate(files, allowedScopes, platform = process.platform) {
   if (!Array.isArray(allowedScopes) || allowedScopes.length === 0) return { ok: true, violated: [] };
-  const cleanScopes = allowedScopes.map((s) => normalizeSlashes(s).replace(/^\.\//, ''));
+  const fold = (s) => (platform === 'win32' ? s.toLowerCase() : s);
+  const cleanScopes = allowedScopes.map((s) => fold(normalizeSlashes(s).replace(/^\.\//, '')));
   if (cleanScopes.includes('') || cleanScopes.includes('./')) return { ok: true, violated: [] };
-  const violated = files.filter((f) => !cleanScopes.some((s) => (s.endsWith('/') ? f.startsWith(s) : (f === s || f.startsWith(s + '/')))));
+  const violated = files.filter((rawFile) => {
+    const f = fold(normalizeSlashes(rawFile).replace(/^\.\//, ''));
+    return !cleanScopes.some((s) => (s.endsWith('/') ? f.startsWith(s) : (f === s || f.startsWith(s + '/'))));
+  });
   return { ok: violated.length === 0, violated };
 }
 
@@ -140,7 +145,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     : createInitialCheckpoint(root, runId, pack, ticket);
 
   if (hooks.requireCleanGit === true) {
-    const st = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', env: cleanGitEnv() });
+    const st = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true });
     if (st.status !== 0 || st.stdout.trim() !== '') {
       tripAutopilotBreaker(root, cp, { code: 'DIRTY_WORKTREE_FAULT', nodeId: cp.cursorNodeId, reason: '挂机前检测到脏工作区或未提交文件，已触发安全隔离熔断' });
       logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine } });
@@ -260,7 +265,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
         logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: 0, cacheHit: true, diagSummary: `⚡ 命中指纹缓存免跑 (${cacheRes.fp.watchedCount} 文件未变)` });
       } else {
         const t0 = Date.now();
-        const r = spawnSync(process.execPath, args, { cwd: workCwd, env: cleanGitEnv(wfEnv), encoding: 'utf8', timeout: 120000 });
+        const r = spawnSync(process.execPath, args, { cwd: workCwd, env: cleanGitEnv(wfEnv), encoding: 'utf8', timeout: 120000, windowsHide: true });
         const durationMs = Date.now() - t0;
         lastExitCode = typeof r.status === 'number' ? r.status : 2;
         lastDiag = normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim();

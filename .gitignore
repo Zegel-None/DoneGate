@@ -41,6 +41,7 @@ workflows/.deps/
 .donegate/verify/
 .donegate/chain.jsonl
 .donegate/dashboard.html
+.donegate/dashboard-dsh.html
 .donegate/notes.jsonl
 .donegate/hygiene-bypasses.jsonl
 .donegate/atlas.json
@@ -52,3 +53,4 @@ workflows/.deps/
 .donegate/scratch/
 .donegate/runs/
 .donegate/dsh-bundle/
+.githooks/
