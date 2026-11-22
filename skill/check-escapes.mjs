@@ -599,4 +599,4 @@ if (res.fails.length > 0) {
 }
 console.log(`RESULT: PASS ${res.passed.length} 条历史漏网问题回归门禁全绿`);
 console.log(`\n${COMMUNITY_MOTTO}（反馈入口：${REPO_URL}/issues/new）`);
-process.exitCode = 0;
+setTimeout(() => { process.exitCode = 0; }, 30);

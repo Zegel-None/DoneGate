@@ -1,5 +1,5 @@
 // 适配器 · ast-grep 结构搜索观测（Adapter Protocol v1.1 · grep 语义 0=命中 / 1=无命中，委托 _shared.mjs）
-import { relative, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { runAdapter } from './_shared.mjs';
 
 runAdapter({
@@ -26,8 +26,9 @@ runAdapter({
     if (!Array.isArray(parsed)) ctx.fail(3, 'ast-grep 报告不是匹配数组');
     const files = new Set(), sample = [];
     for (const m of parsed) {
-      const r = relative(ctx.rootDir, String((m && m.file) || ''));
-      const f = (r.startsWith('..') ? String((m && m.file) || '') : r).split(sep).join('/');
+      const rawFile = String((m && m.file) || '');
+      const r = rawFile ? relative(ctx.rootDir, resolve(ctx.rootDir, rawFile)) : '';
+      const f = ((!r || r.startsWith('..') || isAbsolute(r)) ? rawFile : r).split(sep).join('/').replace(/\\/g, '/');
       if (f) files.add(f);
       if (sample.length < 20) {
         const st = (m && m.range && m.range.start) || {};
