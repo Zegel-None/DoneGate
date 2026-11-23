@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DSH Web 原生插件包、dsh-doc 规范、Windows 路径、类 ComfyUI 补齐与过夜挂机状态机自检夹具（<= 325 行）
+// DSH Web 原生插件包、dsh-doc 规范、Windows 路径、类 ComfyUI 补齐与过夜挂机状态机自检夹具
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -190,21 +190,26 @@ async function verifyWinProfileInstallLifecycle(check) {
 }
 
 async function verifyClientSandboxAndRunner(check) {
-  await check('5. 浏览器端 __ModuleLoader__ 沙箱加载与插槽注册 + 确定性工作流状态机验真', async () => {
+  await check('5. 浏览器端 __ModuleLoader__ 沙箱加载、dispatchSubagent 编队子代理桥与确定性工作流状态机验真', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-dsh-vm-'));
     try {
       const { bundleDir } = buildDshBundleDirectory(ROOT, join(tmp, 'bundle'));
       const clientCode = readFileSync(join(bundleDir, 'lib', 'client.js'), 'utf8');
       let loadedMod = null;
       const registeredSlots = [];
+      const winMsgHandlers = [];
       const sandbox = {
-        window: { __ModuleLoader__: { load(spec) { loadedMod = spec; } }, addEventListener() {}, removeEventListener() {} },
+        window: {
+          __ModuleLoader__: { load(spec) { loadedMod = spec; } },
+          addEventListener(ev, fn) { if (ev === 'message') winMsgHandlers.push(fn); },
+          removeEventListener() {}
+        },
         encodeURIComponent, Boolean, String, Array, Map, Set
       };
       vm.runInNewContext(clientCode, sandbox);
       assert.ok(loadedMod && loadedMod.id === '@local/dsh-donegate');
       const plugin = loadedMod.factory((modName) => {
-        if (modName === 'react') return { createElement: (...a) => a, useRef: () => ({ current: null }), useEffect() {} };
+        if (modName === 'react') return { createElement: (...a) => a, useRef: () => ({ current: null }), useEffect(fn) { fn(); } };
         throw new Error('Unexpected require: ' + modName);
       });
       let mockViewMode = 'chat';
@@ -237,30 +242,88 @@ async function verifyClientSandboxAndRunner(check) {
       assert.ok(clientCode.includes('--dsw-specific-input-major') && clientCode.includes('--dsw-radius-xl'), '必须复用 DSH 官方输入框表面与圆角令牌');
       assert.ok(!clientCode.includes('切回对话页') && !clientCode.includes('对话与回执'), '必须彻底移除多余的对话与回执顶栏及切回对话页按钮');
       assert.ok(clientCode.includes('dg_dsh_agent_name') && clientCode.includes('dg_dsh_dock_pinned') && clientCode.includes('dg_dsh_dock_height'), '必须持久化自定义 Agent 名字、右上角固定状态与手动拖拽高度');
+
+      let draftedText = '';
+      let submittedCount = 0;
+      viewEntry.comp({
+        sessionId: 's-draft',
+        inputActions: { setDraft(txt) { draftedText = txt; }, submit() { submittedCount++; } }
+      });
+      for (const h of winMsgHandlers) {
+        h({ data: { source: 'donegate-canvas', sessionId: 's-draft', type: 'dg:dispatch-subagent', prompt: '请补齐单节点工作流依赖' } });
+      }
+      assert.equal(draftedText, '请补齐单节点工作流依赖');
+      assert.equal(submittedCount, 1);
+
+      const hostMod = await import(toSafeFileUrl(join(bundleDir, 'lib', 'index.js')));
+      assert.deepEqual(hostMod.inject, ['webServer'], 'Host 插件必须保持最小 inject: ["webServer"]');
+      const workRoot = join(tmp, 'proj');
+      mkdirSync(workRoot, { recursive: true });
+      let hostRoute = null;
+      let capturedActivation = null;
+      await hostMod.apply({
+        webServer: { register(spec) { hostRoute = spec.handler; return () => {}; } },
+        effect() {},
+        get(svc) {
+          if (svc === 'agents') return { get: () => null, list: () => [], resume: async ({ sessionId }) => ({ agent: { id: sessionId } }) };
+          if (svc === 'subagents') return { startActivation: async (cfg) => { capturedActivation = cfg; return { name: 'worker-alpha', childId: 'child-1' }; } };
+          return null;
+        }
+      }, { projectRoot: workRoot });
+
+      const callHost = async (method, urlPath, bodyObj = null) => {
+        let code = 200;
+        let outTxt = '';
+        await hostRoute({
+          method, url: urlPath, headers: {},
+          on(ev, cb) { if (ev === 'data' && bodyObj) cb(Buffer.from(JSON.stringify(bodyObj))); if (ev === 'end') cb(); },
+          destroy() {}
+        }, { writeHead(s) { code = s; }, end(c) { outTxt = c || ''; } });
+        return { code, json: outTxt ? JSON.parse(outTxt) : null };
+      };
+      const pingRes = await callHost('GET', '/donegate/api/ping');
+      assert.equal(pingRes.json.ok, true);
+      assert.equal(pingRes.json.mode, 'dsh-web');
+      const provRes = await callHost('POST', '/donegate/api/workflow-deps/provision', {
+        sessionId: 'sess-resume-1', spawnSubagent: true, onlyNodeId: 'node-target',
+        pack: {
+          id: 'pack-multi', name: '多节点工作流',
+          deps: [{ id: 'pack-level-dep', bin: 'never-pack-bin', allowHostEnv: false }],
+          nodes: [
+            { id: 'node-target', title: '目标节点', installSpec: { id: 'only-dep', bin: 'never-only-bin', allowHostEnv: false } },
+            { id: 'node-other', title: '旁路节点', installSpec: { id: 'other-dep', bin: 'never-other-bin', allowHostEnv: false } }
+          ]
+        }
+      });
+      assert.equal(provRes.json.ready, false, '未实际装完前严禁把 ready 标为 true');
+      assert.deepEqual(provRes.json.items.map((x) => x.id), ['only-dep'], 'onlyNodeId 必须精准过滤为单节点依赖');
+      assert.equal(provRes.json.subagentDispatched, true);
+      assert.equal(provRes.json.subagentName, 'worker-alpha');
+      assert.equal(provRes.json.fallbackAutoSubmit, false);
+      assert.equal(capturedActivation.agentPreset, 'dsh-donegate-worker');
+
       const dockEntry = registeredSlots.find((s) => s.opts.id === 'donegate-dock');
       const injectedDockProps = dockEntry.opts.inject();
-      assert.equal(injectedDockProps.isDoneGateActive('default'), false, 'sid === "default" 未建会话时必须默认失活');
-      assert.equal(injectedDockProps.isDoneGateActive(''), false, '空会话 ID 必须默认失活');
-      assert.equal(injectedDockProps.isDoneGateActive('throw-sid'), false, '读取会话快照异常时必须回退失活');
-      assert.equal(injectedDockProps.isDoneGateActive('s-live'), false, '原生 chat 视图下必须返回 false');
-      assert.equal(dockEntry.comp({ sessionId: 'default', ...injectedDockProps }), null, '未建会话问天气时抽屉必须直接返回 null 零遮挡');
-      assert.equal(dockEntry.comp({ sessionId: 's-live', ...injectedDockProps }), null, '默认 chat 视图下抽屉必须返回 null');
+      assert.equal(injectedDockProps.isDoneGateActive('default'), false);
+      assert.equal(injectedDockProps.isDoneGateActive(''), false);
+      assert.equal(injectedDockProps.isDoneGateActive('throw-sid'), false);
+      assert.equal(injectedDockProps.isDoneGateActive('s-live'), false);
+      assert.equal(dockEntry.comp({ sessionId: 'default', ...injectedDockProps }), null);
+      assert.equal(dockEntry.comp({ sessionId: 's-live', ...injectedDockProps }), null);
       mockViewMode = 'donegate';
-      assert.equal(injectedDockProps.isDoneGateActive('s-live'), true, '显式切换 view === "donegate" 时才激活');
+      assert.equal(injectedDockProps.isDoneGateActive('s-live'), true);
       const mockTree = JSON.stringify(dockEntry.comp({
         sessionId: 's-live',
         ...injectedDockProps,
         useConversation: (sel) => sel({ views: { get: (v) => v === 'chat' ? { legacy: { nodes: [{ kind: 'user', seq: 1, content: [{ type: 'text', text: '帮我检查计算模块' }] }, { kind: 'assistant', seq: 2, turn: 1, blocks: [{ kind: 'text', text: '已完成计算模块门禁扫描，零违规放行。' }] }], partial: null } } : null } })
       }));
-      assert.ok(mockTree.includes('calc(0px - var(--dsh-composer-stack-gap, 6px) - 28px)') && mockTree.includes('"paddingBottom":"28px"'), '抽屉底边必须零缝隙压入输入框上方 28px 圆角底下');
-      assert.ok(mockTree.includes('Agent：') && mockTree.includes('已完成计算模块门禁扫描，零违规放行。'), '收起态必须直接显示 Agent： 与真实主对话最新回复');
+      assert.ok(mockTree.includes('calc(0px - var(--dsh-composer-stack-gap, 6px) - 28px)') && mockTree.includes('"paddingBottom":"28px"'));
+      assert.ok(mockTree.includes('Agent：') && mockTree.includes('已完成计算模块门禁扫描，零违规放行。'));
 
       const pre = preflightWorkflowPack({ id: 'wf-blank', name: '含空白节点流', nodes: [{ id: 'b1', title: '待定模块', isBlank: true }], links: [] });
       assert.equal(pre.ok, false);
       assert.equal(pre.exitCode, 3);
 
-      const workRoot = join(tmp, 'proj');
-      mkdirSync(workRoot, { recursive: true });
       const runRes = await executeDeterministicWorkflowRun(workRoot, { ticketId: 'tkt-vm-1', targetUri: 'dg://node/g1', headline: '确定性门禁通过' }, {
         id: 'wf-ok', name: '门禁直通验证流',
         nodes: [{ id: 'g1', title: '确定性门禁核验', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }],
@@ -276,7 +339,7 @@ async function verifyClientSandboxAndRunner(check) {
 }
 
 async function verifyWorkflowDepsIsolation(check) {
-  await check('6. 类 ComfyUI 开发流缺依赖硬阻断、workflows/.deps/<id>/ 隔离补齐与 PATH 自动注入闭环', async () => {
+  await check('6. 类 ComfyUI 工作流缺依赖硬阻断、空仓库防误判、workflows/.deps/<id>/ 隔离补齐与 PATH 自动注入闭环', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-wf-deps-'));
     try {
       const pack = {
@@ -289,6 +352,13 @@ async function verifyWorkflowDepsIsolation(check) {
       assert.equal(blocked.ok, false);
       assert.equal(blocked.exitCode, 3);
       assert.equal(blocked.code, 'MISSING_WORKFLOW_DEPS');
+
+      const repoOnlyPack = { id: 'repo-only', deps: [{ id: 'empty-repo-lib', repo: 'acme/empty-repo-lib', kind: 'git', bin: '' }], nodes: [] };
+      const emptyRepoDir = join(tmp, 'workflows', '.deps', '_shared', 'repos', 'empty-repo-lib');
+      mkdirSync(emptyRepoDir, { recursive: true });
+      assert.equal(inspectWorkflowDeps(tmp, repoOnlyPack).ready, false, '空仓库目录严禁误判为 ready: true');
+      mkdirSync(join(emptyRepoDir, '.git'), { recursive: true });
+      assert.equal(inspectWorkflowDeps(tmp, repoOnlyPack).ready, true, '含 .git 的非空仓库目录应判定为 ready: true');
 
       const prov1 = provisionWorkflowDeps(tmp, pack);
       assert.equal(prov1.ready, false);

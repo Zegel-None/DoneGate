@@ -1,4 +1,4 @@
-// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5复核包、UI看板、JIT选配与实时遥测）
+// DSH Web 同源路由与 SSE 脉冲流处理器（含挂机沙箱、依赖补齐、门5复核包、UI看板、JIT选配、GitHub Star 与项目导入）
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { buildDashboardPayload, cmdCheckNode, cmdSlice, cmdVerifyApply, cmdVerifyPack, exportDashboardHtml } from '../core/index.mjs';
@@ -13,6 +13,8 @@ import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
 import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
 import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
 import { buildJitBootstrapSummary } from './workflow-jit.mjs';
+import { starGitHubRepo } from './github-star.mjs';
+import { importExternalProject, initWorkspaceProject } from './project-ops.mjs';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -45,9 +47,52 @@ function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   });
 }
 
-async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
+async function handleSystemAndProjectRoutes(req, res, cleanPath, root, hub, opts) {
+  if (cleanPath === '/ping' && req.method === 'GET') {
+    sendJson(res, 200, { ok: true, mode: 'dsh-web', root });
+    return true;
+  }
+  if (cleanPath === '/atlas/refresh' && req.method === 'POST') {
+    const refreshedAt = new Date().toISOString();
+    mkdirSync(join(root, '.donegate'), { recursive: true });
+    exportDashboardHtml(root, join(root, '.donegate', 'dashboard.html'));
+    sendJson(res, 200, { ok: true, refreshedAt, atlas: buildDashboardPayload(root) });
+    return true;
+  }
+  if (cleanPath === '/github/star' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const out = await starGitHubRepo(root, body, opts);
+    if (out.body.ok) {
+      hub.emit({
+        type: 'dock_item',
+        item: { id: `star-${Date.now()}`, kind: 'summary', tone: 'ok', title: `${out.body.starred ? '⭐ 已 Star' : '☆ 已取消 Star'} ${out.body.repoSlug}` }
+      });
+    }
+    sendJson(res, out.status, out.body);
+    return true;
+  }
+  if (cleanPath === '/project/init' && req.method === 'POST') {
+    const out = initWorkspaceProject(root);
+    hub.emit({ type: 'project_initialized', root });
+    sendJson(res, out.status, out.body);
+    return true;
+  }
+  if (cleanPath === '/project/import' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const out = importExternalProject(root, body.targetDir);
+    if (out.body.ok) {
+      hub.emit({ type: 'project_imported', sandbox: out.body.sandbox });
+      hub.emit({ type: 'dock_item', item: { id: `imp-${Date.now()}`, kind: 'summary', tone: 'ok', title: `📂 已导入外部项目「${out.body.sandbox.name}」（${out.body.sandbox.nodes.length} 个模块域）` } });
+    }
+    sendJson(res, out.status, out.body);
+    return true;
+  }
+  return false;
+}
+
+async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opts) {
     if (cleanPath.startsWith('/uiboard/')) {
-      return handleUiBoardSubRoute(req, res, cleanPath, root, hub, readJsonBody);
+      return handleUiBoardSubRoute(req, res, cleanPath, root, hub, readJsonBody, opts);
     }
     if (cleanPath.startsWith('/jit/')) {
       return handleWorkflowJitSubRoute(req, res, cleanPath, root, hub, readJsonBody);
@@ -55,6 +100,7 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
     if (cleanPath.startsWith('/autopilot/')) {
       return handleAutopilotSubRoute(req, res, cleanPath, root, readJsonBody);
     }
+    if (await handleSystemAndProjectRoutes(req, res, cleanPath, root, hub, opts)) return true;
 
     if (cleanPath === '/router' && req.method === 'GET') {
       const r = cmdSlice(root, { routerOnly: true, json: true });
@@ -83,13 +129,9 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
         Connection: 'keep-alive'
       });
       res.write(`data: ${JSON.stringify({
-        type: 'connected',
-        ts: Date.now(),
-        dockItems: hub.dockItems,
-        cards: [...hub.activeCards.values()],
-        nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
-        autopilot: loadAutopilotCheckpoint(root),
-        campaign: loadCampaignCheckpoint(root)
+        type: 'connected', ts: Date.now(), dockItems: hub.dockItems,
+        cards: [...hub.activeCards.values()], nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
+        autopilot: loadAutopilotCheckpoint(root), campaign: loadCampaignCheckpoint(root)
       })}\n\n`);
       const onEvt = (evt) => {
         try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch (err) { void err; }
@@ -101,16 +143,11 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
 
     if (cleanPath === '/bootstrap' && req.method === 'GET') {
       sendJson(res, 200, {
-        ok: true,
-        platform: process.platform,
-        atlas: buildDashboardPayload(root),
-        state: readSavedWorkbenchState(root),
-        jit: buildJitBootstrapSummary(root),
-        autopilot: loadAutopilotCheckpoint(root),
-        campaign: loadCampaignCheckpoint(root),
-        nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
-        dockItems: hub.dockItems,
-        cards: [...hub.activeCards.values()]
+        ok: true, platform: process.platform,
+        atlas: buildDashboardPayload(root), state: readSavedWorkbenchState(root),
+        jit: buildJitBootstrapSummary(root), autopilot: loadAutopilotCheckpoint(root),
+        campaign: loadCampaignCheckpoint(root), nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
+        dockItems: hub.dockItems, cards: [...hub.activeCards.values()]
       });
       return true;
     }
@@ -124,24 +161,16 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
       hub.emit({
         type: 'dock_item',
         item: {
-          id: `judge-${Date.now()}`,
-          kind: resPack.exitCode === 0 ? 'summary' : 'question',
-          tone: resPack.exitCode === 0 ? 'ok' : 'warn',
+          id: `judge-${Date.now()}`, kind: resPack.exitCode === 0 ? 'summary' : 'question', tone: resPack.exitCode === 0 ? 'ok' : 'warn',
           title: resPack.exitCode === 0
             ? `⚖️ 契约「${cid}」门 5 复核包已生成：${relPackDir}`
             : `⚖️ 契约「${cid}」盲审打包未就绪（exit ${resPack.exitCode}）：${String(resPack.stderr || '').split('\n')[0]}`
         }
       });
       sendJson(res, 200, {
-        ok: resPack.exitCode === 0,
-        exitCode: resPack.exitCode,
-        contractId: cid,
-        packDir: resPack.packDir || null,
-        relPackDir,
-        packageHash: resPack.packageHash || null,
-        judgePrompt,
-        stdout: resPack.stdout || '',
-        stderr: resPack.stderr || ''
+        ok: resPack.exitCode === 0, exitCode: resPack.exitCode, contractId: cid,
+        packDir: resPack.packDir || null, relPackDir, packageHash: resPack.packageHash || null,
+        judgePrompt, stdout: resPack.stdout || '', stderr: resPack.stderr || ''
       });
       return true;
     }
@@ -159,18 +188,11 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
       hub.emit({
         type: 'dock_item',
         item: {
-          id: `japply-${Date.now()}`,
-          kind: resApply.exitCode === 0 ? 'summary' : 'blocked',
-          tone: resApply.exitCode === 0 ? 'ok' : 'bad',
+          id: `japply-${Date.now()}`, kind: resApply.exitCode === 0 ? 'summary' : 'blocked', tone: resApply.exitCode === 0 ? 'ok' : 'bad',
           title: resApply.exitCode === 0 ? '⚖️ 门 5 盲审裁决已验真并写入哈希链' : `⚖️ 门 5 盲审裁决未通过（exit ${resApply.exitCode}）`
         }
       });
-      sendJson(res, 200, {
-        ok: resApply.exitCode === 0,
-        exitCode: resApply.exitCode,
-        stdout: resApply.stdout || '',
-        stderr: resApply.stderr || ''
-      });
+      sendJson(res, 200, { ok: resApply.exitCode === 0, exitCode: resApply.exitCode, stdout: resApply.stdout || '', stderr: resApply.stderr || '' });
       return true;
     }
 
@@ -183,15 +205,10 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
       }
       const safeId = String(pack.id).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'custom-workflow';
       const normalized = {
-        schemaVersion: pack.schemaVersion || '1.0',
-        id: safeId,
-        name: pack.name || safeId,
-        group: pack.group || '项目声明式开发流',
-        tip: pack.tip || '工作台导入/保存的声明式开发流',
-        deps: Array.isArray(pack.deps) ? pack.deps : [],
-        nodes: pack.nodes,
-        links: Array.isArray(pack.links) ? pack.links : [],
-        groups: Array.isArray(pack.groups) ? pack.groups : []
+        schemaVersion: pack.schemaVersion || '1.0', id: safeId, name: pack.name || safeId,
+        group: pack.group || '项目声明式工作流', tip: pack.tip || '工作台导入/保存的声明式工作流',
+        deps: Array.isArray(pack.deps) ? pack.deps : [], nodes: pack.nodes,
+        links: Array.isArray(pack.links) ? pack.links : [], groups: Array.isArray(pack.groups) ? pack.groups : []
       };
       const st = readSavedWorkbenchState(root);
       st.customPacks = { ...(st.customPacks || {}), [safeId]: normalized };
@@ -212,7 +229,7 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
     return false;
 }
 
-async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub) {
+async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub, opts) {
     if (cleanPath === '/observation-preview' && req.method === 'GET') {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
       const tool = String(u.searchParams.get('tool') || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -280,17 +297,38 @@ async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub)
 
     if (cleanPath === '/workflow-deps/provision' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const result = provisionWorkflowDeps(root, body.pack || {}, {
+      const rawPack = body.pack || {};
+      const onlyNodeId = body.onlyNodeId ? String(body.onlyNodeId).trim() : '';
+      const targetPack = onlyNodeId
+        ? { ...rawPack, nodes: (Array.isArray(rawPack.nodes) ? rawPack.nodes : []).filter((n) => n && n.id === onlyNodeId), deps: [] }
+        : rawPack;
+      const result = provisionWorkflowDeps(root, targetPack, {
         runNpm: body.runNpm === true,
         isolatedOnly: body.isolatedOnly === true,
         markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
       });
+      let subRes = null;
+      if (result.missingCount > 0 && body.spawnSubagent === true && typeof opts.dispatchSubagent === 'function') {
+        subRes = await opts.dispatchSubagent({
+          sessionId: body.sessionId || null,
+          label: `补齐工作流依赖: ${result.packName}`,
+          prompt: result.agentPrompt
+        });
+      }
+      const payload = (result.missingCount > 0 && body.spawnSubagent === true)
+        ? {
+            ...result,
+            subagentDispatched: Boolean(subRes?.dispatched),
+            subagentName: subRes?.name || null,
+            fallbackAutoSubmit: !subRes?.dispatched
+          }
+        : result;
       const title = result.ready
-        ? `开发流「${result.packName}」全部 ${result.total} 项依赖已在共享池 ${result.sharedDepsDir || result.depsDir} 就位，可随时运行`
+        ? `工作流「${result.packName}」全部 ${result.total} 项依赖已在共享池 ${result.sharedDepsDir || result.depsDir} 就位，可随时运行`
         : `已建立共享依赖池 ${result.sharedDepsDir || result.depsDir} 并派发后台补齐工单（待装 ${result.missingCount} 项）`;
-      hub.emit({ type: 'workflow_deps_updated', packId: result.packId, report: result });
+      hub.emit({ type: 'workflow_deps_updated', packId: result.packId, report: payload });
       hub.emit({ type: 'dock_item', item: { id: `wfdep-${Date.now()}`, kind: result.ready ? 'summary' : 'receipt', tone: result.ready ? 'ok' : 'warn', title } });
-      sendJson(res, 200, result);
+      sendJson(res, 200, payload);
       return true;
     }
 
@@ -374,13 +412,13 @@ async function handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub) {
     return false;
 }
 
-export function createDoneGateWebRouteHandler(projectRoot) {
+export function createDoneGateWebRouteHandler(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const hub = getRunEventHub(root);
   return async function handleDoneGateRoute(req, res, subPath) {
     const cleanPath = String(subPath || '/').split('?')[0];
-    if (await handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub)) return true;
-    if (await handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub)) return true;
+    if (await handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opts)) return true;
+    if (await handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub, opts)) return true;
     return handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub);
   };
 }

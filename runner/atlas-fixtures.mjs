@@ -1,5 +1,5 @@
 import { runAllDshChecks } from './dsh-fixtures.mjs';
-// 全栈项目活体全景工作台（开发流 + 项目看板 + 无界画布 + 100步撤销重做 + 全元素点选 + 实时服务）端到端自检夹具
+// 全栈项目活体全景工作台（工作流 + 项目看板 + 无界画布 + 100步撤销重做 + 全元素点选 + 实时服务）端到端自检夹具
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -160,13 +160,13 @@ try {
   c.check('工作台按契约 scope[] 映射项目看板真实目录（ADR-005）并注入适配器注册表外部工具与锁死版本',
     Boolean(hostSb && hostSb.isHost === true && hostSb.readonly === false && webNode && webNode.contractIds.includes('shop-main') && hasAdpCatalog));
 
-  // 3. 核验零外网单文件工作台 HTML（含无界拖曳、100步 Ctrl+Z/Ctrl+Y、开发流一键补齐依赖按钮与右键菜单）
+  // 3. 核验零外网单文件工作台 HTML（含无界拖曳、100步 Ctrl+Z/Ctrl+Y、工作流一键补齐依赖按钮与右键菜单）
   const stHtml = dispatchCommand(['status', '--html', '.donegate/dashboard.html'], proj);
   const htmlPath = join(proj, '.donegate', 'dashboard.html');
   const html = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : '';
   const hasExternalUrl = /<(?:script|link|img)\b[^>]*(?:src|href)\s*=\s*['"]https?:\/\//i.test(html);
   const hasOldCoordClamp = /Math\.max\(16,\s*Math\.round\(orig\./.test(html) || /Math\.max\(54,\s*Math\.round\(orig\./.test(html);
-  c.check('生成零外网单文件工作台 HTML（含无界拖曳、100 步撤销重做、开发流行内补齐按钮与右键依赖菜单）',
+  c.check('生成零外网单文件工作台 HTML（含无界拖曳、100 步撤销重做、工作流行内补齐按钮与右键依赖菜单）',
     stHtml.exitCode === 0 &&
     !hasExternalUrl &&
     !hasOldCoordClamp &&
@@ -179,10 +179,10 @@ try {
     html.includes('refreshBackendData()') &&
     html.includes('刷新最新数据') &&
     html.includes('项目看板') &&
-    html.includes('开发流') &&
+    html.includes('工作流') &&
     html.includes('provision-pack-deps') &&
     html.includes('openWorkflowPackContextMenu') &&
-    html.includes('一键补齐此开发流依赖') &&
+    html.includes('一键补齐此工作流依赖') &&
     html.includes('triggerProvisionWorkflowDeps') &&
     html.includes('dg-card-telemetry') &&
     html.includes('exportActiveWorkflowJson') &&
@@ -195,7 +195,24 @@ try {
     existsSync(join(proj, '.donegate/atlas.json')) &&
     existsSync(join(proj, '.donegate/project.c4')));
 
-  // 4. 真测后台实时服务：刷新重扫 + 负坐标落盘 + 目录解析 + 开发流依赖巡检与隔离补齐路由
+  c.check('Alt+单击防双蓝胶囊、SVG/下拉实名拾取与工作流/项目条目蓝胶囊完备',
+    ['_suppressAltClickUntil', 'swallowAltFollowup', "closest('button, select')", 'data-ctrl-id', "workflow: '工作流'", "project: '项目'"].every((k) => html.includes(k)));
+
+  c.check('/donegate/api/* 优先探测、真编队补齐子代理、真 GitHub Star 与项目导入/分组折叠事件接线完备',
+    ['/donegate/api/ping', 'spawnSubagent: true', 'dg:dispatch-subagent', 'provision-node-dep', '/donegate/api/github/star', '/donegate/api/project/init', '/donegate/api/project/import', 'toggle-wf-grp', 'toggle-node-cat', 'focus-wf-group', 'rename-pack'].every((k) => html.includes(k)) &&
+    !html.includes('state.provisionedPacks[pk.id] = true') && !html.includes("e.target.id === 'sel-host-sim'"));
+
+  c.check('UI 看板 <optgroup> 分组下拉、去手搓模式按钮、.h-full 全高内嵌窗口与 JIT 双窗口对比标绿完备',
+    ['<optgroup', 'uib-theme-select', 'h-full', 'flex:1 1 0%;width:100%;height:100%;border:0;display:block;', "kind: 'ui'", '基准工作流：', '当前生效确定性工作流', 'Agent根据需求微调', 'deriveAutonomousTunedTplIds', 'is-diff-green'].every((k) => html.includes(k)) &&
+    ['uib-mode-edit', 'data-uib-act="add-block"', 'data-jit-switch-macro', 'dg-jit-req-input', 'data-jit-run-mutate'].every((k) => !html.includes(k)));
+
+  const railAssetsIdx = html.indexOf('data-rail-tab="assets"');
+  const railWfIdx = html.indexOf('data-rail-tab="workflows"');
+  const railNodesIdx = html.indexOf('data-rail-tab="nodes"');
+  c.check('左栏快捷导航顺序为「项目 → 工作流 → 节点」',
+    railAssetsIdx > 0 && railWfIdx > railAssetsIdx && railNodesIdx > railWfIdx);
+
+  // 4. 真测后台实时服务：刷新重扫 + 负坐标落盘 + 目录解析 + 工作流依赖巡检与隔离补齐路由
   const srvInfo = await startAtlasHttpServer(proj, { port: 0, idleExitSec: 30 });
   try {
     const beforeCount = atlas.project.moduleCount;
@@ -266,7 +283,7 @@ try {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pack: { id: "shared-comfy-flow", name: "跨团队共享开发流", group: "项目声明式开发流", nodes: [{ id: "n1", title: "静态体检", tplId: "tpl-adp-biome" }], links: [] }
+        pack: { id: "shared-comfy-flow", name: "跨团队共享工作流", group: "项目声明式工作流", nodes: [{ id: "n1", title: "静态体检", tplId: "tpl-adp-biome" }], links: [] }
       })
     });
     const wfSaveJson = await wfSaveResp.json();
@@ -280,7 +297,7 @@ try {
       body: JSON.stringify({ contractId: "non-existent" })
     });
     const judgePreJson = await judgePreResp.json();
-    c.check("开发流 .workflow.json 导入落盘、适配器 observation.json 直看与门 5 盲审打包接口全链路联通",
+    c.check("工作流 .workflow.json 导入落盘、适配器 observation.json 直看与门 5 盲审打包接口全链路联通",
       Boolean(
         wfSaveResp.ok && wfSaveJson.ok && existsSync(join(proj, "workflows/shared-comfy-flow.workflow.json")) &&
         obsPrevResp.ok && obsPrevJson.ok && obsPrevJson.content.includes('"checkedFiles": 12') &&
@@ -319,8 +336,8 @@ try {
       })).json();
       c.check('UI 看板三阶段闭环：同源代理注入桥（防 SSRF）、多套美学锁 MASTER.md、JSON 拖拽加块、Agent 自测与假动作转真后端全通',
         Boolean(
-          uibSt.ok && uibSt.uiboard.proposals.length === 3 &&
-          bridgeTxt.includes('dg-ui:element-selected') && bridgeTxt.includes('dg-ui:set-mode') &&
+          uibSt.ok && (uibSt.uiboard.allProposals || uibSt.uiboard.proposals).length >= 3 &&
+          bridgeTxt.includes('dg-ui:element-selected') && bridgeTxt.includes('dg-ui:apply-tokens') && !bridgeTxt.includes('dg-ui:set-mode') &&
           proxyHtml.includes('PayBtn.tsx:19:5') && proxyHtml.includes('/donegate/api/uiboard/bridge.js') &&
           ssrfResp.status === 400 &&
           lockRes.ok && existsSync(join(proj, 'design-system/MASTER.md')) &&

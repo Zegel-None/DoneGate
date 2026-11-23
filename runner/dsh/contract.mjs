@@ -2,4 +2,4 @@
 export { resolveSafeWorkspaceFolders } from './win-paths.mjs';
 export { verifySubagentNodeReceipt } from './quote-protocol.mjs';
 export { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
-export { AESTHETIC_PROPOSALS } from './ui-aesthetics.mjs';
+export { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS } from './ui-aesthetics.mjs';

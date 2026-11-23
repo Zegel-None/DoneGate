@@ -434,6 +434,8 @@ if (has('--self-check')) {
     ['skill/check-ai-habits.mjs', ['--red-self-test']],
     ['skill/check-commit-hygiene.mjs', ['--red-self-test']],
     ['skill/check-module-integrity.mjs', ['--red-self-test']],
+    ['skill/check-terminology.mjs', ['--red-self-test']],
+    ['skill/check-terminology.mjs', []],
     ['skill/install-hooks.mjs', ['--red-self-test']],
     ['skill/new-adapter.mjs', ['--self-test']],
     ['runner/atlas-fixtures.mjs', []],

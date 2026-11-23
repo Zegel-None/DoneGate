@@ -1,8 +1,7 @@
-// 节点模板库 (BLOCK_TEMPLATES)、预置开发流目录与项目看板多仓沙箱模型
-export function buildWbCatalog() {
-  return [
+// 节点模板库 (BLOCK_TEMPLATES)、预置工作流目录与项目看板多仓沙箱模型
+const WB_CATALOG_LINES = [
   "    // ============================================================================",
-  "    // 1. 节点模板库（开发流使用）",
+  "    // 1. 节点模板库（工作流使用）",
   "    // ============================================================================",
   "    const PORT_LABELS = {",
   "      SIGNAL: '状态码 (0-3)',",
@@ -257,7 +256,7 @@ export function buildWbCatalog() {
   "    }",
   "",
   "    // ============================================================================",
-  "    // 2. 开发流：场景开发包",
+  "    // 2. 工作流：场景开发包",
   "    // ============================================================================",
   "    const WORKFLOW_GROUPS = ['客户端与全栈', '内容润色与筹备', '安全与运维', '发版与线上维护'];",
   "",
@@ -412,12 +411,12 @@ export function buildWbCatalog() {
   "          },",
   "          {",
   "            id: 'dg-4', step: '04', title: '完工裁决与全景工作台',",
-  "            tip: '12 令状态裁决、证据链验签与项目看板/开发流双页面渲染（34 个模块）',",
+  "            tip: '12 令状态裁决、证据链验签与项目看板/工作流双页面渲染（34 个模块）',",
   "            bypassed: false, collapsed: false, expanded: false, x: 675, y: 145, w: 252, h: null, nextIds: [],",
   "            modules: [",
   "              { name: '12 令裁决内核 (16模块)', role: '内核', state: 'ok', path: 'runner/core/state-calc.mjs' },",
   "              { name: '零依赖自检夹具 (5模块)', role: '自检', state: 'ok', path: 'runner/self-test.mjs' },",
-  "              { name: '项目看板与开发流引擎 (13模块)', role: '界面', state: 'ok', path: 'runner/atlas/serve-atlas.mjs' }",
+  "              { name: '项目看板与工作流引擎 (13模块)', role: '界面', state: 'ok', path: 'runner/atlas/serve-atlas.mjs' }",
   "            ]",
   "          }",
   "        ]",
@@ -544,5 +543,7 @@ export function buildWbCatalog() {
   "    };",
   "",
   "    // ============================================================================"
-  ].join('\n');
+];
+export function buildWbCatalog() {
+  return WB_CATALOG_LINES.join('\n');
 }

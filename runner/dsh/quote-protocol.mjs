@@ -23,7 +23,7 @@ export function buildElementQuotePayload(elem = {}) {
   const kind = normalizeTargetKind(elem.kind);
   const id = String(elem.id || 'unknown').trim().replace(/[\r\n|]/g, '_');
   const name = String(elem.label || elem.title || id).trim().slice(0, 48);
-  const board = elem.board === 'flow' ? '开发流' : '项目看板';
+  const board = elem.board === 'flow' ? '工作流' : '项目看板';
   const packOrRepo = String(elem.contextName || board).trim().slice(0, 40);
   const scopes = Array.isArray(elem.scopePaths)
     ? elem.scopePaths.map((p) => normalizeSlashes(p)).filter(Boolean).slice(0, 4)
@@ -81,7 +81,7 @@ export function parseQuotedTargetsFromMessage(rawMessage) {
       else if (k === 'kind') item.kind = normalizeTargetKind(v);
       else if (k === 'board') item.board = v === 'flow' ? 'flow' : 'kanban';
       else if (k === 'name') {
-        try { item.name = JSON.parse(v); } catch { item.name = v.replace(/^"|"$/g, ''); }
+        try { item.name = JSON.parse(v); } catch (err) { void err; item.name = v.replace(/^"|"$/g, ''); }
       } else if (k === 'contracts') item.contracts = v.split(',').map((x) => x.trim()).filter(Boolean);
       else if (k === 'scopes') item.scopes = v.split(',').map((x) => x.trim()).filter(Boolean);
     }

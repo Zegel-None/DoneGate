@@ -1,6 +1,6 @@
 {
   "id": "02-db-migration-rehearsal",
-  "group": "预置全周期开发流",
+  "group": "预置全周期工作流",
   "name": "02 · 阶段 2 · 数据库唯一真值迁移与对账流",
   "tip": "恪守单一真值纪律（P3）：SQLFluff 锁页/破坏性 DDL 静态扫描 → Flyway 版本脚本唯一真值演练 → Atlas 只读 Schema 漂移对账（严禁双写迁移）→ 3 轮内建回修 → 人工破坏性变更闸门。",
   "deps": [

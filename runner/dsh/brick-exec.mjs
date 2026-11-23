@@ -1,4 +1,4 @@
-// 完结门原子节点真实执行桥：连接 JIT/预置宏节点与 22 个适配器及 check-brick-observations 断言器
+// 完结门原子节点真实执行桥：连接 JIT/预置工作流节点与 22 个适配器及 check-brick-observations 断言器
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

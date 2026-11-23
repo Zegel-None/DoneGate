@@ -1,6 +1,5 @@
-// DSH 原生引用胶囊编码、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥（零外网依赖，<= 268 行）
-export function buildWbDshBridge() {
-  return `
+// DSH 原生引用胶囊编码、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥（零外网依赖，<= 272 行）
+const WB_DSH_BRIDGE_SCRIPT = `
 const DSH_URL_PARAMS = (() => {
   try { return new URLSearchParams(window.location.search || ''); } catch (err) { void err; return new URLSearchParams(); }
 })();
@@ -47,7 +46,9 @@ function buildDshQuoteTarget(rawTarget) {
     wire: '连线',
     text: '文本',
     button: '按钮',
-    ui: 'UI元素'
+    ui: 'UI元素',
+    workflow: '工作流',
+    project: '项目'
   };
   const kindCn = kindMap[rawTarget.kind] || '元素';
   const shortName = clipLabelText(rawTarget.title, 18);
@@ -58,7 +59,7 @@ function buildDshQuoteTarget(rawTarget) {
   const summary = {
     label: chipLabel,
     title: uri,
-    detail: scopes !== '-' ? \`契约范围: \${scopes}\` : \`\${state.page === 'workshop' ? '开发流画布' : (state.page === 'uiboard' ? 'UI看板' : '项目看板')}\`,
+    detail: scopes !== '-' ? \`契约范围: \${scopes}\` : \`\${state.page === 'workshop' ? '工作流画布' : (state.page === 'uiboard' ? 'UI看板' : '项目看板')}\`,
     body: rawTarget.desc || \`\${kindCn}「\${rawTarget.title}」\`
   };
   const text = \`[DG-TARGET uri=\${uri} | kind=\${rawTarget.kind} | id=\${rawTarget.id} | label=\${shortName} | contracts=\${contracts} | scopes=\${scopes}]\`;
@@ -261,4 +262,7 @@ function flyCanvasToNode(nodeId) {
   renderDshCanvasAnchors();
 }
 `;
+
+export function buildWbDshBridge() {
+  return WB_DSH_BRIDGE_SCRIPT;
 }

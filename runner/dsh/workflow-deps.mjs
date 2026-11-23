@@ -1,7 +1,7 @@
-// 开发流类 ComfyUI 依赖探针、跨开发流共享底座池 (workflows/.deps/_shared/) 与按需补齐工单生成器
+// 工作流类 ComfyUI 依赖探针、跨工作流共享底座池 (workflows/.deps/_shared/) 与按需补齐工单生成器
 import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { normalizeSlashes } from './win-paths.mjs';
@@ -52,6 +52,28 @@ export function findExecutableInDirs(binName, searchDirs, platform = process.pla
       const p = join(dir, binName + ext);
       if (existsSync(p)) return p;
     }
+  }
+  return null;
+}
+
+function isNonEmptyRepoDir(dir) {
+  if (!dir || !existsSync(dir)) return false;
+  try {
+    if (!statSync(dir).isDirectory()) return false;
+    if (existsSync(join(dir, '.git'))) return true;
+    return readdirSync(dir).length > 0;
+  } catch (err) {
+    void err;
+    return false;
+  }
+}
+
+function findInstalledNpmPkg(absDepsDir, pkgName) {
+  if (!absDepsDir || !pkgName) return null;
+  const segs = String(pkgName).split('/').filter(Boolean);
+  for (const base of [join(absDepsDir, 'npm', 'node_modules'), join(absDepsDir, 'node_modules')]) {
+    const pkgJson = join(base, ...segs, 'package.json');
+    if (existsSync(pkgJson)) return pkgJson;
   }
   return null;
 }
@@ -128,9 +150,9 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
 }
 
 function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missing) {
-  const name = (pack && pack.name) || (pack && pack.id) || '当前开发流';
-  if (!missing.length) return `开发流「${name}」所需的外部项目与环境依赖已全部就位（共享池：${sharedRelDir}，当前包：${relDepsDir}）。`;
-  const lines = [`请为开发流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，优先装入跨开发流共享底座池 \`${sharedRelDir}/\`（一次安装供所有预置宏与节点级 JIT 派生开发流复用）：`];
+  const name = (pack && pack.name) || (pack && pack.id) || '当前工作流';
+  if (!missing.length) return `工作流「${name}」所需的外部项目与环境依赖已全部就位（共享池：${sharedRelDir}，当前包：${relDepsDir}）。`;
+  const lines = [`请为工作流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，优先装入跨工作流共享底座池 \`${sharedRelDir}/\`（一次安装供所有预置工作流与节点级 JIT 派生工作流复用）：`];
   for (const m of missing) {
     const ver = m.version ? ` (${m.version})` : '';
     const src = m.repoUrl ? ` · ${m.repoUrl}` : '';
@@ -186,10 +208,19 @@ export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
         const inHost = findExecutableInDirs(it.bin, hostBins, platform);
         if (inHost) { resolvedVia = 'host-env'; resolvedPath = normalizeSlashes(inHost); }
       }
-    } else if (existsSync(repoCloneDir)) {
-      resolvedVia = 'workflow-repo'; resolvedPath = normalizeSlashes(repoCloneDir);
-    } else if (opts.ignoreSharedPool !== true && existsSync(sharedRepoDir)) {
-      resolvedVia = 'shared-repo'; resolvedPath = normalizeSlashes(sharedRepoDir);
+    }
+    if (!resolvedVia && !it.bin && it.kind === 'npm' && it.pkg) {
+      const inWfNpm = findInstalledNpmPkg(paths.absDir, it.pkg);
+      const inSharedNpm = opts.ignoreSharedPool === true ? null : findInstalledNpmPkg(shared.absDir, it.pkg);
+      if (inWfNpm) { resolvedVia = 'workflow-npm'; resolvedPath = normalizeSlashes(inWfNpm); }
+      else if (inSharedNpm) { resolvedVia = 'shared-npm'; resolvedPath = normalizeSlashes(inSharedNpm); }
+    }
+    if (!resolvedVia && !it.bin) {
+      if (isNonEmptyRepoDir(repoCloneDir)) {
+        resolvedVia = 'workflow-repo'; resolvedPath = normalizeSlashes(repoCloneDir);
+      } else if (opts.ignoreSharedPool !== true && isNonEmptyRepoDir(sharedRepoDir)) {
+        resolvedVia = 'shared-repo'; resolvedPath = normalizeSlashes(sharedRepoDir);
+      }
     }
     return { ...it, ready: Boolean(resolvedVia), resolvedVia, resolvedPath };
   });

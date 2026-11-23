@@ -1,5 +1,5 @@
 // UI 看板同源 HTTP 路由模块（/donegate/api/uiboard/*：状态探测、原型渲染、本地 DevServer 同源注入代理、美学锁定、拖拽更新、自测与真后端接线）
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { lockDesignSystemMaster } from './ui-aesthetics.mjs';
 import { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
@@ -24,7 +24,7 @@ function injectBridgeIntoHtml(rawHtml) {
   return rawHtml + `\n${tag}\n`;
 }
 
-export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, readJsonBody) {
+export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, readJsonBody, opts = {}) {
   const root = resolve(rootDir);
 
   if (subPath === '/uiboard/bridge.js' && req.method === 'GET') {
@@ -47,12 +47,12 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
     return true;
   }
 
-  // 本地已启动的 React/Vue/Next/FastAPI DevServer 同源代理并自动注入双模点选桥
+  // 本地已启动的 React/Vue/Next/FastAPI DevServer 同源代理并自动注入 Alt+单击点选桥
   if (subPath === '/uiboard/proxy' && req.method === 'GET') {
     const u = new URL(req.url || '/', 'http://127.0.0.1');
     const target = u.searchParams.get('url') || '';
     let parsed = null;
-    try { parsed = new URL(target); } catch { parsed = null; }
+    try { parsed = new URL(target); } catch (err) { void err; parsed = null; }
     if (!parsed || !['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
       sendJson(res, 400, { ok: false, error: '安全限制：UI 看板代理仅允许连接本机 localhost / 127.0.0.1 开发服务' });
       return true;
@@ -93,7 +93,6 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
     const full = resolve(root, relFile);
     if (full.startsWith(root) && body.before && typeof body.after === 'string' && body.before !== body.after) {
       try {
-        const { readFileSync } = await import('node:fs');
         const cur = readFileSync(full, 'utf8');
         if (cur.includes(body.before)) {
           writeFileSync(full, cur.replace(body.before, body.after), 'utf8');
@@ -124,9 +123,28 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
 
   if (subPath === '/uiboard/provision' && req.method === 'POST') {
     const body = await readJsonBody(req);
-    const rep = provisionUiBoardDeps(root, { runNpm: body.runNpm === true });
+    const rep = provisionUiBoardDeps(root, {
+      runNpm: body.runNpm === true,
+      markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
+    });
+    let subRes = null;
+    if (rep.missingCount > 0 && body.spawnSubagent === true && typeof opts.dispatchSubagent === 'function') {
+      subRes = await opts.dispatchSubagent({
+        sessionId: body.sessionId || null,
+        label: '补齐 UI 看板增强套件',
+        prompt: rep.agentPrompt
+      });
+    }
+    const payload = (rep.missingCount > 0 && body.spawnSubagent === true)
+      ? {
+          ...rep,
+          subagentDispatched: Boolean(subRes?.dispatched),
+          subagentName: subRes?.name || null,
+          fallbackAutoSubmit: !subRes?.dispatched
+        }
+      : rep;
     hub.emit({ type: 'dock_item', item: { id: `uidep-${Date.now()}`, kind: 'receipt', tone: rep.ready ? 'ok' : 'warn', title: `📦 UI 看板增强套件目录 ${rep.depsDir} 已就绪（待补齐 ${rep.missingCount} 项）` } });
-    sendJson(res, 200, rep);
+    sendJson(res, 200, payload);
     return true;
   }
 

@@ -30,7 +30,7 @@
 - **跨平台兼容**：路径处理统一使用 `node:path`，禁止硬编码盘符或个人本机绝对路径。
 - **小步增量预算**：单次提交新增代码 `<= 300` 行、涉及代码文件 `<= 8` 个；单文件有效代码 `600` 行预警 / `850` 行硬顶，禁止按字母机械切碎文件。
 - **严禁凑绿**：禁止 `.skip/.only/.todo`、恒真断言、删断言凑绿、静态检查豁免注释、`|| true` 吞退出码或 `TODO/FIXME` 空壳实现。
-- **适配器与开发流扩展**：新增外部工具统一使用 `node skill/new-adapter.mjs <tool> --archetype <形态> --card-json` 委托 `skill/adapters/_shared.mjs`（`runAdapter`），外部依赖按需补齐至 `workflows/.deps/_shared/`，严禁将第三方源码或二进制提交入库。
+- **适配器与工作流扩展**：新增外部工具统一使用 `node skill/new-adapter.mjs <tool> --archetype <形态> --card-json` 委托 `skill/adapters/_shared.mjs`（`runAdapter`），外部依赖按需补齐至 `workflows/.deps/_shared/`，严禁将第三方源码或二进制提交入库。
 
 ## 3. 提交前全套自检（退出码须全为 `0`）
 

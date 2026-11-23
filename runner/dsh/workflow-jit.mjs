@@ -1,4 +1,4 @@
-// 预置宏打底 + 节点级即时派生（JIT 选配器）：总控/Worker 权限硬隔离、底座护栏只增不减锁、.deps 就绪度优先与一键沉淀宏
+// 预置工作流打底 + 节点级即时派生（JIT 选配器）：总控/Worker 权限硬隔离、底座护栏只增不减锁、.deps 就绪度优先与一键沉淀工作流
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,10 +110,8 @@ export function assertPlannerAuthority(actorRole = 'super-agent') {
   const norm = String(actorRole || 'super-agent').trim().toLowerCase();
   if (norm === 'worker' || norm === 'executor' || norm === 'coder') {
     return {
-      ok: false,
-      exitCode: 2,
-      code: 'WORKER_CANNOT_MUTATE_WORKFLOW',
-      reason: '权限隔离拦截：执行端 Worker 仅可按锁定开发流过关，无权选配、篡改或删减验收开发流（仅限总控 Super Agent 或人工操作）'
+      ok: false, exitCode: 2, code: 'WORKER_CANNOT_MUTATE_WORKFLOW',
+      reason: '权限隔离拦截：执行端 Worker 仅可按锁定工作流过关，无权选配、篡改或删减验收工作流（仅限总控 Super Agent 或人工操作）'
     };
   }
   return { ok: true, role: norm === 'human' || norm === 'owner' ? 'human' : 'super-agent' };
@@ -172,22 +170,11 @@ export function composeBrickChainToPack(brickMap, tplIds, meta = {}) {
     const tpl = brickMap.get(tplId);
     const origin = (meta.originByTpl && meta.originByTpl[tplId]) || (tpl.mandatoryFloor ? 'floor' : 'macro');
     return {
-      id: `jit-${idx + 1}-${tplId.replace(/^tpl-/, '')}`,
-      tplId: tpl.tplId,
-      title: tpl.title,
-      tip: tpl.tip,
-      repoSlug: tpl.repoSlug || '',
-      repoUrl: tpl.repoUrl || '',
-      pinnedVersion: tpl.pinnedVersion || '',
-      isHumanGate: Boolean(tpl.isHumanGate),
-      tool: tpl.tool || '',
-      exec: buildBrickNodeExecSpec(tpl.tplId, tpl),
-      jitOrigin: origin,
-      lockedFloor: Boolean(meta.floorSet && meta.floorSet.has(tplId)),
-      x: 42 + idx * 304,
-      y: 96,
-      w: 252,
-      h: null,
+      id: `jit-${idx + 1}-${tplId.replace(/^tpl-/, '')}`, tplId: tpl.tplId, title: tpl.title, tip: tpl.tip,
+      repoSlug: tpl.repoSlug || '', repoUrl: tpl.repoUrl || '', pinnedVersion: tpl.pinnedVersion || '',
+      isHumanGate: Boolean(tpl.isHumanGate), tool: tpl.tool || '', exec: buildBrickNodeExecSpec(tpl.tplId, tpl),
+      jitOrigin: origin, lockedFloor: Boolean(meta.floorSet && meta.floorSet.has(tplId)),
+      x: 42 + idx * 304, y: 96, w: 252, h: null,
       inputs: JSON.parse(JSON.stringify(tpl.inputs || [{ id: 'in_any', name: '输入', type: 'ANY' }])),
       outputs: JSON.parse(JSON.stringify(tpl.outputs || [{ id: 'out_any', name: '输出', type: 'ANY' }])),
       slots: JSON.parse(JSON.stringify(tpl.slots || []))
@@ -204,29 +191,17 @@ export function composeBrickChainToPack(brickMap, tplIds, meta = {}) {
       if (hit) { pickedOut = o; pickedIn = hit; break; }
     }
     if (pickedOut && pickedIn) {
-      links.push({
-        id: `jit-lk-${i + 1}`,
-        fromNode: a.id,
-        fromSlot: pickedOut.id,
-        toNode: b.id,
-        toSlot: pickedIn.id,
-        type: pickedOut.type || 'ANY'
-      });
+      links.push({ id: `jit-lk-${i + 1}`, fromNode: a.id, fromSlot: pickedOut.id, toNode: b.id, toSlot: pickedIn.id, type: pickedOut.type || 'ANY' });
     }
   }
   return {
     ok: true,
     pack: {
-      schemaVersion: '1.0',
-      id: meta.id || 'jit-ephemeral',
-      name: meta.name || '节点即时开发流',
-      group: meta.group || '节点派生开发流',
+      schemaVersion: '1.0', id: meta.id || 'jit-ephemeral',
+      name: meta.name || '节点即时工作流', group: meta.group || '节点派生工作流',
       tip: meta.tip || '由总控 Super Agent 从确定性工具节点池自动装配',
       mandatoryTplIds: meta.floorSet ? [...meta.floorSet] : ['tpl-anti-slop'],
-      matchProfile: meta.matchProfile || {},
-      nodes,
-      links,
-      groups: []
+      matchProfile: meta.matchProfile || {}, nodes, links, groups: []
     }
   };
 }
@@ -299,13 +274,9 @@ export function loadCandidateWorkflowMacros(projectRoot) {
     const tplIds = pk.nodes.map((n) => n.tplId).filter(Boolean);
     const dep = inspectWorkflowDeps(root, pk);
     macros.set(id, {
-      ...pk,
-      tplIds,
+      ...pk, tplIds,
       mandatoryTplIds: Array.isArray(pk.mandatoryTplIds) && pk.mandatoryTplIds.length ? pk.mandatoryTplIds : ['tpl-anti-slop'],
-      matchProfile: pk.matchProfile || {},
-      depsReady: dep.ready,
-      missingDepsCount: dep.missingCount,
-      missingDeps: dep.missing
+      matchProfile: pk.matchProfile || {}, depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing
     });
   }
   return { macros, brickMap };
@@ -411,30 +382,16 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
     const inferred = inferRequirementBrickAdditions(sig.hay, brickMap);
     const chain = [...new Set([...inferred.prepend.filter((id) => brickMap.get(id)?.ready), ...readyTpls, ...inferred.append.filter((id) => brickMap.get(id)?.ready), 'tpl-router-rule'])].filter((id) => brickMap.has(id));
     const floorSet = new Set(['tpl-anti-slop']);
-    const built = composeBrickChainToPack(brickMap, chain, {
-      id: `jit-${componentNode.id}`,
-      name: `「${componentNode.title}」现场直拼开发流`,
-      floorSet
-    });
+    const built = composeBrickChainToPack(brickMap, chain, { id: `jit-${componentNode.id}`, name: `「${componentNode.title}」现场直拼工作流`, floorSet });
     const dep = inspectWorkflowDeps(root, built.pack);
     const binding = {
-      nodeId: componentNode.id,
-      nodeTitle: componentNode.title,
-      mode: 'jit-synthesized',
-      baseMacroId: null,
-      baseMacroName: '现场直拼开发流',
-      pinnedByHuman: Boolean(opts.pinnedByHuman),
-      mandatoryFloorTplIds: [...floorSet],
-      tplIds: chain,
-      addedTplIds: chain.filter((x) => x !== 'tpl-anti-slop'),
-      deltaCount: Math.max(0, chain.length - 1),
-      depsReady: dep.ready,
-      missingDepsCount: dep.missingCount,
-      missingDeps: dep.missing,
+      nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'jit-synthesized',
+      baseMacroId: null, baseMacroName: '现场直拼工作流', pinnedByHuman: Boolean(opts.pinnedByHuman),
+      mandatoryFloorTplIds: [...floorSet], tplIds: chain, addedTplIds: chain.filter((x) => x !== 'tpl-anti-slop'),
+      deltaCount: Math.max(0, chain.length - 1), depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
       revision: (existing?.revision || 0) + 1,
-      reason: '未命中高分固定宏，总控已优先从本地就绪节点池现场直拼专属开发流',
-      pack: built.pack,
-      updatedAt: new Date().toISOString()
+      reason: '未命中高分预置工作流，总控已优先从本地就绪节点池现场直拼专属工作流',
+      pack: built.pack, updatedAt: new Date().toISOString()
     };
     if (opts.persist !== false) persistComponentBinding(root, componentNode.id, binding);
     return { ok: true, binding };
@@ -447,26 +404,16 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
   const packToUse = built.ok ? built.pack : bestMacro;
   const dep = inspectWorkflowDeps(root, packToUse);
   const binding = {
-    nodeId: componentNode.id,
-    nodeTitle: componentNode.title,
-    mode: 'macro',
-    baseMacroId: bestMacro.id,
-    baseMacroName: bestMacro.name,
-    score: bestScore,
-    pinnedByHuman: Boolean(opts.pinnedByHuman),
-    mandatoryFloorTplIds: [...floorSet],
-    tplIds: chain,
-    addedTplIds: [],
-    deltaCount: 0,
-    depsReady: dep.ready,
-    missingDepsCount: dep.missingCount,
-    missingDeps: dep.missing,
+    nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'macro',
+    baseMacroId: bestMacro.id, baseMacroName: bestMacro.name, score: bestScore,
+    pinnedByHuman: Boolean(opts.pinnedByHuman), mandatoryFloorTplIds: [...floorSet],
+    tplIds: chain, addedTplIds: [], deltaCount: 0,
+    depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
     revision: (existing?.revision || 0) + 1,
     reason: bestMacro.depsReady
-      ? `匹配预置宏「${bestMacro.name}」（环境依赖已就绪，0 规划延迟复用）`
-      : `匹配预置宏「${bestMacro.name}」（待补齐 ${dep.missingCount} 项依赖）`,
-    pack: packToUse,
-    updatedAt: new Date().toISOString()
+      ? `匹配预置工作流「${bestMacro.name}」（环境依赖已就绪，0 规划延迟复用）`
+      : `匹配预置工作流「${bestMacro.name}」（待补齐 ${dep.missingCount} 项依赖）`,
+    pack: packToUse, updatedAt: new Date().toISOString()
   };
   if (opts.persist !== false) persistComponentBinding(root, componentNode.id, binding);
   return { ok: true, binding };
@@ -493,22 +440,14 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   if (blockedFloor.length > 0 && !humanApproved) {
     const blockedTitles = blockedFloor.map((id) => brickMap.get(id)?.title || id);
     const pending = {
-      requestedRemoveTplIds: blockedFloor,
-      blockedTitles,
-      requirementText: String(opts.requirementText || ''),
-      requestedBy: auth.role,
-      requestedAt: new Date().toISOString()
+      requestedRemoveTplIds: blockedFloor, blockedTitles,
+      requirementText: String(opts.requirementText || ''), requestedBy: auth.role, requestedAt: new Date().toISOString()
     };
     const nextWithPending = { ...base, pendingFloorApproval: pending, updatedAt: pending.requestedAt };
     if (opts.persist !== false) persistComponentBinding(root, componentNode.id, nextWithPending);
     return {
-      ok: false,
-      exitCode: 3,
-      code: 'MANDATORY_FLOOR_LOCKED',
-      requiresHumanApproval: true,
-      blockedTplIds: blockedFloor,
-      blockedTitles,
-      binding: nextWithPending,
+      ok: false, exitCode: 3, code: 'MANDATORY_FLOOR_LOCKED', requiresHumanApproval: true,
+      blockedTplIds: blockedFloor, blockedTitles, binding: nextWithPending,
       reason: `触发「底座只增不减」安全锁：禁止自动卸载底线护栏节点（${blockedTitles.join('、')}）。若因需求降级确需移除，请由人工点击批准放行`
     };
   }
@@ -540,11 +479,10 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   }
   const built = composeBrickChainToPack(brickMap, mergedChain, {
     id: `jit-${componentNode.id}-r${(base.revision || 1) + 1}`,
-    name: `${base.baseMacroName || componentNode.title} · 派生开发流`,
-    group: '节点派生开发流',
-    tip: opts.requirementText ? `按新需求微调：${String(opts.requirementText).slice(0, 80)}` : '节点私有派生开发流',
-    floorSet,
-    originByTpl
+    name: `${base.baseMacroName || componentNode.title} · 派生工作流`,
+    group: '节点派生工作流',
+    tip: opts.requirementText ? `按新需求微调：${String(opts.requirementText).slice(0, 80)}` : '节点私有派生工作流',
+    floorSet, originByTpl
   });
   if (!built.ok) return built;
 
@@ -553,29 +491,18 @@ export function mutateComponentWorkflowJit(projectRoot, componentNode, opts = {}
   const summaryReasons = [...inferred.reasons];
   if (explicitAdd.length) summaryReasons.push(`手动挂载 ${explicitAdd.map((x) => brickMap.get(x)?.title || x).join('、')}`);
   if (removeSet.size) summaryReasons.push(`移除非底座节点 ${[...removeSet].join('、')}`);
-  if (!summaryReasons.length) summaryReasons.push('已完成节点私有开发流微调校验（底座护栏保持锁定）');
+  if (!summaryReasons.length) summaryReasons.push('已完成节点私有工作流微调校验（底座护栏保持锁定）');
 
   const updatedBinding = {
-    nodeId: componentNode.id,
-    nodeTitle: componentNode.title,
+    nodeId: componentNode.id, nodeTitle: componentNode.title,
     mode: addedTplIds.length > 0 || removeSet.size > 0 ? 'jit-forked' : base.mode,
-    baseMacroId: base.baseMacroId,
-    baseMacroName: base.baseMacroName || '节点专属开发流',
-    pinnedByHuman: true,
-    mandatoryFloorTplIds: [...floorSet],
-    tplIds: mergedChain,
-    addedTplIds,
-    addedTitles: addedTplIds.map((id) => brickMap.get(id)?.title || id),
-    deltaCount: addedTplIds.length,
-    depsReady: dep.ready,
-    missingDepsCount: dep.missingCount,
-    missingDeps: dep.missing,
-    lastRequirement: String(opts.requirementText || '').trim(),
-    pendingFloorApproval: null,
-    revision: (base.revision || 1) + 1,
-    reason: summaryReasons.join('；'),
-    pack: built.pack,
-    updatedAt: new Date().toISOString()
+    baseMacroId: base.baseMacroId, baseMacroName: base.baseMacroName || '节点专属工作流',
+    pinnedByHuman: true, mandatoryFloorTplIds: [...floorSet], tplIds: mergedChain,
+    addedTplIds, addedTitles: addedTplIds.map((id) => brickMap.get(id)?.title || id),
+    deltaCount: addedTplIds.length, depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
+    lastRequirement: String(opts.requirementText || '').trim(), pendingFloorApproval: null,
+    revision: (base.revision || 1) + 1, reason: summaryReasons.join('；'),
+    pack: built.pack, updatedAt: new Date().toISOString()
   };
   if (opts.persist !== false) persistComponentBinding(root, componentNode.id, updatedBinding);
   return { ok: true, binding: updatedBinding };
@@ -588,27 +515,23 @@ export function promoteComponentJitToMacro(projectRoot, nodeId, macroMeta = {}) 
   const saved = readSavedWorkbenchState(root);
   const binding = (saved.componentWorkflows || {})[nodeId];
   if (!binding || !binding.pack || !Array.isArray(binding.pack.nodes)) {
-    return { ok: false, exitCode: 3, code: 'NO_COMPONENT_WORKFLOW', reason: `节点 ${nodeId} 尚未挂载可沉淀的开发流` };
+    return { ok: false, exitCode: 3, code: 'NO_COMPONENT_WORKFLOW', reason: `节点 ${nodeId} 尚未挂载可沉淀的工作流` };
   }
   const rawId = macroMeta.macroId || `macro-${nodeId}-${Date.now().toString(36).slice(-4)}`;
   const safeId = String(rawId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 56) || 'custom-macro';
-  const macroName = String(macroMeta.name || `${binding.nodeTitle || nodeId}沉淀开发流`).trim();
+  const macroName = String(macroMeta.name || `${binding.nodeTitle || nodeId}沉淀工作流`).trim();
   const keywords = String(macroMeta.keywords || binding.nodeTitle || '')
     .split(/[\s,，、/]+/).map((s) => s.trim()).filter((s) => s.length >= 2).slice(0, 8);
 
   const cleanNodes = binding.pack.nodes.map((n) => ({ ...n, jitOrigin: 'macro' }));
   const normalizedPack = {
-    schemaVersion: '1.0',
-    id: safeId,
-    name: macroName,
-    group: macroMeta.group || '项目沉淀宏',
-    tip: macroMeta.tip || (binding.lastRequirement ? `由节点「${binding.nodeTitle}」实战派生沉淀：${binding.lastRequirement}` : `由节点「${binding.nodeTitle}」一键沉淀的确定性预置宏`),
+    schemaVersion: '1.0', id: safeId, name: macroName,
+    group: macroMeta.group || '项目沉淀工作流',
+    tip: macroMeta.tip || (binding.lastRequirement ? `由节点「${binding.nodeTitle}」实战派生沉淀：${binding.lastRequirement}` : `由节点「${binding.nodeTitle}」一键沉淀的确定性预置工作流`),
     mandatoryTplIds: binding.mandatoryFloorTplIds || ['tpl-anti-slop'],
     matchProfile: { domains: macroMeta.domains || ['custom'], keywords },
     deps: Array.isArray(binding.pack.deps) ? binding.pack.deps : [],
-    nodes: cleanNodes,
-    links: binding.pack.links || [],
-    groups: []
+    nodes: cleanNodes, links: binding.pack.links || [], groups: []
   };
 
   let wfRelPath = null;
@@ -618,16 +541,10 @@ export function promoteComponentJitToMacro(projectRoot, nodeId, macroMeta = {}) 
     writeFileSync(join(root, wfRelPath), JSON.stringify(normalizedPack, null, 2) + '\n', 'utf8');
   }
   const solidifiedBinding = {
-    ...binding,
-    mode: 'macro',
-    baseMacroId: safeId,
-    baseMacroName: macroName,
-    addedTplIds: [],
-    addedTitles: [],
-    deltaCount: 0,
-    reason: `已沉淀为全局可复用预置宏「${macroName}」`,
-    pack: normalizedPack,
-    updatedAt: new Date().toISOString()
+    ...binding, mode: 'macro', baseMacroId: safeId, baseMacroName: macroName,
+    addedTplIds: [], addedTitles: [], deltaCount: 0,
+    reason: `已沉淀为全局可复用预置工作流「${macroName}」`,
+    pack: normalizedPack, updatedAt: new Date().toISOString()
   };
   persistComponentBinding(root, nodeId, solidifiedBinding, normalizedPack);
   return { ok: true, macroId: safeId, macro: normalizedPack, filePath: wfRelPath, binding: solidifiedBinding };

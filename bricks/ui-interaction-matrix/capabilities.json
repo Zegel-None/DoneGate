@@ -1,5 +1,5 @@
 {
-  "说明": "知识与规则型节点（archetype: knowledge-skill）：把『先定交互模式、再画界面』的 16 条控件映射判据与五态矩阵固化为可哈希验真的开发流前置卡。",
+  "说明": "知识与规则型节点（archetype: knowledge-skill）：把『先定交互模式、再画界面』的 16 条控件映射判据与五态矩阵固化为可哈希验真的工作流前置卡。",
   "tool": "ui-interaction-matrix",
   "registryId": "ui-interaction-matrix@stage4",
   "role": "soft",
@@ -40,6 +40,6 @@
   ],
   "disposition": {
     "state": "advisory",
-    "reason": "阶段 4 前端开发流前置交互决策知识卡"
+    "reason": "阶段 4 前端工作流前置交互决策知识卡"
   }
 }

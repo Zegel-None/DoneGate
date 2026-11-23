@@ -1,4 +1,4 @@
-// 完结门开发流确定性运行引擎与挂机持久状态机（真实适配器接线 + 缺依赖禁跑 + Worktree 沙箱 + 指纹免跑缓存 + 三重熔断）
+// 完结门工作流确定性运行引擎与挂机持久状态机（真实适配器接线 + 缺依赖禁跑 + Worktree 沙箱 + 指纹免跑缓存 + 三重熔断）
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -75,7 +75,7 @@ export function preflightWorkflowPack(pack, opts = {}) {
         nodeId: depReport.missing[0]?.nodeIds?.[0] || null,
         depsDir: depReport.depsDir, sharedDepsDir: depReport.sharedDepsDir,
         missingDeps: depReport.missing, agentPrompt: depReport.agentPrompt,
-        reason: `开发流缺少 ${depReport.missingCount} 项开源/环境依赖（${names}），无法运行；请先点击开发流旁「补齐依赖」安装至共享池 ${depReport.sharedDepsDir || depReport.depsDir}`
+        reason: `工作流缺少 ${depReport.missingCount} 项开源/环境依赖（${names}），无法运行；请先点击工作流旁「补齐依赖」安装至共享池 ${depReport.sharedDepsDir || depReport.depsDir}`
       };
     }
   }

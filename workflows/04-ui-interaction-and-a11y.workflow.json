@@ -1,6 +1,6 @@
 {
   "id": "04-ui-interaction-and-a11y",
-  "group": "预置全周期开发流",
+  "group": "预置全周期工作流",
   "name": "04 · 阶段 4 · 先定交互再画界面与无障碍前端流",
   "tip": "杜绝『先画高保真再返工交互』：16 条控件选型与五态矩阵卡 → 人工交互冻结闸门 → Storybook 去壳无头组件索引 → Biome+Knip 死代码清理 → Playwright+Axe 真实浏览器无障碍验收（上限 3 轮回修）→ Lighthouse 预算探针。",
   "deps": [

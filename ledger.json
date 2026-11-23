@@ -190,7 +190,7 @@
       "registryId": "ui-interaction-matrix@stage4",
       "wiredAtBatch": 3,
       "actionsChanged": 0,
-      "note": "advisory（内置 16 条前端交互控件决策规则与五态清单，供阶段 4 预置开发流前置约束，接受 3 批硬淘汰考核）",
+      "note": "advisory（内置 16 条前端交互控件决策规则与五态清单，供阶段 4 预置工作流前置约束，接受 3 批硬淘汰考核）",
       "ecosystem": "web-mobile"
     },
     {

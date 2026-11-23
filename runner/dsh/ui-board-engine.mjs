@@ -4,11 +4,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
 import {
-  AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
+  AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
   lockDesignSystemMaster, readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
 import { buildWinCmdSpawn } from './win-paths.mjs';
-import { findExecutableInDirs, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
+import { findExecutableInDirs, getSharedWorkflowDepsPaths, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
 
 export const UI_TOOLCHAIN_DEPS_PACK = {
   id: 'uiboard',
@@ -22,11 +22,24 @@ export const UI_TOOLCHAIN_DEPS_PACK = {
   nodes: []
 };
 
+export function isPuckInstalled(projectRoot) {
+  const root = resolve(projectRoot);
+  const uiPaths = getWorkflowDepsPaths(root, 'uiboard');
+  const sharedPaths = getSharedWorkflowDepsPaths(root);
+  const candidates = [
+    join(uiPaths.absDir, 'npm', 'node_modules', '@puckeditor', 'core', 'package.json'),
+    join(uiPaths.absDir, 'node_modules', '@puckeditor', 'core', 'package.json'),
+    join(sharedPaths.absDir, 'npm', 'node_modules', '@puckeditor', 'core', 'package.json'),
+    join(sharedPaths.absDir, 'node_modules', '@puckeditor', 'core', 'package.json')
+  ];
+  return candidates.some((p) => existsSync(p));
+}
+
 export const PUCK_BLOCK_TEMPLATES = {
   hero_nav: {
     type: 'hero_nav',
     label: '顶部导航与主视觉区',
-    defaultProps: { brand: '业务工作台', headline: '智能协作与全流程数据中枢', subline: '初版支持测试模式直接点击试玩，满意后一键接通真实数据库与后端接口', ctaLabel: '新建业务单据', ctaActionId: 'act-create-order' }
+    defaultProps: { brand: '业务工作台', headline: '智能协作与全流程数据中枢', subline: '窗口内直接点击试玩真实交互，按住 Alt+单击拾取任意元素源码，满意后一键接通数据库与后端接口', ctaLabel: '新建业务单据', ctaActionId: 'act-create-order' }
   },
   kpi_row: {
     type: 'kpi_row',
@@ -155,7 +168,7 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
     if (blk.type === 'confirm_modal_trigger') {
       const wst = wireById.get(p.actionId) || 'mock';
       return `<section ${srcAttr} class="ui-card ui-row-between">
-        <div><h2 class="ui-h2">${escHtml(p.title)}</h2><div class="ui-muted">点击右侧按钮在测试模式下体验二次确认弹窗与模拟跳转</div></div>
+        <div><h2 class="ui-h2">${escHtml(p.title)}</h2><div class="ui-muted">直接点击右侧按钮体验二次确认弹窗，按住 Alt+单击定位源码</div></div>
         <button type="button" class="ui-btn ui-btn-primary" data-dg-action="${escHtml(p.actionId)}" data-dg-wiring="${wst}" onclick="window.__openConfirmModal('${escHtml(p.actionId)}', '${escHtml(p.btnLabel)}')" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 3}:5">${escHtml(p.btnLabel)}</button>
       </section>`;
     }
@@ -184,7 +197,8 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
   <style>
 ${cssVars}
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px; background: var(--ui-bg); color: var(--ui-text); font-family: var(--ui-font-sans); transition: background 0.18s ease, color 0.18s ease; }
+    html, body { min-height: 100%; margin: 0; background: var(--ui-bg); color: var(--ui-text); }
+    body { padding: 24px; font-family: var(--ui-font-sans); transition: background 0.18s ease, color 0.18s ease; }
     .ui-wrap { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
     .ui-card { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); padding: 18px 20px; }
     .ui-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -216,7 +230,7 @@ ${blockHtmlList}
   <div id="ui-confirm-modal">
     <div class="ui-card" style="max-width: 360px; width: 90%;">
       <h2 class="ui-h2" id="ui-modal-title">确认执行此操作？</h2>
-      <p class="ui-muted" style="margin-bottom: 14px;">当前为测试模式模拟弹窗（待接通真实后端 API 后将自动切换为正式事务请求）。</p>
+      <p class="ui-muted" style="margin-bottom: 14px;">当前为原型交互模拟弹窗（接通真实后端 API 后将自动切换为正式事务请求）。</p>
       <div class="ui-row-between" style="justify-content: flex-end;">
         <button type="button" class="ui-btn ui-btn-ghost" onclick="document.getElementById('ui-confirm-modal').style.display='none'">取消</button>
         <button type="button" class="ui-btn ui-btn-primary" onclick="document.getElementById('ui-confirm-modal').style.display='none'; window.__runMockAction('modal-confirmed', '确认跳转')">确认执行</button>
@@ -227,7 +241,7 @@ ${blockHtmlList}
     window.__runMockAction = function(actId, label) {
       var t = document.getElementById('ui-mock-toast');
       if (!t) return;
-      t.textContent = '⚡ [测试模式试玩] 已触发「' + label + '」（Mock 桩响应正常，可在左栏一键接通真实数据库）';
+      t.textContent = '⚡ 已触发「' + label + '」（Mock 桩响应正常，可在左栏一键接通真实数据库）';
       t.style.display = 'block';
       clearTimeout(window.__mockTimer);
       window.__mockTimer = setTimeout(function() { t.style.display = 'none'; }, 2800);
@@ -297,11 +311,13 @@ export function detectProjectUiEntry(projectRoot) {
   return {
     projectName: basename(root),
     hasDevScript,
+    puckInstalled: isPuckInstalled(root),
     suggestedDevUrl: scripts.dev && String(scripts.dev).includes('next') ? 'http://127.0.0.1:3000' : (hasDevScript ? 'http://127.0.0.1:5173' : null),
     previewPath: '/donegate/api/uiboard/prototype',
     activeProposalId: proto.activeProposalId,
     lockedDesign: lock,
     proposals,
+    aestheticGroups: AESTHETIC_GROUPS,
     allProposals: AESTHETIC_PROPOSALS,
     blockTemplates: Object.values(PUCK_BLOCK_TEMPLATES).map((t) => ({ type: t.type, label: t.label })),
     layout: proto.layout,
@@ -323,7 +339,8 @@ export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
   let cliUsed = 'builtin-dom-probe';
   let cliSnapSummary = null;
   const uiPaths = getWorkflowDepsPaths(root, 'uiboard');
-  const localAbBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir]);
+  const sharedPaths = getSharedWorkflowDepsPaths(root);
+  const localAbBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir, sharedPaths.binDir, sharedPaths.npmBinDir]);
   const runAb = (abArgs) => {
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(localAbBin)) {
       const wb = buildWinCmdSpawn(localAbBin, abArgs);

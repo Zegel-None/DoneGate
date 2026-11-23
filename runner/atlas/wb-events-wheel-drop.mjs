@@ -1,6 +1,5 @@
-// 画布右键菜单唤出、双击钻取/复位、滚轮无级缩放与左栏开发流拖放导入事件模块
-export function buildWbEventsWheelDrop() {
-  return [
+// 画布右键菜单唤出、双击钻取/复位、滚轮无级缩放与左栏工作流拖放导入事件模块
+const WB_EVENTS_WHEEL_LINES = [
   "    function setupCanvasWheelDblclickAndDrawerDrop(stage) {",
   "      let packDragId = null;",
   "      document.getElementById('left-drawer').addEventListener('contextmenu', (e) => {",
@@ -167,10 +166,12 @@ export function buildWbEventsWheelDrop() {
   "          WORKFLOW_PACKS[packDragId].group = z.getAttribute('data-drop-pack-grp');",
   "          packDragId = null;",
   "          renderLeftDrawer();",
-  "          showToast('已更新开发包分组');",
+  "          showToast('已更新工作流分组');",
   "        }",
   "      });",
   "",
   "    }"
-  ].join('\n');
+];
+export function buildWbEventsWheelDrop() {
+  return WB_EVENTS_WHEEL_LINES.join('\n');
 }

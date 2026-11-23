@@ -1,6 +1,5 @@
-// 桌面级级联右键菜单（含卡片/组合框/开发流依赖补齐/连线与源码目录定位弹窗）
-export function buildWbMenusViewport() {
-  return [
+// 桌面级级联右键菜单（含卡片/组合框/工作流依赖补齐/连线与源码目录定位弹窗）
+const WB_MENUS_VIEWPORT_LINES = [
   "    // 13c. 卡片专属右键菜单（「在文件夹中打开」）与连线专属右键菜单",
   "    // ============================================================================",
   "    function resolveNodeFolders(node) {",
@@ -128,7 +127,7 @@ export function buildWbMenusViewport() {
   "          </div>",
   "          <div class=\"ctx-row font-semibold\" style=\"color: var(--text-main);\" data-dsh-ctx=\"quote-card\" data-node=\"${esc(node.id)}\"><span>❝ 引用到底部输入框</span><span class=\"text-[10.5px] font-mono opacity-75\">Alt+单击</span></div>",
   "          <div class=\"ctx-row\" data-dsh-ctx=\"preview-card\" data-node=\"${esc(node.id)}\"><span>👁 在右栏预览关联源码</span></div>",
-  "          ${state.page === 'sandbox' && !node.isSubRepoRef && !ro ? `<div class=\"ctx-row font-semibold\" style=\"color: var(--text-main);\" data-card-ctx=\"jit-open\" data-node=\"${esc(node.id)}\"><span>⚡ 按新需求即时派生 / 查看开发流</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-auto-assign\" data-node=\"${esc(node.id)}\"><span>🎯 让总控重新自动选配</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-promote\" data-node=\"${esc(node.id)}\"><span>💾 将节点开发流另存为预置宏</span></div>` : ''}",
+  "          ${state.page === 'sandbox' && !node.isSubRepoRef && !ro ? `<div class=\"ctx-row font-semibold\" style=\"color: var(--text-main);\" data-card-ctx=\"jit-open\" data-node=\"${esc(node.id)}\"><span>⚡ 按新需求即时派生 / 查看工作流</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-auto-assign\" data-node=\"${esc(node.id)}\"><span>🎯 让总控重新自动选配</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-promote\" data-node=\"${esc(node.id)}\"><span>💾 将节点工作流另存为预置工作流</span></div>` : ''}",
   "          ${state.page === 'workshop' ? `<div class=\"ctx-row\" data-card-ctx=\"preview-obs\" data-node=\"${esc(node.id)}\"><span>📊 直看节点观测输出 (observation.json)</span></div>` : ''}",
   "          ${(node.primaryContractId || (node.contractIds && node.contractIds.length)) ? `<div class=\"ctx-row font-semibold\" style=\"color: var(--subgraph-accent);\" data-card-ctx=\"judge-pack\" data-node=\"${esc(node.id)}\"><span>⚖️ 一键生成门 5 复核包</span></div>` : ''}",
   "          <div class=\"ctx-row font-semibold\" style=\"color: var(--primary);\" data-card-ctx=\"open-folder\" data-node=\"${esc(node.id)}\">",
@@ -166,24 +165,25 @@ export function buildWbMenusViewport() {
   "      const badge = dep.missingCount > 0 ? `缺 ${dep.missingCount} 项` : '已就位';",
   "      rootMenu.innerHTML = `",
   "        <div class=\"px-3 py-1 text-[10.5px] font-semibold truncate border-b mb-1 flex items-center justify-between gap-2\" style=\"color: var(--text-muted); border-color: var(--border-subtle);\">",
-  "          <span class=\"truncate\">开发流：${esc(pk.name)}</span>",
+  "          <span class=\"truncate\">工作流：${esc(pk.name)}</span>",
   "          <span class=\"shrink-0\" style=\"color: ${dep.missingCount > 0 ? 'var(--warn)' : 'var(--ok)'};\">${badge}</span>",
   "        </div>",
   "        <div class=\"ctx-row font-semibold\" style=\"color: var(--primary);\" data-pack-ctx=\"provision-deps\" data-pack=\"${esc(pk.id)}\">",
-  "          <span>📦 一键补齐此开发流依赖</span>",
+  "          <span>📦 一键补齐此工作流依赖</span>",
   "        </div>",
   "        <div class=\"ctx-row\" data-pack-ctx=\"inspect-deps\" data-pack=\"${esc(pk.id)}\">",
   "          <span>🔍 重新检查依赖就位状态</span>",
   "        </div>",
   "        <div class=\"ctx-row\" data-pack-ctx=\"open-deps-dir\" data-pack=\"${esc(pk.id)}\">",
-  "          <span>📂 打开开发流依赖目录</span>",
+  "          <span>📂 打开工作流依赖目录</span>",
   "        </div>",
+  "        <div class=\"ctx-row\" data-pack-ctx=\"rename-pack\" data-pack=\"${esc(pk.id)}\"><span>✏️ 重命名此工作流</span></div>",
   "        <div class=\"ctx-row\" data-pack-ctx=\"export-pack-json\" data-pack=\"${esc(pk.id)}\">",
   "          <span>⬇ 导出为 .workflow.json</span>",
   "        </div>",
   "        <div class=\"my-1 border-t\" style=\"border-color: var(--border-subtle);\"></div>",
   "        <div class=\"ctx-row\" style=\"color: var(--text-main);\" data-pack-ctx=\"quote-pack\" data-pack=\"${esc(pk.id)}\">",
-  "          <span>❝ 引用此开发流到输入框</span>",
+  "          <span>❝ 引用此工作流到输入框</span>",
   "        </div>",
   "      `;",
   "      rootMenu.classList.remove('hidden');",
@@ -333,5 +333,7 @@ export function buildWbMenusViewport() {
   "    }",
   "",
   "    // ============================================================================"
-  ].join('\n');
+];
+export function buildWbMenusViewport() {
+  return WB_MENUS_VIEWPORT_LINES.join('\n');
 }

@@ -1,6 +1,6 @@
 {
   "id": "05-red-green-teeth-gate",
-  "group": "预置全周期开发流",
+  "group": "预置全周期工作流",
   "name": "05 · 阶段 5 & 6 · 有牙变异测试与 PR 架构门禁流",
   "tip": "专治 AI 假绿灯测试与循环依赖：内置防手搓护栏 → Biome 语法检查 → Typos 标识符防滑移 → Dependency-Cruiser 分层边界 → CodeGraph 改动波及图 → Stryker 变异击杀实验（上限 3 轮补断言）→ Actionlint CI 校验。",
   "deps": [

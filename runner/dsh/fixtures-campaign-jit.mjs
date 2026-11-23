@@ -1,15 +1,21 @@
-// DSH 预置宏打底、节点级即时派生 (JIT)、真实适配器观测与多组件拓扑挂机断言夹具
+// DSH 预置工作流打底、节点级即时派生 (JIT)、真实适配器观测、GitHub Star、项目导入与 UI 桥端到端断言夹具
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import vm from 'node:vm';
 import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
 import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
 import {
   assignComponentWorkflow, mutateComponentWorkflowJit, promoteComponentJitToMacro
 } from './workflow-jit.mjs';
 import { executeProjectCampaignAutopilot } from './campaign-autopilot.mjs';
+import { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, buildInjectedUiBridgeScript } from './contract.mjs';
+import { auditHtmlAntiAiSlop } from './ui-aesthetics.mjs';
+import { detectProjectUiEntry, renderPrototypeHtml } from './ui-board-engine.mjs';
+import { createDoneGateWebRouteHandler } from './host-routes.mjs';
 
 function verifyJitMacroLifecycle() {
   const tmp = mkdtempSync(join(tmpdir(), 'dg-jit-wf-'));
@@ -23,12 +29,12 @@ function verifyJitMacroLifecycle() {
       scopePaths: ['src/core/'], modules: [{ name: 'evalExpr', role: '逻辑', path: 'src/core/eval.mjs' }]
     };
 
-    // (A) 执行端 Worker 严禁选配或篡改验收开发流
+    // (A) 执行端 Worker 严禁选配或篡改验收工作流
     const deniedAssign = assignComponentWorkflow(tmp, engineComp, { actorRole: 'worker' });
     assert.equal(deniedAssign.ok, false);
     assert.equal(deniedAssign.code, 'WORKER_CANNOT_MUTATE_WORKFLOW');
 
-    // (B) 总控自动为不同组件匹配对应基准宏（且优先命中零外部未装依赖的 pack-core-logic）
+    // (B) 总控自动为不同组件匹配对应基准工作流（且优先命中零外部未装依赖的 pack-core-logic）
     const assignedUi = assignComponentWorkflow(tmp, uiComp, { actorRole: 'super-agent' });
     const assignedEng = assignComponentWorkflow(tmp, engineComp, { actorRole: 'super-agent' });
     assert.equal(assignedUi.ok, true);
@@ -37,7 +43,7 @@ function verifyJitMacroLifecycle() {
     assert.equal(assignedEng.binding.baseMacroId, 'pack-core-logic');
     assert.equal(assignedEng.binding.depsReady, true);
 
-    // (C) 改需求时在当前节点局部节点派生（不污染全局宏，且禁止注入非标脚本）
+    // (C) 改需求时在当前节点局部节点派生（不污染全局工作流，且禁止注入非标脚本）
     const badBrick = mutateComponentWorkflowJit(tmp, engineComp, { actorRole: 'super-agent', addTplIds: ['raw-shell-hack'] });
     assert.equal(badBrick.ok, false);
     assert.equal(badBrick.code, 'UNKNOWN_BRICK_REJECTED');
@@ -76,11 +82,11 @@ function verifyJitMacroLifecycle() {
     assert.ok(!humanOk.binding.tplIds.includes('tpl-gitleaks'));
     assert.ok(humanOk.binding.tplIds.includes('tpl-anti-slop'), '防手搓核心护栏仍保持守底');
 
-    // (E) 一键另存为全局预置宏 (.workflow.json)
+    // (E) 一键另存为全局预置工作流 (.workflow.json)
     const promoted = promoteComponentJitToMacro(tmp, engineComp.id, {
       actorRole: 'human',
       macroId: 'calc-formula-fx',
-      name: '公式与汇率联防开发流'
+      name: '公式与汇率联防工作流'
     });
     assert.equal(promoted.ok, true);
     assert.ok(existsSync(join(tmp, 'workflows', 'calc-formula-fx.workflow.json')));
@@ -97,6 +103,7 @@ async function verifySharedDepsAndRealAdapter(tmp) {
   gitInit(['config', 'user.email', 'test@donegate.local']);
   gitInit(['config', 'user.name', 'DoneGate Test']);
   writeFileSync(join(tmp, '.gitignore'), '.donegate/\nworkflows/.deps/\n');
+  writeFileSync(join(tmp, '.gitleaksignore'), '.donegate/**\nworkflows/.deps/**\n');
   mkdirSync(join(tmp, 'src/core'), { recursive: true });
   mkdirSync(join(tmp, 'src/api'), { recursive: true });
   mkdirSync(join(tmp, 'src/ui'), { recursive: true });
@@ -106,7 +113,7 @@ async function verifySharedDepsAndRealAdapter(tmp) {
   gitInit(['add', '-A']);
   gitInit(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init project']);
 
-  // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 开发流零重复下载直接复用
+  // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 工作流零重复下载直接复用
   const webPack = { id: 'pack-web', name: '网页全栈开发包', nodes: [{ id: 'n1', tplId: 'tpl-playwright' }, { id: 'n2', tplId: 'tpl-biome-knip' }] };
   provisionWorkflowDeps(tmp, webPack, { markInstalledIds: ['playwright', 'biome'] });
   const uiNode = { id: 'comp-ui', title: '界面视图组件', scopePaths: ['src/ui/'], modules: [{ name: 'view', role: '界面', path: 'src/ui/view.mjs' }] };
@@ -115,10 +122,10 @@ async function verifySharedDepsAndRealAdapter(tmp) {
   assert.equal(forkedUi.ok, true);
   provisionWorkflowDeps(tmp, { id: 'seed-os', nodes: [{ id: 'no', tplId: 'tpl-openspec' }] }, { markInstalledIds: ['openspec'] });
   const depForked = inspectWorkflowDeps(tmp, forkedUi.binding.pack, { env: { PATH: '' } });
-  assert.equal(depForked.ready, true, '派生 JIT 新版开发流必须直接命中 _shared 共享底座池就绪状态');
+  assert.equal(depForked.ready, true, '派生 JIT 新版工作流必须直接命中 _shared 共享底座池就绪状态');
   assert.ok(depForked.items.some((x) => x.resolvedVia === 'shared-manifest'));
 
-  // (B) 真实适配器执行桥：构造共享池 mock gitleaks，验证真落盘 observation.json 并由 check-brick-observations 给出 1/0 裁决
+  // (B) 真实适配器执行桥：构造共享池 mock gitleaks（兼容 noexec 宿主真机 gitleaks），验证落盘 observation.json 与 1/0 裁决
   const sharedBin = join(tmp, 'workflows', '.deps', '_shared', '.bin');
   mkdirSync(sharedBin, { recursive: true });
   const mockLeakTrigger = join(tmp, 'LEAK_MODE.flag');
@@ -140,7 +147,7 @@ fs.writeFileSync(a[i + 1], JSON.stringify(leak ? [{ RuleID: "generic-api-key", F
   const apiAssign = assignComponentWorkflow(tmp, apiNode, { actorRole: 'super-agent', preferredMacroId: 'pack-api-guard' });
   assert.equal(apiAssign.ok, true);
 
-  writeFileSync(mockLeakTrigger, '1');
+  writeFileSync(mockLeakTrigger, 'GITHUB_TOKEN=ghp_' + 'x9k2m4p7'.repeat(5) + '\n');
   gitInit(['add', '-A']);
   gitInit(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'enable leak simulation']);
   const leakRun = await executeDeterministicWorkflowRun(tmp, { ticketId: 'real-adp-fail' }, apiAssign.binding.pack, { useWorktreeSandbox: false, useFingerprintCache: false });
@@ -149,6 +156,7 @@ fs.writeFileSync(a[i + 1], JSON.stringify(leak ? [{ RuleID: "generic-api-key", F
   assert.ok(existsSync(join(tmp, '.donegate/adapters/gitleaks/observation.json')), '必须真实调用适配器落盘 observation.json');
 
   rmSync(mockLeakTrigger, { force: true });
+  rmSync(join(tmp, '.donegate/adapters/gitleaks'), { recursive: true, force: true });
   gitInit(['add', '-A']);
   gitInit(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'clean leak simulation']);
   const cleanRun = await executeDeterministicWorkflowRun(tmp, { ticketId: 'real-adp-pass' }, apiAssign.binding.pack, { useWorktreeSandbox: false, useFingerprintCache: false });
@@ -158,7 +166,6 @@ fs.writeFileSync(a[i + 1], JSON.stringify(leak ? [{ RuleID: "generic-api-key", F
 }
 
 async function verifyProjectCampaignTopology(tmp, { uiNode, apiNode }) {
-  // (C) 项目看板多组件拓扑级过夜挂机：严格按 core -> api -> ui 依赖顺序运行，校验分组件写边界并在全绿后合回 main
   const executionOrder = [];
   const coreNode = { id: 'comp-core', title: '计算核心底座', scopePaths: ['src/core/'], nextIds: ['comp-api'], modules: [{ name: 'calc', role: '逻辑', path: 'src/core/calc.mjs' }] };
   const apiNodeDag = { ...apiNode, nextIds: ['comp-ui'] };
@@ -167,9 +174,7 @@ async function verifyProjectCampaignTopology(tmp, { uiNode, apiNode }) {
   assignComponentWorkflow(tmp, uiNodeDag, { actorRole: 'super-agent', preferredMacroId: 'pack-core-logic', forceReassign: true });
 
   const badCampaign = await executeProjectCampaignAutopilot(tmp, {
-    campaignId: 'camp-scope-breach',
-    nodes: [uiNodeDag, apiNodeDag, coreNode],
-    useWorktreeSandbox: true
+    campaignId: 'camp-scope-breach', nodes: [uiNodeDag, apiNodeDag, coreNode], useWorktreeSandbox: true
   }, {
     componentHooks: {
       'comp-core': {
@@ -186,9 +191,7 @@ async function verifyProjectCampaignTopology(tmp, { uiNode, apiNode }) {
   assert.equal(readFileSync(join(tmp, 'src/ui/view.mjs'), 'utf8'), "export const render = () => 'ok';\n", '越界熔断后主工作区必须 100% 干净零污染');
 
   const okCampaign = await executeProjectCampaignAutopilot(tmp, {
-    campaignId: 'camp-clean-pass',
-    nodes: [uiNodeDag, apiNodeDag, coreNode],
-    useWorktreeSandbox: true
+    campaignId: 'camp-clean-pass', nodes: [uiNodeDag, apiNodeDag, coreNode], useWorktreeSandbox: true
   }, {
     componentHooks: {
       'comp-core': {
@@ -215,16 +218,147 @@ async function verifyProjectCampaignTopology(tmp, { uiNode, apiNode }) {
   assert.ok(readFileSync(join(tmp, 'src/ui/view.mjs'), 'utf8').includes('v2-ok'));
 }
 
+async function verifyStarImportAestheticsAndUiBridge(tmp) {
+  // 1) 12 套分组美学方案 + Puck 安装探测 + 全屏无白底高度
+  assert.equal(AESTHETIC_GROUPS.length, 4);
+  assert.equal(AESTHETIC_PROPOSALS.length, 12);
+  for (const id of ['swiss-minimal', 'bento-craft', 'industrial-dark', 'neo-brutal', 'enterprise-dense']) {
+    assert.ok(AESTHETIC_PROPOSALS.some((p) => p.id === id), `必须保留兼容方案 ${id}`);
+  }
+  for (const p of AESTHETIC_PROPOSALS) {
+    assert.ok(AESTHETIC_GROUPS.includes(p.group), `方案 ${p.id} 分组必须合法`);
+    const proto = renderPrototypeHtml(tmp, { proposalId: p.id });
+    assert.equal(auditHtmlAntiAiSlop(proto.html).pass, true, `方案 ${p.id} 不得含紫粉渐变或 Emoji 按钮`);
+    assert.ok(proto.html.includes('html, body { min-height: 100%; margin: 0;'));
+  }
+  assert.equal(detectProjectUiEntry(tmp).puckInstalled, false);
+  const puckPkg = join(tmp, 'workflows', '.deps', '_shared', 'npm', 'node_modules', '@puckeditor', 'core', 'package.json');
+  mkdirSync(join(puckPkg, '..'), { recursive: true });
+  writeFileSync(puckPkg, '{"name":"@puckeditor/core"}\n', 'utf8');
+  assert.equal(detectProjectUiEntry(tmp).puckInstalled, true);
+
+  // 2) UI 桥纯 Alt+单击拾取：普通点击 100% 原生放行，Alt+左键仅发 1 次胶囊且抑制 800ms 内 pointerup/click
+  const docListeners = {};
+  const winListeners = {};
+  const posted = [];
+  const appended = [];
+  const btnEl = {
+    tagName: 'BUTTON', id: 'save-btn', innerText: '保存单据', outerHTML: '<button id="save-btn">保存单据</button>',
+    getAttribute: (k) => (k === 'data-dg-action' ? 'act-save' : (k === 'data-dg-wiring' ? 'mock' : (k === 'data-dg-source' ? 'src/App.tsx:42:3' : null))),
+    closest: () => btnEl,
+    getBoundingClientRect: () => ({ left: 20, top: 40, bottom: 72, width: 96, height: 32 })
+  };
+  const bodyEl = { appendChild: (el) => appended.push(el) };
+  const winObj = {
+    location: { pathname: '/' }, innerWidth: 1024,
+    parent: { postMessage: (msg) => posted.push(msg) },
+    addEventListener: (ev, fn) => { (winListeners[ev] = winListeners[ev] || []).push(fn); }
+  };
+  const docObj = {
+    body: bodyEl, documentElement: { style: { setProperty() {} } },
+    createElement: () => ({ style: {}, setAttribute() {}, getAttribute: () => '1' }),
+    addEventListener: (ev, fn) => { (docListeners[ev] = docListeners[ev] || []).push(fn); }
+  };
+  vm.runInNewContext(buildInjectedUiBridgeScript(), { window: winObj, document: docObj, Date, Math, Object, String, Number });
+
+  const makeEv = (extra = {}) => {
+    const ev = { target: btnEl, altKey: false, button: 0, prevented: false, stopped: false, ...extra };
+    ev.preventDefault = () => { ev.prevented = true; };
+    ev.stopPropagation = () => { ev.stopped = true; };
+    ev.stopImmediatePropagation = () => { ev.stopped = true; };
+    return ev;
+  };
+  const normalClick = makeEv({ altKey: false });
+  for (const fn of (docListeners.click || [])) fn(normalClick);
+  assert.equal(normalClick.prevented, false, '普通点击严禁被 preventDefault 拦截');
+  assert.equal(posted.filter((m) => m.type === 'dg-ui:element-selected').length, 0);
+  assert.equal(posted.filter((m) => m.type === 'dg-ui:test-action-triggered').length, 1);
+
+  for (const fn of (docListeners.pointermove || [])) fn(makeEv({ altKey: true }));
+  assert.equal(appended[0].style.display, 'block', 'Alt 悬停时必须显示蓝色虚线 hoverBox');
+  for (const fn of (winListeners.keyup || [])) fn({ key: 'Alt', altKey: false });
+  assert.equal(appended[0].style.display, 'none', '松开 Alt 时必须立即隐藏 hoverBox');
+
+  const altDown = makeEv({ altKey: true, button: 0 });
+  const altUp = makeEv({ altKey: false, button: 0 });
+  const altFollowClick = makeEv({ altKey: false, button: 0 });
+  for (const fn of (docListeners.pointerdown || [])) fn(altDown);
+  for (const fn of (docListeners.pointerup || [])) fn(altUp);
+  for (const fn of (docListeners.click || [])) fn(altFollowClick);
+  assert.equal(altDown.prevented && altUp.prevented && altFollowClick.prevented, true, 'Alt 拾取必须拦截按下与释放余波');
+  const selMsgs = posted.filter((m) => m.type === 'dg-ui:element-selected');
+  assert.equal(selMsgs.length, 1, '一次 Alt+单击必须且只能发送 1 次选中胶囊');
+  assert.equal(selMsgs[0].payload.sourceFile, 'src/App.tsx');
+  assert.equal(selMsgs[0].payload.sourceLine, 42);
+
+  // 3) GitHub Star 204/401 本地仿真与外部陈旧项目导入路由
+  const mockGh = http.createServer((req, res) => {
+    const auth = req.headers.authorization || '';
+    res.writeHead(auth === 'Bearer valid-tok' ? 204 : 401);
+    res.end();
+  });
+  await new Promise((r) => mockGh.listen(0, '127.0.0.1', r));
+  const ghBase = `http://127.0.0.1:${mockGh.address().port}`;
+  const emptyHome = join(tmp, 'empty-home');
+  mkdirSync(emptyHome, { recursive: true });
+  try {
+    const invokeRoute = async (method, subPath, bodyObj, routeOpts = {}) => {
+      const handler = createDoneGateWebRouteHandler(tmp, routeOpts);
+      let status = 200;
+      let raw = '';
+      const fakeReq = {
+        method, url: `/donegate/api${subPath}`, headers: {},
+        on(ev, cb) {
+          if (ev === 'data' && bodyObj !== null) cb(Buffer.from(JSON.stringify(bodyObj)));
+          if (ev === 'end') cb();
+        },
+        destroy() {}
+      };
+      const fakeRes = { writeHead(s) { status = s; }, end(chunk) { raw = chunk || ''; } };
+      await handler(fakeReq, fakeRes, subPath);
+      return { status, json: raw ? JSON.parse(raw) : null };
+    };
+
+    const badSlug = await invokeRoute('POST', '/github/star', { repoSlug: '../evil' }, { githubApiBase: ghBase, skipGhCli: true });
+    assert.equal(badSlug.status, 400);
+    const r401 = await invokeRoute('POST', '/github/star', { repoSlug: 'measuredco/puck' }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'bad-tok', homeDir: emptyHome });
+    assert.equal(r401.status, 200);
+    assert.equal(r401.json.ok, false);
+    assert.equal(r401.json.unauthenticated, true);
+
+    const r204 = await invokeRoute('POST', '/github/star', { repoSlug: 'measuredco/puck', star: true }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'valid-tok', homeDir: emptyHome });
+    assert.equal(r204.status, 200);
+    assert.equal(r204.json.ok, true);
+    assert.equal(r204.json.via, 'github-rest');
+    const stAfterStar = JSON.parse(readFileSync(join(tmp, '.donegate', 'workbench-state.json'), 'utf8'));
+    assert.ok(stAfterStar.starredRepos.includes('measuredco/puck'));
+
+    const legacyDir = join(tmp, 'legacy-erp');
+    mkdirSync(join(legacyDir, 'src'), { recursive: true });
+    writeFileSync(join(legacyDir, 'package.json'), '{"name":"legacy-erp"}\n', 'utf8');
+    writeFileSync(join(legacyDir, 'src', 'billing.mjs'), 'export const bill = () => 100;\n', 'utf8');
+    const impRes = await invokeRoute('POST', '/project/import', { targetDir: legacyDir });
+    assert.equal(impRes.status, 200);
+    assert.equal(impRes.json.ok, true);
+    assert.equal(impRes.json.sandbox.id, 'imp-legacy-erp');
+    assert.equal(impRes.json.sandbox.importedFrom, resolve(legacyDir));
+    assert.ok(impRes.json.sandbox.nodes.length >= 1);
+  } finally {
+    mockGh.close();
+  }
+}
+
 export async function runJitAndCampaignChecks(check) {
-  await check('9. 预置宏打底 + 节点级即时派生 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为宏', () => {
+  await check('9. 预置工作流打底 + 节点级即时派生 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为工作流', () => {
     verifyJitMacroLifecycle();
   });
 
-  await check('10. 真实适配器观测落盘与裁决、跨开发流共享 .deps/_shared 池及多组件拓扑级项目挂机闭环', async () => {
+  await check('10. 真实适配器观测落盘、跨工作流共享池、项目挂机、GitHub Star/导入与 UI 桥纯 Alt 拾取闭环', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-p0-full-'));
     try {
       const ctx = await verifySharedDepsAndRealAdapter(tmp);
       await verifyProjectCampaignTopology(tmp, ctx);
+      await verifyStarImportAestheticsAndUiBridge(tmp);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

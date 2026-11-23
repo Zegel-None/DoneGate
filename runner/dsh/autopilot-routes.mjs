@@ -1,4 +1,4 @@
-// 过夜挂机 HTTP 子路由：承接单开发流挂机与项目看板多组件拓扑挂机（Campaign Autopilot）
+// 过夜挂机 HTTP 子路由：承接单工作流挂机与项目看板多组件拓扑挂机（Campaign Autopilot）
 import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import {
   approveAndResumeCampaignAutopilot,

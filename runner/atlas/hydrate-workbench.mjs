@@ -1,4 +1,4 @@
-// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 开发流」交互模型（<= 300 行）
+// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 工作流」交互模型（<= 300 行）
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,8 +25,8 @@ const UPSTREAM_GITHUB_MAP = {
 
 function defaultSavedState() {
   return {
-    schemaVersion: '1.0', customPacks: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
-    workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
+    schemaVersion: '1.0', customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
+    collapsedWfGroups: [], collapsedNodeCats: [], workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
     starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'], updatedAt: null
   };
 }
@@ -264,7 +264,7 @@ function loadDeclarativeWorkflowPacks(projectRoot) {
       for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
         const r = readJsonStrict(join(wfDir, f));
         if (r.ok && r.value && r.value.id && Array.isArray(r.value.nodes)) {
-          packs[r.value.id] = { group: r.value.group || '项目声明式开发流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
+          packs[r.value.id] = { group: r.value.group || '项目声明式工作流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
         }
       }
     } catch (err) { void err; }

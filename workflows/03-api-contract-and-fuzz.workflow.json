@@ -1,6 +1,6 @@
 {
   "id": "03-api-contract-and-fuzz",
-  "group": "预置全周期开发流",
+  "group": "预置全周期工作流",
   "name": "03 · 阶段 3 · 后端契约先行、静态类型与属性 Fuzz 流",
   "tip": "契约先行防接口幻觉：Spectral OpenAPI 规范审校 → Pyright 跨文件类型检查 → Ruff 快速 AST 护栏 → Schemathesis 自动生成畸形入参抓 500 崩溃（上限 4 轮回修）→ Hurl 多步业务断言。",
   "deps": [

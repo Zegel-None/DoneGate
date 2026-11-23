@@ -1,4 +1,4 @@
-// 生成符合 DSH 创造模式 (dsh-doc) 规范的 package.json、Windows/POSIX 自适应 cordis.patch.yml 与服务端入口（<= 220 行）
+// 生成符合 DSH 创造模式 (dsh-doc) 规范的 package.json、Windows/POSIX 自适应 cordis.patch.yml 与服务端入口（<= 250 行）
 import { normalizeSlashes, toSafeFileUrl } from './win-paths.mjs';
 
 export const DSH_BUNDLE_NAME = '@local/dsh-donegate';
@@ -64,7 +64,7 @@ export function renderDshBundleCordisPatch(projectRoot) {
       config:
         id: dsh-donegate-router
         name: 完结门 · Super Agent 主调度
-        description: "承接画布蓝色引用胶囊与全局工程指令，指派 Worker 子代理挂载开发流执行并以零废话微卡回传。【非工程问答直通退让】若消息不含 [DG-TARGET] 蓝色引用胶囊且属于查天气、日常闲聊等非软件工程请求，立即按普通助手简明作答，严禁运行 donegate 命令、严禁生成画布节点或门禁微卡。"
+        description: "承接画布蓝色引用胶囊与全局工程指令，指派 Worker 子代理挂载工作流执行并以零废话微卡回传。【非工程问答直通退让】若消息不含 [DG-TARGET] 蓝色引用胶囊且属于查天气、日常闲聊等非软件工程请求，立即按普通助手简明作答，严禁运行 donegate 命令、严禁生成画布节点或门禁微卡。"
         order: 85
         plugins:
           - id: compaction
@@ -179,7 +179,37 @@ export const inject = ['webServer'];
 export async function apply(ctx, config) {
   const root = (config && config.projectRoot) || ${JSON.stringify(cleanRoot)};
   const mod = await import(${JSON.stringify(routesModuleUrl)});
-  const handleRoute = mod.createDoneGateWebRouteHandler(root);
+
+  const dispatchSubagent = async ({ sessionId, label, prompt } = {}) => {
+    try {
+      const subagents = ctx.get && ctx.get('subagents');
+      const agents = ctx.get && ctx.get('agents');
+      if (subagents && agents) {
+        let parent = (sessionId && agents.get && agents.get(sessionId)) || (agents.list && agents.list()[0]) || null;
+        if (!parent && sessionId && typeof agents.resume === 'function') {
+          try {
+            const h = await agents.resume({ sessionId });
+            parent = (h && h.agent) || (agents.get && agents.get(sessionId)) || null;
+          } catch (err) { void err; }
+        }
+        if (parent && typeof subagents.startActivation === 'function') {
+          const act = await subagents.startActivation({
+            provider: 'spawn',
+            label: String(label || '补齐工作流依赖').slice(0, 48),
+            prompt: [{ type: 'text', text: String(prompt || '') }],
+            parent,
+            agentPreset: 'dsh-donegate-worker',
+            signal: new AbortController().signal,
+            delivery: 'parent'
+          });
+          return { dispatched: true, name: act.name, childId: act.childId };
+        }
+      }
+    } catch (err) { void err; }
+    return { dispatched: false, fallbackAutoSubmit: true };
+  };
+
+  const handleRoute = mod.createDoneGateWebRouteHandler(root, { dispatchSubagent });
 
   const disposeRoute = ctx.webServer.register({
     kind: 'prefix',

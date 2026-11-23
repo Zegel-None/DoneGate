@@ -1,6 +1,5 @@
-// 工作台全局撤销与重做引擎（Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z，默认保留 100 步完整状态栈，<= 250 行）
-export function buildWbHistoryScript() {
-  return String.raw`
+// 工作台全局撤销与重做引擎（Ctrl+Z / Ctrl+Shift+Z，默认保留 100 步完整状态栈，<= 250 行）
+const WB_HISTORY_SCRIPT = String.raw`
 const WB_HISTORY = {
   undoStack: [],
   redoStack: [],
@@ -103,6 +102,7 @@ function applyHistoryEntry(entry) {
     if (state.selectedGroupId && !validGrpIds.has(state.selectedGroupId)) state.selectedGroupId = null;
     state.editingGroupId = null;
     state.editingCardTitleId = null;
+    state.editingPackId = null;
   } finally {
     WB_HISTORY.restoring = false;
   }
@@ -119,7 +119,7 @@ function syncHistoryButtonsUI() {
   }
   if (rBtn) {
     rBtn.classList.toggle('opacity-45', rLen === 0);
-    rBtn.setAttribute('data-tip', '重做上一步更改 (Ctrl+Y 或 Ctrl+Shift+Z) · 当前可重做 ' + rLen + ' 步');
+    rBtn.setAttribute('data-tip', '重做上一步更改 (Ctrl+Shift+Z)');
   }
 }
 
@@ -146,7 +146,6 @@ function recordHistoryCheckpoint() {
     return;
   }
   if (cur.contentJson === WB_HISTORY.baselineKey) {
-    // Keep view context fresh without wasting an undo step on pure navigation/selection
     WB_HISTORY.baselinePayload.viewCtx = cur.viewCtx;
     return;
   }
@@ -175,7 +174,7 @@ function undoLastAction() {
   renderAll();
   syncHistoryButtonsUI();
   if (typeof persistWorkbenchStateSoon === 'function') persistWorkbenchStateSoon();
-  showToast('已撤销上一步更改（剩余 ' + WB_HISTORY.undoStack.length + '/' + WB_HISTORY.maxSteps + ' 步可退，Ctrl+Y 重做）');
+  showToast('已撤销上一步更改（剩余 ' + WB_HISTORY.undoStack.length + '/' + WB_HISTORY.maxSteps + ' 步可退，Ctrl+Shift+Z 重做）');
   return true;
 }
 
@@ -205,4 +204,7 @@ function setMaxUndoSteps(nextMax) {
   return n;
 }
 `;
+
+export function buildWbHistoryScript() {
+  return WB_HISTORY_SCRIPT;
 }

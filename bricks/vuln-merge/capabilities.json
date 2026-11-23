@@ -31,7 +31,7 @@
       "kind": "count",
       "assertableAs": ["zero"],
       "wired": false,
-      "reason": "供阶段 7 安全覆盖族开发流统一收口去重，待项目安全契约认领"
+      "reason": "供阶段 7 安全覆盖族工作流统一收口去重，待项目安全契约认领"
     }
   ],
   "requiresProject": [],

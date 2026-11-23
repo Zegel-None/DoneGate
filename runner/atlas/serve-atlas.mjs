@@ -1,12 +1,12 @@
-// 零第三方依赖工作台本地实时同步服务（绑定 127.0.0.1，支持实时重扫、工作台状态持久化与基于契约 scope 的目录定位）
+// 零第三方依赖工作台本地实时同步服务（绑定 127.0.0.1，支持实时重扫、外部陈旧项目导入、工作台状态持久化与基于契约 scope 的目录定位）
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import path, { dirname, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../skill/hash.mjs';
 import { exportDashboardHtml, openInSystemBrowser } from '../core/index.mjs';
-import { readSavedWorkbenchState } from './hydrate-workbench.mjs';
+import { buildProjectAtlas, readSavedWorkbenchState } from './contract.mjs';
 import { createDoneGateWebRouteHandler, resolveSafeWorkspaceFolders } from '../dsh/index.mjs';
 export { resolveSafeWorkspaceFolders };
 
@@ -51,6 +51,41 @@ function readReqJson(req, maxBytes = 2 * 1024 * 1024) {
   });
 }
 
+async function handleImportLegacyProject(req, res, root) {
+  try {
+    const body = await readReqJson(req);
+    const rawDir = String((body && (body.dir || body.projectDir || body.path)) || '').trim();
+    if (!rawDir) { sendJson(res, 400, { ok: false, reason: '请填写要导入的外部项目文件夹路径' }); return; }
+    const absDir = resolve(root, rawDir);
+    if (!existsSync(absDir) || !statSync(absDir).isDirectory()) {
+      sendJson(res, 400, { ok: false, reason: '目标路径不存在或不是文件夹：' + rawDir });
+      return;
+    }
+    const extAtlas = buildProjectAtlas(absDir);
+    const projName = extAtlas.project?.name || basename(absDir);
+    const impId = 'imp-' + sha256(absDir).slice(0, 8);
+    const sandbox = {
+      ...(extAtlas.workbench?.hostSandbox || {}),
+      id: impId,
+      name: `导入：${projName}`,
+      repoSlug: `imported/${projName}`,
+      isHost: false,
+      readonly: true,
+      importedPath: absDir,
+      tip: `外部陈旧项目导入（${absDir}）· 共 ${(extAtlas.modules || []).length} 个模块`
+    };
+    const cur = readSavedWorkbenchState(root);
+    const next = { ...cur, importedSandboxes: { ...(cur.importedSandboxes || {}), [impId]: sandbox }, updatedAt: new Date().toISOString() };
+    const dgDir = join(root, '.donegate');
+    mkdirSync(dgDir, { recursive: true });
+    writeFileSync(join(dgDir, 'workbench-state.json'), JSON.stringify(next, null, 2) + '\n', 'utf8');
+    exportDashboardHtml(root, join(dgDir, 'dashboard.html'));
+    sendJson(res, 200, { ok: true, sandbox, project: extAtlas.project });
+  } catch (e) {
+    sendJson(res, 400, { ok: false, reason: e.message });
+  }
+}
+
 export function startAtlasHttpServer(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const targetPort = opts.port ?? computeLivePort(root);
@@ -85,6 +120,11 @@ export function startAtlasHttpServer(projectRoot, opts = {}) {
     if (url === '/api/shutdown' && req.method === 'POST') {
       sendJson(res, 200, { ok: true });
       setTimeout(() => { try { server.close(); } catch (err) { void err; } }, 30);
+      return;
+    }
+
+    if ((url === '/api/workbench/import-project' || url === '/api/atlas/import-project') && req.method === 'POST') {
+      await handleImportLegacyProject(req, res, root);
       return;
     }
 

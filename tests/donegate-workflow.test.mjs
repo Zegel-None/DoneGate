@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dispatchCommand } from '../runner/donegate.mjs';
 import { buildBrowserOpenCommand } from '../runner/core/dashboard.mjs';
@@ -11,6 +12,7 @@ import { checkWriteScopeMandate, collectGitDiffStats, getRunEventHub } from '../
 import { buildWinBatchSpawn } from '../skill/adapters/_shared.mjs';
 import { computeProjectStatus } from '../runner/core/state-calc.mjs';
 import { countEffectiveCodeLines } from '../skill/check-commit-hygiene.mjs';
+import { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS } from '../runner/dsh/contract.mjs';
 import { auditHtmlAntiAiSlop, recommendAestheticProposals } from '../runner/dsh/ui-aesthetics.mjs';
 import { buildPreCommitScript, resolveSkillPrefix } from '../skill/install-hooks.mjs';
 
@@ -263,7 +265,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     }
   });
 
-  it('UI 看板美学引擎精准拦截紫粉渐变/纯 Emoji 反模式并按行业推荐 3 套差异化方案', () => {
+  it('UI 看板美学引擎精准拦截紫粉渐变/纯 Emoji 反模式并提供 4 组 12 套专业方案', () => {
     const badSlop = '<div style="background: linear-gradient(90deg, #8b5cf6, #ec4899)"><button>🚀</button></div>';
     const badAudit = auditHtmlAntiAiSlop(badSlop);
     expect(badAudit.pass).toBe(false);
@@ -271,6 +273,12 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
     const cleanUi = '<div style="background: var(--ui-surface)"><button class="ui-btn">新建工单</button></div>';
     expect(auditHtmlAntiAiSlop(cleanUi).pass).toBe(true);
+
+    expect(AESTHETIC_GROUPS.length).toBe(4);
+    expect(AESTHETIC_PROPOSALS.length).toBe(12);
+    for (const grp of AESTHETIC_GROUPS) {
+      expect(AESTHETIC_PROPOSALS.filter((p) => p.group === grp).length).toBeGreaterThanOrEqual(2);
+    }
 
     const props = recommendAestheticProposals('企业安全合规监控与审批台账', 3);
     expect(props.length).toBe(3);
@@ -299,7 +307,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
   });
 
   it('Windows (win32) 专项回归：跨盘符越界拦截、浏览器 URL 直开、.cmd 含空格双引号转义、白名单环境与中文路径写范围核验', async () => {
-    // 1. Windows 跨盘符 path.win32.relative 越界防护
     const winWorkApp = win32.join('D:', 'Work', 'MyApp');
     const winSys32 = win32.join('C:', 'Windows', 'System32');
     const folders = resolveSafeWorkspaceFolders(winWorkApp, [
@@ -312,7 +319,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     expect(folders[1].blocked).toBe(true);
     expect(folders[2].blocked).toBe(false);
 
-    // 2. openInSystemBrowser / buildBrowserOpenCommand 不再用 path.resolve 破坏 http:// URL 且开启 verbatim 参数
     const urlCmd = buildBrowserOpenCommand('http://127.0.0.1:43180/', 'win32', win32);
     expect(urlCmd.cmd).toBe('cmd.exe');
     expect(urlCmd.args).toEqual(['/d', '/s', '/c', '"start "" "http://127.0.0.1:43180/""']);
@@ -323,7 +329,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     const fileCmd = buildBrowserOpenCommand(winDashHtml, 'win32', win32);
     expect(fileCmd.args[3]).toBe(`"start "" "${winDashHtml}""`);
 
-    // 3. 适配器 Windows .cmd 批处理含空格/括号双路径安全封装
     const winBiomeCmd = win32.join('C:', 'Users', 'Dev User', 'AppData', 'Roaming', 'npm', 'biome.cmd');
     const winTargetSrc = win32.join('D:', 'DoneGate V4(完结门)', 'src');
     const wb = buildWinBatchSpawn(winBiomeCmd, ['check', winTargetSrc]);
@@ -333,7 +338,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     ]);
     expect(wb.extraOpts.windowsVerbatimArguments).toBe(true);
 
-    // 4. 隔离运行器环境白名单保留 Windows 关键目录并合并 Path -> PATH，同时剥离敏感密钥
     const winNodeDir = win32.join('C:', 'Program Files', 'nodejs');
     const winAppData = win32.join('C:', 'Users', 'Dev', 'AppData', 'Roaming');
     const winLocalAppData = win32.join('C:', 'Users', 'Dev', 'AppData', 'Local');
@@ -352,7 +356,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     expect(san.SystemDrive).toBe('C:');
     expect(san.OPENAI_API_KEY).toBeUndefined();
 
-    // 5. 中文路径 git diff (core.quotepath=false) 写范围校验 + /file-preview 目录 EISDIR 与同前缀越界防护
     const baseTmp = mkdtempSync(join(tmpdir(), 'dg-win-audit-'));
     const dir = join(baseTmp, 'proj');
     const siblingDir = join(baseTmp, 'proj-secret');
@@ -393,7 +396,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     }
   });
 
-  it("混合选配与节点级即时派生 HTTP 闭环：Worker 403 拦截、需求变更局部派生、底座锁 409 拦截与一键沉淀宏", async () => {
+  it("混合选配与节点级即时派生 HTTP 闭环：Worker 403 拦截、需求变更局部派生、底座锁 409 拦截与一键沉淀工作流", async () => {
     const dir = mkdtempSync(join(tmpdir(), "dg-jit-http-"));
     dispatchCommand(["init", "."], dir);
     mkdirSync(join(dir, "src/core"), { recursive: true });
@@ -408,7 +411,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
         modules: [{ name: "核心运算模块", role: "逻辑", path: "src/core/calc.mjs" }]
       };
 
-      // 1) Worker 角色越权请求 -> 403 WORKER_CANNOT_MUTATE_WORKFLOW
       const rWorker = await fetch(`${srv.url}donegate/api/jit/mutate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "worker" },
@@ -418,7 +420,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       const jWorker = await rWorker.json();
       expect(jWorker.code).toBe("WORKER_CANNOT_MUTATE_WORKFLOW");
 
-      // 2) Super Agent 自动选配 + 按新需求即时派生
       const rAssign = await fetch(`${srv.url}donegate/api/jit/assign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
@@ -444,7 +445,6 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(jMut.binding.tplIds).toContain("tpl-gitleaks");
       expect(jMut.binding.tplIds).toContain("tpl-playwright");
 
-      // 3) 试图删除底座护栏 tpl-anti-slop -> 409 MANDATORY_FLOOR_LOCKED
       const rFloor = await fetch(`${srv.url}donegate/api/jit/mutate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
@@ -455,19 +455,115 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(jFloor.code).toBe("MANDATORY_FLOOR_LOCKED");
       expect(jFloor.requiresHumanApproval).toBe(true);
 
-      // 4) 一键另存为预置宏 -> 写入 workflows/*.workflow.json
+      // 4) 一键另存为预置工作流 -> 写入 workflows/*.workflow.json
       const rPromo = await fetch(`${srv.url}donegate/api/jit/promote-macro`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DoneGate-Role": "human" },
-        body: JSON.stringify({ nodeId: calcNode.id, macroId: "calc-fx-ui-macro", name: "计算器公式汇率全栈宏" })
+        body: JSON.stringify({ nodeId: calcNode.id, macroId: "calc-fx-ui-macro", name: "计算器公式汇率全栈工作流" })
       });
       expect(rPromo.status).toBe(200);
       const jPromo = await rPromo.json();
       expect(jPromo.ok).toBe(true);
-      expect(JSON.parse(readFileSync(join(dir, "workflows/calc-fx-ui-macro.workflow.json"), "utf8")).name).toBe("计算器公式汇率全栈宏");
+      expect(JSON.parse(readFileSync(join(dir, "workflows/calc-fx-ui-macro.workflow.json"), "utf8")).name).toBe("计算器公式汇率全栈工作流");
     } finally {
       srv.server.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('/donegate/api/* 同源接口对齐：ping、atlas/refresh、github/star(204/401)、project/init+import 与单节点依赖补齐过滤', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dg-api-align-'));
+    const workDir = join(base, 'workspace');
+    const extDir = join(base, 'legacy-shop');
+    const emptyHome = join(base, 'home');
+    mkdirSync(workDir, { recursive: true });
+    mkdirSync(join(extDir, 'src'), { recursive: true });
+    mkdirSync(emptyHome, { recursive: true });
+    writeFileSync(join(extDir, 'package.json'), '{"name":"legacy-shop"}\n', 'utf8');
+    writeFileSync(join(extDir, 'src/cart.mjs'), 'export const total = (xs) => xs.length;\n', 'utf8');
+
+    const mockGh = http.createServer((req, res) => {
+      res.writeHead(req.headers.authorization === 'Bearer tok-204' ? 204 : 401);
+      res.end();
+    });
+    await new Promise((r) => mockGh.listen(0, '127.0.0.1', r));
+    const prevBase = process.env.DG_GITHUB_API_BASE;
+    const prevTok = process.env.GITHUB_TOKEN;
+    const prevHome = process.env.DG_TEST_HOME;
+    process.env.DG_GITHUB_API_BASE = `http://127.0.0.1:${mockGh.address().port}`;
+    process.env.DG_TEST_HOME = emptyHome;
+
+    const srv = await startAtlasHttpServer(workDir, { port: 0, idleExitSec: 15 });
+    try {
+      const rPing = await fetch(`${srv.url}donegate/api/ping`);
+      const jPing = await rPing.json();
+      expect(jPing.ok).toBe(true);
+      expect(jPing.mode).toBe('dsh-web');
+
+      const rInit = await fetch(`${srv.url}donegate/api/project/init`, { method: 'POST', body: '{}' });
+      const jInit = await rInit.json();
+      expect(jInit.ok).toBe(true);
+      expect(existsSync(join(workDir, 'INTENT.md'))).toBe(true);
+
+      const rRef = await fetch(`${srv.url}donegate/api/atlas/refresh`, { method: 'POST', body: '{}' });
+      const jRef = await rRef.json();
+      expect(jRef.ok).toBe(true);
+      expect(existsSync(join(workDir, '.donegate/dashboard.html'))).toBe(true);
+
+      const rImp = await fetch(`${srv.url}donegate/api/project/import`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetDir: extDir })
+      });
+      const jImp = await rImp.json();
+      expect(jImp.ok).toBe(true);
+      expect(jImp.sandbox.id).toBe('imp-legacy-shop');
+      expect(jImp.sandbox.importedFrom).toBe(resolve(extDir));
+      expect(jImp.importedSandboxes.length).toBe(1);
+
+      process.env.GITHUB_TOKEN = 'tok-401';
+      const r401 = await fetch(`${srv.url}donegate/api/github/star`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoSlug: 'biomejs/biome', star: true })
+      });
+      const j401 = await r401.json();
+      expect(j401.ok).toBe(false);
+      expect(j401.unauthenticated).toBe(true);
+
+      process.env.GITHUB_TOKEN = 'tok-204';
+      const r204 = await fetch(`${srv.url}donegate/api/github/star`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoSlug: 'lovstudio/lovinsp', star: true })
+      });
+      const j204 = await r204.json();
+      expect(j204.ok).toBe(true);
+      expect(j204.via).toBe('github-rest');
+
+      const rOnly = await fetch(`${srv.url}donegate/api/workflow-deps/provision`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          onlyNodeId: 'n-target', spawnSubagent: true,
+          pack: {
+            id: 'wf-single', name: '单节点测试工作流',
+            deps: [{ id: 'global-dep', bin: 'no-such-global-bin', allowHostEnv: false }],
+            nodes: [
+              { id: 'n-target', title: '目标卡', installSpec: { id: 'target-cli', bin: 'no-such-target-bin', allowHostEnv: false } },
+              { id: 'n-skip', title: '旁路卡', installSpec: { id: 'skip-cli', bin: 'no-such-skip-bin', allowHostEnv: false } }
+            ]
+          }
+        })
+      });
+      const jOnly = await rOnly.json();
+      expect(jOnly.ready).toBe(false);
+      expect(jOnly.items.map((x) => x.id)).toEqual(['target-cli']);
+      expect(jOnly.subagentDispatched).toBe(false);
+      expect(jOnly.fallbackAutoSubmit).toBe(true);
+    } finally {
+      if (prevBase === undefined) delete process.env.DG_GITHUB_API_BASE; else process.env.DG_GITHUB_API_BASE = prevBase;
+      if (prevTok === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = prevTok;
+      if (prevHome === undefined) delete process.env.DG_TEST_HOME; else process.env.DG_TEST_HOME = prevHome;
+      srv.server.close();
+      mockGh.close();
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });

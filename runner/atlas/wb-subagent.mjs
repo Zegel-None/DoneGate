@@ -1,6 +1,5 @@
 // 右侧交互式子代理侧边栏、自然语言样式/拓扑调优与开源工具安装确认
-export function buildWbSubagent() {
-  return [
+const WB_SUBAGENT_LINES = [
   "    function renderRightSidebar() {",
   "      const sb = document.getElementById('right-sidebar');",
   "      const sp = document.getElementById('right-splitter');",
@@ -166,7 +165,7 @@ export function buildWbSubagent() {
   "        return;",
   "      }",
   "",
-  "      if (state.page === 'sandbox' && sel.kind === 'single' && sel.node && !isSandboxReadOnly() && /改需求|新需求|派生|微调开发流|选配|另存为宏|沉淀为宏/.test(text) && typeof window.handleSubagentJitChat === 'function') {",
+  "      if (state.page === 'sandbox' && sel.kind === 'single' && sel.node && !isSandboxReadOnly() && /改需求|新需求|派生|微调工作流|选配|另存为工作流|沉淀为工作流/.test(text) && typeof window.handleSubagentJitChat === 'function') {",
   "        window.handleSubagentJitChat(sel.node, text);",
   "        return;",
   "      }",
@@ -544,5 +543,7 @@ export function buildWbSubagent() {
   "    }",
   "",
   "    // ============================================================================"
-  ].join('\n');
+];
+export function buildWbSubagent() {
+  return WB_SUBAGENT_LINES.join('\n');
 }

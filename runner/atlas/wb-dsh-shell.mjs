@@ -1,6 +1,5 @@
 // DSH 全屏沉浸式外壳装配、Alt+单击拾取监听、卡包抽卡式零缝隙主对话复刻抽屉与实时明暗主题同步（零外网依赖）
-export function buildWbDshShell() {
-  const fn = function initDoneGateDshIntegration() {
+const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
     document.body.classList.add(IS_DSH_EMBED ? 'is-dsh-embed' : 'has-dsh-dock');
     state.rightOpen = false;
     const hostTheme = DSH_URL_PARAMS.get('theme');
@@ -275,9 +274,21 @@ export function buildWbDshShell() {
       });
     }
 
+    const swallowAltFollowup = (ev) => {
+      if (ev.altKey || Date.now() < (dshRuntime._suppressAltClickUntil || 0)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+      }
+    };
+    document.addEventListener('click', swallowAltFollowup, true);
+    document.addEventListener('pointerup', swallowAltFollowup, true);
+
     document.addEventListener('pointerdown', (e) => {
       if (e.altKey && e.button === 0) {
-        const btn = e.target.closest('button');
+        const btn = e.target.closest('button, select');
+        const wfRow = !btn ? e.target.closest('[data-switch-pack]') : null;
+        const repoRow = (!btn && !wfRow) ? e.target.closest('[data-view-repo]') : null;
         const txt = e.target.closest('[data-sel-text]');
         const loopPill = e.target.closest('[data-loop-link]');
         const wireEl = e.target.closest('[data-link-id], [data-sb-link]');
@@ -285,9 +296,21 @@ export function buildWbDshShell() {
         const grpEl = e.target.closest('[data-drag-group], [data-group-id]');
         let q = null;
         if (btn && !btn.hasAttribute('data-dsh-quote')) {
-          const lbl = (btn.textContent || btn.getAttribute('aria-label') || '按钮').trim();
-          const ckey = btn.id ? ('id:' + btn.id) : ('tb:' + (btn.getAttribute('data-tb-act') || lbl));
-          q = buildDshQuoteTarget({ kind: 'button', id: ckey, title: lbl, controlRef: ckey, desc: '界面控件按钮「' + lbl + '」' });
+          const lbl = (btn.textContent || '').replace(/\s+/g, ' ').trim() || (btn.getAttribute('aria-label') || '').trim() || (btn.getAttribute('data-tip') || '').split(/[：·(]/)[0].trim() || '控件';
+          const ckey = btn.getAttribute('data-ctrl-id') || (btn.id ? ('id:' + btn.id) : ('tb:' + (btn.getAttribute('data-tb-act') || lbl)));
+          q = buildDshQuoteTarget({ kind: 'button', id: ckey, title: lbl, controlRef: ckey, desc: '界面控件「' + lbl + '」' });
+        } else if (wfRow) {
+          const pid = wfRow.getAttribute('data-switch-pack');
+          const pk = WORKFLOW_PACKS[pid];
+          const safeId = String(pid || 'default').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const wfTitle = (pk && pk.name) || (wfRow.textContent || '').replace(/\s+/g, ' ').trim() || pid;
+          q = buildDshQuoteTarget({ kind: 'workflow', id: pid, title: wfTitle, scopes: ['workflows/.deps/' + safeId + '/'], desc: '工作流「' + wfTitle + '」' });
+        } else if (repoRow) {
+          const rid = repoRow.getAttribute('data-view-repo');
+          const rp = REPO_SANDBOXES[rid];
+          const rpTitle = (rp && rp.name) || (repoRow.textContent || '').replace(/\s+/g, ' ').trim() || rid;
+          const rpScopes = (rp && rp.targetDir) ? [rp.targetDir] : ((rp && rp.isHost) ? ['./'] : ['../' + rid + '/']);
+          q = buildDshQuoteTarget({ kind: 'project', id: rid, title: rpTitle, scopes: rpScopes, desc: '项目看板「' + rpTitle + '」' });
         } else if (loopPill || wireEl) {
           const lid = loopPill ? loopPill.getAttribute('data-loop-link') : (wireEl.getAttribute('data-link-id') || wireEl.getAttribute('data-sb-link'));
           q = buildDshQuoteTarget({ kind: 'wire', id: lid, title: '连线 ' + lid, desc: '画布上下游连线' });
@@ -306,7 +329,14 @@ export function buildWbDshShell() {
           const k = txt.getAttribute('data-sel-text');
           q = buildDshQuoteTarget({ kind: 'text', id: k, title: (txt.textContent || '').trim(), textKey: k });
         }
-        if (q) { e.preventDefault(); e.stopPropagation(); emitDshQuote(q); return; }
+        if (q) {
+          dshRuntime._suppressAltClickUntil = Date.now() + 800;
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          emitDshQuote(q);
+          return;
+        }
       }
       if (!e.target.closest('.dg-micro-card, .dg-micro-pill, #ctx-root-menu')) {
         let closedExplain = false;
@@ -411,6 +441,8 @@ export function buildWbDshShell() {
     }
     renderDshStandaloneShell();
     renderDshCanvasAnchors();
-  };
-  return `(${fn.toString()})();`;
+};
+
+export function buildWbDshShell() {
+  return `(${WB_DSH_SHELL_FN.toString()})();`;
 }

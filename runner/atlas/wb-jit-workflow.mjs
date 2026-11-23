@@ -1,6 +1,5 @@
-// 开发看板「宏打底 + 节点级即时派生 (JIT)」前端控制器：卡片开发流胶囊、需求变更派生微调、底座只增不减锁审批与一键沉淀为预置宏
-export function buildWbJitWorkflowScript() {
-  return String.raw`
+// 项目看板「基准工作流打底 + 节点级即时派生 (JIT)」前端控制器：卡片工作流胶囊、Agent根据需求微调双窗口对比、底座只增不减锁审批与一键另存为预置工作流
+const WB_JIT_WORKFLOW_SCRIPT = String.raw`
 (function initDoneGateJitWorkflowModule() {
   const JIT_STYLE_ID = 'dg-jit-workflow-styles';
   if (typeof document !== 'undefined' && !document.getElementById(JIT_STYLE_ID)) {
@@ -19,6 +18,7 @@ export function buildWbJitWorkflowScript() {
       '.dg-jit-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 8px; background: var(--surface); border: 0.5px solid var(--border-subtle); font-size: 11.5px; color: var(--text-main); }',
       '.dg-jit-chip.is-floor { border-color: var(--text-secondary); font-weight: 600; }',
       '.dg-jit-chip.is-added { border-style: dashed; border-color: var(--ok); }',
+      '.dg-jit-chip.is-diff-green { border: 1.5px solid #16a34a; background: var(--ok-bg); color: var(--ok); font-weight: 600; }',
       '.dg-jit-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 0.5px solid var(--border-strong); background: var(--surface-soft); color: var(--text-main); font-size: 12px; outline: none; }',
       '.dg-jit-btn { padding: 6px 12px; border-radius: 8px; border: 0.5px solid var(--border-strong); background: var(--surface-soft); color: var(--text-main); font-size: 11.5px; font-weight: 500; cursor: pointer; }',
       '.dg-jit-btn.is-solid { background: var(--primary); color: var(--primary-fg, #ffffff); border-color: transparent; }',
@@ -64,8 +64,27 @@ function inferClientDefaultMacroForNode(node) {
     deltaCount: 0,
     depsReady: (depSum.missingCount || 0) === 0,
     missingDepsCount: depSum.missingCount || 0,
-    reason: '总控按模块职责与路径自动预选基准预置宏'
+    reason: '总控按模块职责与路径自动预选基准预置工作流'
   };
+}
+
+function deriveAutonomousTunedTplIds(node, wf, baseTplIds) {
+  if (wf && (wf.mode === 'jit-forked' || wf.mode === 'jit-synthesized' || (Array.isArray(wf.addedTplIds) && wf.addedTplIds.length > 0))) {
+    return Array.isArray(wf.tplIds) && wf.tplIds.length ? wf.tplIds : baseTplIds;
+  }
+  const hay = [(node && node.title) || '', (node && node.tip) || '', ...((node && node.scopePaths) || []), ...(((node && node.modules) || []).map((m) => [m.name, m.role, m.path, m.vibeLabel].filter(Boolean).join(' ')))].join(' ').toLowerCase();
+  const pre = [], post = [];
+  if (/规格|契约|立约|设计|架构|解析|路由|核心|openspec|contract|spec|core/.test(hay) && !baseTplIds.includes('tpl-openspec')) pre.push('tpl-openspec');
+  if (/文案|润色|说明|文档|提示|markdown|\.md|humanize/.test(hay) && !baseTplIds.includes('tpl-deai-polish')) pre.push('tpl-deai-polish');
+  if (/接口|鉴权|密钥|安全|收银|支付|订单|钩子|分发|外仓|同步|api|auth|pay|hook|serve/.test(hay) && !baseTplIds.includes('tpl-gitleaks')) post.push('tpl-gitleaks');
+  if (/界面|画布|看板|前端|页面|视图|弹窗|按钮|交互|ui|web|dom|tsx|jsx|html/.test(hay) && !baseTplIds.includes('tpl-playwright')) post.push('tpl-playwright');
+  if (/语法|模块|脚本|转接|适配|组件|校验|门禁|ts|js|mjs/.test(hay) && !baseTplIds.includes('tpl-biome-knip')) post.push('tpl-biome-knip');
+  if (/发版|上线|灰度|总装|生产|迁移|build-public|release/.test(hay) && !baseTplIds.includes('tpl-human-gate')) post.push('tpl-human-gate');
+  if (!pre.length && !post.length) {
+    const extra = ['tpl-biome-knip', 'tpl-openspec', 'tpl-gitleaks'].find((id) => !baseTplIds.includes(id) && BLOCK_TEMPLATES[id]);
+    if (extra) post.push(extra);
+  }
+  return [...new Set([...pre, ...baseTplIds, ...post])].filter((id) => BLOCK_TEMPLATES[id] || baseTplIds.includes(id));
 }
 
 window.resolveClientComponentWorkflow = function resolveClientComponentWorkflow(node) {
@@ -87,14 +106,14 @@ window.renderSandboxWorkflowBadgeHtml = function renderSandboxWorkflowBadgeHtml(
   const dotColor = wf.depsReady === false ? 'var(--warn)' : 'var(--ok)';
   const deltaNum = wf.deltaCount || (wf.addedTplIds || []).length;
   const label = isForked
-    ? ('⚡ ' + (wf.baseMacroName || '派生开发流') + ' (+' + deltaNum + ')')
-    : ('开发流：' + (wf.baseMacroName || '基准护栏'));
+    ? ('⚡ ' + (wf.baseMacroName || '派生工作流') + ' (+' + deltaNum + ')')
+    : ('工作流：' + (wf.baseMacroName || '基准护栏'));
   const totalCount = (wf.tplIds || []).length;
   const tip = isForked
-    ? ('已按节点新需求局部派生（共 ' + totalCount + ' 个节点，底座护栏已锁死）· 点击打开开发流微调与沉淀面板')
-    : ((wf.reason || '总控自动选配') + '（共 ' + totalCount + ' 个节点）· 点击可按新需求局部派生');
+    ? ('已按节点需求局部派生（共 ' + totalCount + ' 个节点，底座护栏已锁死）· 点击打开工作流双窗口对比面板')
+    : ((wf.reason || '总控自动选配') + '（共 ' + totalCount + ' 个节点）· 点击查看基准与 Agent 微调工作流');
   const rightPart = (!ro && isForked)
-    ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有开发流一键另存为全局预置宏">💾 存宏</button>')
+    ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有工作流一键另存为预置工作流">💾 存工作流</button>')
     : '<span class="text-[10px] shrink-0" style="color:var(--text-muted);" data-tip="底座护栏只增不减锁已生效">🔒底座</span>';
   return '<div class="dg-sb-wf-bar" data-stop-drag="1">'
     + '<button type="button" class="dg-sb-wf-pill ' + (isForked ? 'is-forked' : '') + '" data-jit-open="' + esc(node.id) + '" data-stop-drag="1" data-tip="' + esc(tip) + '">'
@@ -147,7 +166,7 @@ function applyOfflineJitMutation(node, opts) {
     addedTplIds: added,
     deltaCount: added.length,
     lastRequirement: String(opts.requirementText || '').trim(),
-    reason: opts.requirementText ? ('已按新需求「' + String(opts.requirementText).slice(0, 36) + '」局部派生') : '已更新节点私有开发流',
+    reason: opts.requirementText ? ('已按需求「' + String(opts.requirementText).slice(0, 36) + '」局部派生') : '已更新节点私有工作流',
     updatedAt: new Date().toISOString()
   };
   state.componentWorkflows[node.id] = next;
@@ -170,7 +189,7 @@ window.requestJitAssignNode = async function requestJitAssignNode(nodeId, prefer
         state.componentWorkflows[node.id] = j.binding;
         renderCanvas();
         if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-        showToast('🎯 已为「' + node.title + '」选配：' + j.binding.baseMacroName);
+        showToast('🎯 已为「' + node.title + '」切换基准工作流：' + j.binding.baseMacroName);
         return j.binding;
       }
     } catch (err) { void err; }
@@ -187,7 +206,7 @@ window.requestJitAssignNode = async function requestJitAssignNode(nodeId, prefer
   state.componentWorkflows[node.id] = fallback;
   renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('🎯 已为「' + node.title + '」挂载开发流：' + fallback.baseMacroName);
+  showToast('🎯 已为「' + node.title + '」挂载基准工作流：' + fallback.baseMacroName);
   return fallback;
 };
 
@@ -205,7 +224,7 @@ window.requestJitAssignAllSandbox = async function requestJitAssignAllSandbox() 
       if (r.ok && j && j.ok && j.bindings) {
         state.componentWorkflows = { ...(state.componentWorkflows || {}), ...j.bindings };
         renderCanvas();
-        showToast('🎯 总控已为全部 ' + j.assignedCount + ' 个看板组件自动配妥最佳开发流');
+        showToast('🎯 总控已为全部 ' + j.assignedCount + ' 个看板组件自动配妥最佳工作流');
         return;
       }
     } catch (err) { void err; }
@@ -213,7 +232,7 @@ window.requestJitAssignAllSandbox = async function requestJitAssignAllSandbox() 
   if (!state.componentWorkflows) state.componentWorkflows = {};
   nodes.forEach((n) => { state.componentWorkflows[n.id] = inferClientDefaultMacroForNode(n); });
   renderCanvas();
-  showToast('🎯 总控已为全部 ' + nodes.length + ' 个组件匹配开发流');
+  showToast('🎯 总控已为全部 ' + nodes.length + ' 个组件匹配工作流');
 };
 
 window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts = {}) {
@@ -228,17 +247,14 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': opts.actorRole || 'super-agent' },
         body: JSON.stringify({
-          nodeId: node.id,
-          node,
-          requirementText: opts.requirementText || '',
-          addTplIds: opts.addTplIds,
-          removeTplIds: opts.removeTplIds,
+          nodeId: node.id, node, requirementText: opts.requirementText || '',
+          addTplIds: opts.addTplIds, removeTplIds: opts.removeTplIds,
           humanApprovedFloorRemoval: Boolean(opts.humanApprovedFloorRemoval)
         })
       });
       const j = await r.json();
       if (!r.ok || !j.ok) {
-        jitUiState.lastError = j.reason || j.error || '开发流微调被安全护栏拦截';
+        jitUiState.lastError = j.reason || j.error || '工作流微调被安全护栏拦截';
         if (j.requiresHumanApproval) {
           jitUiState.pendingApproval = { nodeId: node.id, blockedTplIds: j.blockedTplIds || [], blockedTitles: j.blockedTitles || [], requirementText: opts.requirementText || '' };
         }
@@ -250,7 +266,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
       state.componentWorkflows[node.id] = j.binding;
       renderCanvas();
       if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-      showToast('⚡ 「' + node.title + '」已按新需求局部派生（+' + j.binding.deltaCount + ' 节点）');
+      showToast('⚡ 「' + node.title + '」已局部微调工作流（+' + j.binding.deltaCount + ' 节点）');
       return j;
     } catch (err) { void err; }
   }
@@ -266,7 +282,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
   }
   renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('⚡ 「' + node.title + '」已按新需求局部派生（+' + off.binding.deltaCount + ' 节点）');
+  showToast('⚡ 「' + node.title + '」已局部微调工作流（+' + off.binding.deltaCount + ' 节点）');
   return off;
 };
 
@@ -274,15 +290,19 @@ window.requestJitPromoteToMacro = async function requestJitPromoteToMacro(nodeId
   const node = getActiveNodesList().find((n) => n.id === nodeId);
   if (!node) return null;
   const wf = window.resolveClientComponentWorkflow(node);
-  const macroName = String(customName || (node.title + '沉淀开发流')).trim();
+  const basePk = (wf.baseMacroId && WORKFLOW_PACKS[wf.baseMacroId]) || Object.values(WORKFLOW_PACKS)[0];
+  const baseTplIds = basePk && Array.isArray(basePk.nodes) ? basePk.nodes.map((n) => n.tplId).filter((t) => t && t !== 'tpl-blank') : ['tpl-anti-slop'];
+  const tunedTplIds = deriveAutonomousTunedTplIds(node, wf, baseTplIds);
+  const macroName = String(customName || (node.title + '沉淀工作流')).trim();
   if (/^https?:$/i.test(location.protocol)) {
     try {
       await window.requestJitAssignNode(node.id, wf.baseMacroId);
-      if (wf.mode === 'jit-forked' || (wf.addedTplIds && wf.addedTplIds.length)) {
+      const extraTpls = tunedTplIds.filter((id) => !baseTplIds.includes(id));
+      if (wf.mode === 'jit-forked' || extraTpls.length) {
         await fetch('/donegate/api/jit/mutate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': 'super-agent' },
-          body: JSON.stringify({ nodeId: node.id, node, requirementText: wf.lastRequirement || '', addTplIds: wf.addedTplIds || [] })
+          body: JSON.stringify({ nodeId: node.id, node, requirementText: wf.lastRequirement || '', addTplIds: extraTpls })
         });
       }
       const r = await fetch('/donegate/api/jit/promote-macro', {
@@ -298,39 +318,35 @@ window.requestJitPromoteToMacro = async function requestJitPromoteToMacro(nodeId
         renderLeftDrawer();
         renderCanvas();
         if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-        showToast('💾 已沉淀为全局宏「' + j.macro.name + '」，可在「开发流」页随时复用');
+        showToast('💾 已沉淀为预置工作流「' + j.macro.name + '」，可在「工作流」页随时复用');
         return j.macro;
       }
     } catch (err) { void err; }
   }
   const macroId = 'macro-' + node.id.replace(/[^a-zA-Z0-9_-]/g, '-') + '-' + Date.now().toString(36).slice(-3);
-  const builtNodes = (wf.tplIds || ['tpl-anti-slop']).map((tplId, idx) => instantiateWorkshopNode(tplId, 'm-' + (idx + 1), 48 + idx * 304, 96));
+  const builtNodes = (tunedTplIds.length ? tunedTplIds : ['tpl-anti-slop']).map((tplId, idx) => instantiateWorkshopNode(tplId, 'm-' + (idx + 1), 48 + idx * 304, 96));
   const builtLinks = [];
   for (let i = 0; i < builtNodes.length - 1; i++) {
-    const a = builtNodes[i];
-    const b = builtNodes[i + 1];
-    if (a.outputs[0] && b.inputs[0]) {
-      builtLinks.push({ id: 'ml-' + (i + 1), fromNode: a.id, fromSlot: a.outputs[0].id, toNode: b.id, toSlot: b.inputs[0].id, type: a.outputs[0].type || 'ANY' });
-    }
+    const a = builtNodes[i]; const b = builtNodes[i + 1];
+    if (a.outputs[0] && b.inputs[0]) builtLinks.push({ id: 'ml-' + (i + 1), fromNode: a.id, fromSlot: a.outputs[0].id, toNode: b.id, toSlot: b.inputs[0].id, type: a.outputs[0].type || 'ANY' });
   }
-  const newMacro = { id: macroId, group: '项目沉淀宏', name: macroName, tip: '由组件「' + node.title + '」一键沉淀复用', nodes: builtNodes, links: builtLinks, groups: [] };
+  const newMacro = { id: macroId, group: '项目沉淀工作流', name: macroName, tip: '由组件「' + node.title + '」一键沉淀复用', nodes: builtNodes, links: builtLinks, groups: [] };
   WORKFLOW_PACKS[macroId] = newMacro;
-  if (!WORKFLOW_GROUPS.includes('项目沉淀宏')) WORKFLOW_GROUPS.push('项目沉淀宏');
-  state.componentWorkflows[node.id] = { ...wf, mode: 'macro', baseMacroId: macroId, baseMacroName: macroName, addedTplIds: [], deltaCount: 0 };
-  renderLeftDrawer();
-  renderCanvas();
+  if (!WORKFLOW_GROUPS.includes('项目沉淀工作流')) WORKFLOW_GROUPS.push('项目沉淀工作流');
+  state.componentWorkflows[node.id] = { ...wf, mode: 'macro', baseMacroId: macroId, baseMacroName: macroName, tplIds: tunedTplIds, addedTplIds: [], deltaCount: 0 };
+  renderLeftDrawer(); renderCanvas();
   if (jitUiState.modalNodeId === node.id) renderJitWorkflowModal();
-  showToast('💾 已另存为预置宏「' + macroName + '」');
+  showToast('💾 已另存为预置工作流「' + macroName + '」');
   return newMacro;
 };
 
 window.handleSubagentJitChat = async function handleSubagentJitChat(node, text) {
-  if (/另存为宏|沉淀为宏|保存为工作流/.test(text)) {
+  if (/另存为工作流|沉淀为工作流|保存为工作流/.test(text)) {
     const saved = await window.requestJitPromoteToMacro(node.id);
     if (saved) {
       state.chatMessages.push({
         role: 'agent',
-        html: '已将节点「<b>' + esc(node.title) + '</b>」的私有开发流一键沉淀为全局预置宏「<b>' + esc(saved.name) + '</b>」，已同步至「开发流」列表供所有后续组件直接套用。'
+        html: '已将节点「<b>' + esc(node.title) + '</b>」的私有工作流一键沉淀为预置工作流「<b>' + esc(saved.name) + '</b>」，已同步至「工作流」列表供后续组件直接复用。'
       });
       renderRightSidebar();
       return true;
@@ -341,7 +357,7 @@ window.handleSubagentJitChat = async function handleSubagentJitChat(node, text) 
     const chainNames = (res.binding.tplIds || []).map((id) => (BLOCK_TEMPLATES[id] && BLOCK_TEMPLATES[id].title) || id).join(' → ');
     state.chatMessages.push({
       role: 'agent',
-      html: '⚡ <b>总控已完成节点级即时派生</b>（执行端 Worker 只读锁定）：<br>• 适用组件：<b>' + esc(node.title) + '</b><br>• 当前开发流：<code>' + esc(chainNames) + '</code><br>• 底座护栏锁：<code>防 AI 手搓护栏套件</code> 保持锁死不可删减。'
+      html: '⚡ <b>总控已完成节点级即时派生</b>（执行端 Worker 只读锁定）：<br>• 适用组件：<b>' + esc(node.title) + '</b><br>• 当前工作流：<code>' + esc(chainNames) + '</code><br>• 底座护栏锁：<code>防 AI 手搓护栏套件</code> 保持锁死不可删减。'
     });
     renderRightSidebar();
     return true;
@@ -364,10 +380,7 @@ window.closeJitWorkflowModal = function closeJitWorkflowModal() {
 
 function renderJitWorkflowModal() {
   let rootEl = document.getElementById('dg-jit-modal-root');
-  if (!jitUiState.modalNodeId) {
-    if (rootEl) rootEl.remove();
-    return;
-  }
+  if (!jitUiState.modalNodeId) { if (rootEl) rootEl.remove(); return; }
   const node = getActiveNodesList().find((n) => n.id === jitUiState.modalNodeId);
   if (!node) { window.closeJitWorkflowModal(); return; }
   if (!rootEl) {
@@ -378,22 +391,30 @@ function renderJitWorkflowModal() {
   }
   const wf = window.resolveClientComponentWorkflow(node);
   const floorSet = new Set(['tpl-anti-slop', ...(wf.mandatoryFloorTplIds || [])]);
-  const addedSet = new Set(wf.addedTplIds || []);
   const allMacros = Object.values(WORKFLOW_PACKS);
-  const candidateBricks = Object.values(BLOCK_TEMPLATES).filter((b) => b && !b.isBlank && !(wf.tplIds || []).includes(b.tplId)).slice(0, 8);
+  const basePk = (wf.baseMacroId && WORKFLOW_PACKS[wf.baseMacroId]) || allMacros[0];
+  const rawBaseTplIds = basePk && Array.isArray(basePk.nodes) ? basePk.nodes.map((n) => n.tplId).filter((t) => t && t !== 'tpl-blank') : ['tpl-anti-slop', 'tpl-router-rule'];
+  const baseTplIds = rawBaseTplIds.includes('tpl-anti-slop') ? rawBaseTplIds : ['tpl-anti-slop', ...rawBaseTplIds];
+  const baseSet = new Set(baseTplIds);
+  const tunedTplIds = deriveAutonomousTunedTplIds(node, wf, baseTplIds);
+  const candidateBricks = Object.values(BLOCK_TEMPLATES).filter((b) => b && !b.isBlank && !tunedTplIds.includes(b.tplId)).slice(0, 8);
 
-  const chainHtml = (wf.tplIds || []).map((tplId, idx) => {
+  const baseChainHtml = baseTplIds.map((tplId, idx) => {
     const tpl = BLOCK_TEMPLATES[tplId] || { title: tplId };
     const isFloor = floorSet.has(tplId);
-    const isAdded = addedSet.has(tplId);
     const arrow = idx > 0 ? '<span class="text-xs opacity-60">→</span>' : '';
-    const icon = isFloor ? '🔒' : (isAdded ? '⚡' : '•');
-    const rmTitle = isFloor ? '底座护栏默认锁死（点击将触发人工审批保护）' : '移除此增量节点';
-    return arrow
-      + '<span class="dg-jit-chip ' + (isFloor ? 'is-floor ' : '') + (isAdded ? 'is-added' : '') + '">'
-      + '<span>' + icon + ' ' + esc(tpl.title || tplId) + '</span>'
-      + '<button type="button" class="opacity-65 hover:opacity-100 px-1 text-[11px]" data-jit-rm-tpl="' + esc(tplId) + '" title="' + rmTitle + '">×</button>'
-      + '</span>';
+    return arrow + '<span class="dg-jit-chip ' + (isFloor ? 'is-floor' : '') + '"><span>' + (isFloor ? '🔒 ' : '• ') + esc(tpl.title || tplId) + '</span></span>';
+  }).join('');
+
+  const tunedChainHtml = tunedTplIds.map((tplId, idx) => {
+    const tpl = BLOCK_TEMPLATES[tplId] || { title: tplId };
+    const isFloor = floorSet.has(tplId);
+    const isDiff = !baseSet.has(tplId);
+    const arrow = idx > 0 ? '<span class="text-xs opacity-60">→</span>' : '';
+    const icon = isDiff ? '⚡' : (isFloor ? '🔒' : '•');
+    const cls = (isFloor ? 'is-floor ' : '') + (isDiff ? 'is-diff-green' : '');
+    const rmTitle = isFloor ? '底座护栏默认锁死（点击将触发人工审批保护）' : '移除此微调节点';
+    return arrow + '<span class="dg-jit-chip ' + cls + '"><span>' + icon + ' ' + esc(tpl.title || tplId) + '</span><button type="button" class="opacity-65 hover:opacity-100 px-1 text-[11px]" data-jit-rm-tpl="' + esc(tplId) + '" title="' + rmTitle + '">×</button></span>';
   }).join('');
 
   const approvalHtml = jitUiState.pendingApproval
@@ -414,109 +435,88 @@ function renderJitWorkflowModal() {
   ).join('');
 
   const jumpBtnHtml = (wf.baseMacroId && WORKFLOW_PACKS[wf.baseMacroId])
-    ? ('<button type="button" class="dg-jit-btn" data-jit-jump-workshop="' + esc(wf.baseMacroId) + '">去「开发流」页查看 ↗</button>')
+    ? ('<button type="button" class="dg-jit-btn" data-jit-jump-workshop="' + esc(wf.baseMacroId) + '">去「工作流」页查看 ↗</button>')
     : '';
 
   rootEl.innerHTML = '<div class="dg-jit-modal" data-stop-drag="1">'
     + '<div class="flex items-start justify-between gap-3">'
     + '<div>'
-    + '<div class="text-sm font-semibold">节点开发流装配与即时派生 · 「' + esc(node.title) + '」</div>'
-    + '<div class="text-[11px] mt-0.5" style="color: var(--text-muted);">🛡️ 权限隔离：总控 (Super Agent) 动态选配派生 · 执行端 (Worker) 只读过关 · 底座护栏只增不减</div>'
+    + '<div class="text-sm font-semibold">节点工作流装配与即时派生 · 「' + esc(node.title) + '」</div>'
+    + '<div class="text-[11px] mt-0.5" style="color: var(--text-muted);">🛡️ 权限隔离：总控 (Super Agent) 自主选配微调 · 执行端 (Worker) 只读过关 · 底座护栏只增不减</div>'
     + '</div>'
     + '<button type="button" class="dg-jit-btn" data-jit-close="1">关闭</button>'
     + '</div>'
     + '<div class="flex flex-wrap items-center justify-between gap-2 text-xs">'
     + '<div class="flex items-center gap-2">'
-    + '<span style="color: var(--text-secondary);">打底预置宏：</span>'
+    + '<span style="color: var(--text-secondary);">基准工作流：</span>'
     + '<select id="dg-jit-macro-select" class="dg-jit-input" style="width: auto; padding: 4px 8px;">' + macroOptions + '</select>'
-    + '<button type="button" class="dg-jit-btn" data-jit-switch-macro="1">套用此宏</button>'
     + '</div>'
-    + '<span class="text-[11px]" style="color: var(--text-muted);">' + (wf.mode === 'jit-forked' ? '当前状态：节点私有派生开发流（不污染全局宏）' : '当前状态：复用基准预置宏') + '</span>'
+    + '<span class="text-[11px]" style="color: var(--text-muted);">' + (wf.mode === 'jit-forked' ? '当前状态：节点私有派生工作流（不污染预置工作流）' : '当前状态：选中下拉即刻切换基准工作流') + '</span>'
     + '</div>'
     + '<div>'
-    + '<div class="text-[11px] mb-1.5 font-medium" style="color: var(--text-secondary);">当前生效确定性开发流（共 ' + (wf.tplIds || []).length + ' 个节点）：</div>'
-    + '<div class="dg-jit-chain">' + chainHtml + '</div>'
+    + '<div class="text-[11px] mb-1.5 font-medium" style="color: var(--text-secondary);">当前生效确定性工作流（共 ' + baseTplIds.length + ' 个节点）：</div>'
+    + '<div class="dg-jit-chain">' + baseChainHtml + '</div>'
+    + '</div>'
+    + '<div>'
+    + '<div class="text-[11px] mb-1.5 font-medium flex items-center justify-between" style="color: var(--text-secondary);"><span>Agent根据需求微调（共 ' + tunedTplIds.length + ' 个节点）：</span><span class="text-[10.5px]" style="color: var(--ok);">绿色高亮为相比基准工作流的新增/微调节点</span></div>'
+    + '<div class="dg-jit-chain">' + tunedChainHtml + '</div>'
     + '</div>'
     + approvalHtml
-    + '<div class="flex flex-col gap-1.5">'
-    + '<label class="text-[11px] font-medium" style="color: var(--text-secondary);">改需求即时派生（描述新需求，总控自动前置/追加匹配节点）：</label>'
-    + '<div class="flex items-center gap-2">'
-    + '<input id="dg-jit-req-input" type="text" class="dg-jit-input flex-1" placeholder="例如：改需求支持自定义公式解析，并联网拉取实时汇率 API..." value="' + esc(wf.lastRequirement || '') + '">'
-    + '<button type="button" class="dg-jit-btn is-solid shrink-0" data-jit-run-mutate="1">⚡ 按新需求派生</button>'
-    + '</div></div>'
     + '<div>'
-    + '<div class="text-[11px] mb-1.5" style="color: var(--text-secondary);">或从工具节点池手动点选追加：</div>'
+    + '<div class="text-[11px] mb-1.5" style="color: var(--text-secondary);">或从工具节点池点选追加：</div>'
     + '<div class="flex flex-wrap gap-1.5">' + addButtons + '</div>'
     + '</div>'
     + '<div class="pt-2 border-t flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border-subtle);">'
     + '<div class="flex items-center gap-2 flex-1 min-w-[220px]">'
-    + '<input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新预置宏名称..." value="' + esc(node.title + '专属开发流') + '">'
-    + '<button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为预置宏</button>'
+    + '<input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新预置工作流名称..." value="' + esc(node.title + '专属工作流') + '">'
+    + '<button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为预置工作流</button>'
     + '</div>'
     + jumpBtnHtml
     + '</div></div>';
 }
 
 if (typeof document !== 'undefined') {
+  document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'dg-jit-macro-select' && jitUiState.modalNodeId) {
+      window.requestJitAssignNode(jitUiState.modalNodeId, e.target.value);
+    }
+  });
+
   document.addEventListener('click', (e) => {
     const openBtn = e.target.closest('[data-jit-open]');
     if (openBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      closeCascadingMenus();
+      e.preventDefault(); e.stopPropagation(); closeCascadingMenus();
       window.openJitWorkflowModal(openBtn.getAttribute('data-jit-open'));
       return;
     }
     const quickPromote = e.target.closest('[data-jit-quick-promote]');
     if (quickPromote) {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       window.requestJitPromoteToMacro(quickPromote.getAttribute('data-jit-quick-promote'));
       return;
     }
     const ctxOpen = e.target.closest('[data-card-ctx="jit-open"]');
-    if (ctxOpen) {
-      closeCascadingMenus();
-      window.openJitWorkflowModal(ctxOpen.getAttribute('data-node'));
-      return;
-    }
+    if (ctxOpen) { closeCascadingMenus(); window.openJitWorkflowModal(ctxOpen.getAttribute('data-node')); return; }
     const ctxAssign = e.target.closest('[data-card-ctx="jit-auto-assign"]');
-    if (ctxAssign) {
-      closeCascadingMenus();
-      window.requestJitAssignNode(ctxAssign.getAttribute('data-node'));
-      return;
-    }
+    if (ctxAssign) { closeCascadingMenus(); window.requestJitAssignNode(ctxAssign.getAttribute('data-node')); return; }
     const ctxPromote = e.target.closest('[data-card-ctx="jit-promote"]');
-    if (ctxPromote) {
-      closeCascadingMenus();
-      window.requestJitPromoteToMacro(ctxPromote.getAttribute('data-node'));
-      return;
-    }
+    if (ctxPromote) { closeCascadingMenus(); window.requestJitPromoteToMacro(ctxPromote.getAttribute('data-node')); return; }
     const ctxAll = e.target.closest('[data-ctx-simple="jit-assign-all"]');
-    if (ctxAll) {
-      closeCascadingMenus();
-      window.requestJitAssignAllSandbox();
-      return;
-    }
+    if (ctxAll) { closeCascadingMenus(); window.requestJitAssignAllSandbox(); return; }
     if (!jitUiState.modalNodeId) return;
     if (e.target.id === 'dg-jit-modal-root' || e.target.closest('[data-jit-close]')) {
       window.closeJitWorkflowModal();
       return;
     }
-    if (e.target.closest('[data-jit-switch-macro]')) {
-      const sel = document.getElementById('dg-jit-macro-select');
-      if (sel && sel.value) window.requestJitAssignNode(jitUiState.modalNodeId, sel.value);
-      return;
-    }
-    if (e.target.closest('[data-jit-run-mutate]')) {
-      const inp = document.getElementById('dg-jit-req-input');
-      window.requestJitMutateNode(jitUiState.modalNodeId, { requirementText: inp ? inp.value : '', actorRole: 'super-agent' });
-      return;
-    }
     const addBtn = e.target.closest('[data-jit-add-tpl]');
     if (addBtn) {
-      const inp = document.getElementById('dg-jit-req-input');
-      window.requestJitMutateNode(jitUiState.modalNodeId, { requirementText: inp ? inp.value : '', addTplIds: [addBtn.getAttribute('data-jit-add-tpl')], actorRole: 'super-agent' });
+      const node = getActiveNodesList().find((n) => n.id === jitUiState.modalNodeId);
+      const wf = node ? window.resolveClientComponentWorkflow(node) : null;
+      const basePk = wf && wf.baseMacroId && WORKFLOW_PACKS[wf.baseMacroId];
+      const baseIds = basePk ? basePk.nodes.map((n) => n.tplId).filter((t) => t && t !== 'tpl-blank') : ['tpl-anti-slop'];
+      const curTuned = node && wf ? deriveAutonomousTunedTplIds(node, wf, baseIds) : [];
+      const extra = [...new Set([...curTuned.filter((id) => !baseIds.includes(id)), addBtn.getAttribute('data-jit-add-tpl')])];
+      window.requestJitMutateNode(jitUiState.modalNodeId, { addTplIds: extra, actorRole: 'super-agent' });
       return;
     }
     const rmBtn = e.target.closest('[data-jit-rm-tpl]');
@@ -534,9 +534,7 @@ if (typeof document !== 'undefined') {
       return;
     }
     if (e.target.closest('[data-jit-cancel-floor]')) {
-      jitUiState.pendingApproval = null;
-      jitUiState.lastError = '';
-      renderJitWorkflowModal();
+      jitUiState.pendingApproval = null; jitUiState.lastError = ''; renderJitWorkflowModal();
       return;
     }
     if (e.target.closest('[data-jit-promote-btn]')) {
@@ -549,11 +547,12 @@ if (typeof document !== 'undefined') {
       const packId = jumpBtn.getAttribute('data-jit-jump-workshop');
       window.closeJitWorkflowModal();
       if (WORKFLOW_PACKS[packId]) state.activePackId = packId;
-      state.page = 'workshop';
-      state.leftTab = 'workflows';
-      renderAll();
+      state.page = 'workshop'; state.leftTab = 'workflows'; renderAll();
     }
   });
 }
 `;
+
+export function buildWbJitWorkflowScript() {
+  return WB_JIT_WORKFLOW_SCRIPT;
 }

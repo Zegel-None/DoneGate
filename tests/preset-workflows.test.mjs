@@ -42,8 +42,8 @@ function initCleanGitWorkspace(dir, contracts = {}) {
   spawnSync('git', ['-C', dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
 }
 
-describe('DoneGate 预置十阶段开发流、懒加载依赖门禁与适配器协议 v1.1 新增节点', () => {
-  it('自动加载全部 8 条声明式预置开发流，无空白节点、端口连线严密且回跳均有 maxLoops 上限', () => {
+describe('DoneGate 预置十阶段工作流、懒加载依赖门禁与适配器协议 v1.1 新增节点', () => {
+  it('自动加载全部 8 条声明式预置工作流，无空白节点、端口连线严密且回跳均有 maxLoops 上限', () => {
     const atlas = buildProjectAtlas(REPO_ROOT);
     const customPacks = atlas.workbench?.savedState?.customPacks || {};
     const regTplIds = new Set((atlas.workbench?.registeredTemplates || []).map((t) => t.tplId));
@@ -128,7 +128,7 @@ describe('DoneGate 预置十阶段开发流、懒加载依赖门禁与适配器�
     }
   });
 
-  it('含外部开源工具的开发流未装依赖时触发 MISSING_WORKFLOW_DEPS (exit 3)，并支持按需生成隔离补齐工单与共享池复用', () => {
+  it('含外部开源工具的工作流未装依赖时触发 MISSING_WORKFLOW_DEPS (exit 3)，并支持按需生成隔离补齐工单与共享池复用', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-lazy-deps-'));
     try {
       initCleanGitWorkspace(tmp);

@@ -267,6 +267,11 @@ function buildClientCanvasViewSource() {
           if (data.type === "dg:insert-quote" && inputActions && typeof inputActions.insertQuote === "function") {
             var ok = inputActions.insertQuote(String(data.text || ""), data.summary);
             if (ok && typeof inputActions.focus === "function") inputActions.focus();
+          } else if (data.type === "dg:dispatch-subagent") {
+            if (data.prompt && inputActions && typeof inputActions.setDraft === "function" && typeof inputActions.submit === "function") {
+              inputActions.setDraft(String(data.prompt));
+              inputActions.submit();
+            }
           } else if (data.type === "dg:open-right-file" && typeof openRightResource === "function" && data.address) {
             openRightResource(String(data.address));
           } else if (data.type === "dg:dock-sync") {

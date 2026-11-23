@@ -1,32 +1,14 @@
-// 注入被预览应用 <iframe> 的 8KB 零依赖双模通信桥：编辑模式（点选源码定位 + 双击改字 + 区块拖拽）↔ 测试模式（真点击 + 报错/假动作抓拍）
-export function buildInjectedUiBridgeScript() {
-  return `(function initDoneGateUiBridge() {
-  if (window.__DG_UI_BRIDGE_ACTIVE__) return;
-  window.__DG_UI_BRIDGE_ACTIVE__ = true;
+// 注入被预览应用 <iframe> 的零依赖通信桥：全窗口原生交互放行 + 纯 Alt+单击 (e.altKey) 源码定位拾取桥（防双发胶囊）
 
-  var mode = 'edit'; // 'edit' | 'test'
-  var hoverBox = null;
+function buildUiBridgeDomHelpersSource() {
+  return `  var hoverBox = null;
   var selectBox = null;
   var tagPill = null;
   var selectedEl = null;
-  var dragBlockSrcId = null;
+  var suppressAltClickUntil = 0;
 
   function ensureOverlays() {
-    if (hoverBox) return;
-    var style = document.createElement('style');
-    style.id = 'dg-ui-bridge-style';
-    style.textContent = [
-      'body.dg-mode-edit [data-dg-action] { position: relative; }',
-      'body.dg-mode-edit [data-dg-wiring="mock"]::after { content: "🔌 待接后端"; position: absolute; top: -8px; right: -6px; font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 999px; background: #fef3c7; color: #b45309; border: 1px solid #f59e0b; font-weight: 700; pointer-events: none; z-index: 9990; white-space: nowrap; }',
-      'body.dg-mode-edit [data-dg-wiring="wired"]::after { content: "✓ 已接真逻辑"; position: absolute; top: -8px; right: -6px; font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 999px; background: #dcfce7; color: #15803d; border: 1px solid #22c55e; font-weight: 700; pointer-events: none; z-index: 9990; white-space: nowrap; }',
-      'body.dg-mode-edit [data-dg-block] { transition: outline 0.12s ease; }',
-      'body.dg-mode-edit [data-dg-block]:hover { outline: 1px dashed rgba(37, 99, 235, 0.45); outline-offset: 4px; }',
-      '.dg-block-drag-chip { display: none; position: absolute; top: 6px; right: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(15, 23, 42, 0.78); color: #fff; font-size: 10px; cursor: grab; z-index: 9985; user-select: none; }',
-      'body.dg-mode-edit [data-dg-block] { position: relative; }',
-      'body.dg-mode-edit [data-dg-block]:hover > .dg-block-drag-chip { display: inline-flex; align-items: center; gap: 4px; }'
-    ].join('\\n');
-    document.head.appendChild(style);
-
+    if (hoverBox || !document.body) return;
     hoverBox = document.createElement('div');
     hoverBox.setAttribute('data-dg-bridge-ui', '1');
     hoverBox.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483644;border:1.5px dashed #3b82f6;background:rgba(59,130,246,0.06);border-radius:6px;display:none;transition:all 0.06s ease;';
@@ -39,34 +21,16 @@ export function buildInjectedUiBridgeScript() {
     document.body.appendChild(hoverBox);
     document.body.appendChild(selectBox);
     document.body.appendChild(tagPill);
-    decorateDraggableBlocks();
   }
 
-  function decorateDraggableBlocks() {
-    var blocks = document.querySelectorAll('[data-dg-block]');
-    for (var i = 0; i < blocks.length; i++) {
-      var blk = blocks[i];
-      blk.setAttribute('draggable', mode === 'edit' ? 'true' : 'false');
-      if (!blk.querySelector('.dg-block-drag-chip')) {
-        var chip = document.createElement('span');
-        chip.className = 'dg-block-drag-chip';
-        chip.setAttribute('data-dg-bridge-ui', '1');
-        chip.textContent = '⋮⋮ 拖拽调序';
-        blk.appendChild(chip);
-      }
-    }
-  }
-
-  // 跨框架源码行列提取：兼容 Lovinsp/code-inspector、React Fiber (react-grab 思路)、Vue VNode 与原生标注
   function resolveElementSource(el) {
     var cur = el;
     while (cur && cur !== document.body) {
-      var insp = cur.getAttribute('data-insp-path') || cur.getAttribute('data-dg-source') || cur.getAttribute('data-source-loc') || cur.getAttribute('data-v-inspector');
+      var insp = cur.getAttribute && (cur.getAttribute('data-insp-path') || cur.getAttribute('data-dg-source') || cur.getAttribute('data-source-loc') || cur.getAttribute('data-v-inspector'));
       if (insp) {
         var parts = insp.split(':');
         return { file: parts[0], line: Number(parts[1] || 1), col: Number(parts[2] || 1), component: cur.getAttribute('data-dg-component') || cur.tagName.toLowerCase() };
       }
-      // React 17/18/19 Fiber _debugSource 穿透底层 components/ui 包装组件
       var keys = Object.keys(cur);
       for (var k = 0; k < keys.length; k++) {
         if (keys[k].indexOf('__reactFiber$') === 0 || keys[k].indexOf('__reactInternalInstance$') === 0) {
@@ -92,19 +56,19 @@ export function buildInjectedUiBridgeScript() {
       }
       cur = cur.parentElement;
     }
-    return { file: window.location.pathname === '/' ? '.donegate/ui-prototype/index.html' : window.location.pathname.replace(/^\\/+/, ''), line: 1, col: 1, component: el.tagName.toLowerCase() };
+    return { file: window.location.pathname === '/' ? '.donegate/ui-prototype/index.html' : window.location.pathname.replace(/^\\/+/, ''), line: 1, col: 1, component: (el && el.tagName ? el.tagName.toLowerCase() : 'div') };
   }
 
   function buildCssPath(el) {
     if (!el || el === document.body) return 'body';
     if (el.id) return el.tagName.toLowerCase() + '#' + el.id;
-    var act = el.getAttribute('data-dg-action');
+    var act = el.getAttribute && el.getAttribute('data-dg-action');
     if (act) return '[data-dg-action="' + act + '"]';
     return el.tagName.toLowerCase();
   }
 
   function placeBox(box, el, showPill) {
-    if (!box || !el) return;
+    if (!box || !el || !el.getBoundingClientRect) return;
     var r = el.getBoundingClientRect();
     box.style.display = 'block';
     box.style.left = Math.round(r.left) + 'px';
@@ -113,14 +77,22 @@ export function buildInjectedUiBridgeScript() {
     box.style.height = Math.max(12, Math.round(r.height)) + 'px';
     if (showPill && tagPill) {
       var src = resolveElementSource(el);
-      var txt = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().slice(0, 16);
-      var wire = el.getAttribute('data-dg-wiring');
+      var txt = String(el.innerText || (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('placeholder'))) || '').trim().slice(0, 16);
+      var wire = el.getAttribute && el.getAttribute('data-dg-wiring');
       var wTag = wire === 'mock' ? ' · 🔌待接后端' : (wire === 'wired' ? ' · ✓真逻辑' : '');
       tagPill.textContent = '<' + el.tagName.toLowerCase() + '>' + (txt ? ' "' + txt + '"' : '') + ' · ' + src.file.split('/').pop() + ':' + src.line + wTag;
       tagPill.style.display = 'block';
-      tagPill.style.left = Math.max(6, Math.min(window.innerWidth - 260, Math.round(r.left))) + 'px';
+      tagPill.style.left = Math.max(6, Math.min((window.innerWidth || 800) - 260, Math.round(r.left))) + 'px';
       tagPill.style.top = (r.top > 28 ? Math.round(r.top - 24) : Math.round(r.bottom + 4)) + 'px';
     }
+  }`;
+}
+
+function buildUiBridgeEventListenersSource() {
+  return `  function hideHoverBox() {
+    if (hoverBox) hoverBox.style.display = 'none';
+    if (!selectedEl && tagPill) tagPill.style.display = 'none';
+    else if (selectedEl && selectBox && selectBox.style.display === 'block') placeBox(selectBox, selectedEl, true);
   }
 
   function postUp(type, payload) {
@@ -129,114 +101,78 @@ export function buildInjectedUiBridgeScript() {
     }
   }
 
-  function applyBridgeMode(nextMode) {
-    mode = nextMode === 'test' ? 'test' : 'edit';
-    document.body.classList.toggle('dg-mode-edit', mode === 'edit');
-    document.body.classList.toggle('dg-mode-test', mode === 'test');
-    ensureOverlays();
-    decorateDraggableBlocks();
-    if (mode === 'test') {
-      if (hoverBox) hoverBox.style.display = 'none';
-      if (selectBox) selectBox.style.display = 'none';
-      if (tagPill) tagPill.style.display = 'none';
-    } else if (selectedEl) {
-      placeBox(selectBox, selectedEl, true);
-    }
-    postUp('dg-ui:mode-synced', { mode: mode });
-  }
-
   document.addEventListener('pointermove', function(e) {
-    if (mode !== 'edit') return;
+    if (!e.altKey) {
+      hideHoverBox();
+      return;
+    }
     ensureOverlays();
     var t = e.target;
-    if (!t || t === document.body || t === document.documentElement || t.getAttribute('data-dg-bridge-ui')) return;
-    placeBox(hoverBox, t, !selectedEl);
+    if (!t || t === document.body || t === document.documentElement || (t.getAttribute && t.getAttribute('data-dg-bridge-ui'))) return;
+    placeBox(hoverBox, t, true);
+  }, true);
+
+  window.addEventListener('keyup', function(e) {
+    if (e.key === 'Alt' || !e.altKey) hideHoverBox();
+  }, true);
+  window.addEventListener('blur', hideHoverBox);
+  document.addEventListener('mouseleave', hideHoverBox);
+
+  document.addEventListener('pointerdown', function(e) {
+    if (!e.altKey || e.button !== 0) return;
+    var t = e.target;
+    if (!t || (t.getAttribute && t.getAttribute('data-dg-bridge-ui'))) return;
+    suppressAltClickUntil = Date.now() + 800;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    var pick = (t.closest && t.closest('button, a, input, select, textarea, [data-dg-action], [data-dg-component], h1, h2, h3, p, label')) || t;
+    selectedEl = pick;
+    ensureOverlays();
+    if (hoverBox) hoverBox.style.display = 'none';
+    placeBox(selectBox, pick, true);
+    var src = resolveElementSource(pick);
+    var label = String(pick.innerText || pick.value || (pick.getAttribute && (pick.getAttribute('placeholder') || pick.getAttribute('aria-label'))) || pick.tagName).replace(/\\s+/g, ' ').trim().slice(0, 28);
+    postUp('dg-ui:element-selected', {
+      tag: pick.tagName.toLowerCase(),
+      label: label || pick.tagName.toLowerCase(),
+      sourceFile: src.file,
+      sourceLine: src.line,
+      component: src.component,
+      selector: buildCssPath(pick),
+      actionId: (pick.getAttribute && pick.getAttribute('data-dg-action')) || null,
+      wiringState: (pick.getAttribute && pick.getAttribute('data-dg-wiring')) || null,
+      outerSnippet: String(pick.outerHTML || '').slice(0, 280)
+    });
+  }, true);
+
+  document.addEventListener('pointerup', function(e) {
+    if (e.altKey || Date.now() < suppressAltClickUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }
   }, true);
 
   document.addEventListener('click', function(e) {
-    var t = e.target;
-    if (!t || t.getAttribute('data-dg-bridge-ui')) return;
-    if (mode === 'edit') {
-      if (t.isContentEditable) return;
+    if (e.altKey || Date.now() < suppressAltClickUntil) {
       e.preventDefault();
       e.stopPropagation();
-      var pick = t.closest('button, a, input, select, textarea, [data-dg-action], [data-dg-component], h1, h2, h3, p, label') || t;
-      selectedEl = pick;
-      ensureOverlays();
-      placeBox(selectBox, pick, true);
-      var src = resolveElementSource(pick);
-      var label = (pick.innerText || pick.value || pick.getAttribute('placeholder') || pick.getAttribute('aria-label') || pick.tagName).replace(/\\s+/g, ' ').trim().slice(0, 28);
-      postUp('dg-ui:element-selected', {
-        tag: pick.tagName.toLowerCase(),
-        label: label || pick.tagName.toLowerCase(),
-        sourceFile: src.file,
-        sourceLine: src.line,
-        component: src.component,
-        selector: buildCssPath(pick),
-        actionId: pick.getAttribute('data-dg-action') || null,
-        wiringState: pick.getAttribute('data-dg-wiring') || null,
-        outerSnippet: pick.outerHTML.slice(0, 280)
-      });
+      e.stopImmediatePropagation();
       return;
     }
-    // 测试模式：放行真实点击，同时抓拍点击了哪个待接后端的假动作
+    var t = e.target;
+    if (!t || !t.closest) return;
     var actEl = t.closest('[data-dg-action]');
     if (actEl) {
       postUp('dg-ui:test-action-triggered', {
         actionId: actEl.getAttribute('data-dg-action'),
         wiringState: actEl.getAttribute('data-dg-wiring') || 'mock',
-        label: (actEl.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 24)
+        label: String(actEl.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 24)
       });
     }
   }, true);
 
-  // 编辑模式双击原地改文案
-  document.addEventListener('dblclick', function(e) {
-    if (mode !== 'edit') return;
-    var t = e.target.closest('h1, h2, h3, h4, p, span, button, a, label, th, td');
-    if (!t || t.getAttribute('data-dg-bridge-ui')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    var before = t.innerText;
-    t.contentEditable = 'true';
-    t.focus();
-    var finish = function() {
-      t.contentEditable = 'false';
-      t.removeEventListener('blur', finish);
-      var after = t.innerText;
-      if (after !== before) {
-        var src = resolveElementSource(t);
-        postUp('dg-ui:inline-text-edited', { before: before, after: after, sourceFile: src.file, sourceLine: src.line, selector: buildCssPath(t) });
-      }
-    };
-    t.addEventListener('blur', finish);
-  }, true);
-
-  // 编辑模式组件区块拖拉拽调序
-  document.addEventListener('dragstart', function(e) {
-    if (mode !== 'edit') return;
-    var blk = e.target.closest('[data-dg-block]');
-    if (!blk) return;
-    dragBlockSrcId = blk.getAttribute('data-dg-block');
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-  });
-  document.addEventListener('dragover', function(e) {
-    if (mode !== 'edit' || !dragBlockSrcId) return;
-    if (e.target.closest('[data-dg-block]')) e.preventDefault();
-  });
-  document.addEventListener('drop', function(e) {
-    if (mode !== 'edit' || !dragBlockSrcId) return;
-    var targetBlk = e.target.closest('[data-dg-block]');
-    if (!targetBlk) return;
-    e.preventDefault();
-    var dstId = targetBlk.getAttribute('data-dg-block');
-    if (dstId && dstId !== dragBlockSrcId) {
-      postUp('dg-ui:blocks-reordered', { fromBlockId: dragBlockSrcId, toBlockId: dstId });
-    }
-    dragBlockSrcId = null;
-  });
-
-  // 测试模式运行期异常自动抓拍
   window.addEventListener('error', function(ev) {
     postUp('dg-ui:runtime-error', { message: String(ev.message || 'Runtime Error'), file: ev.filename || '', line: ev.lineno || 0 });
   });
@@ -245,20 +181,27 @@ export function buildInjectedUiBridgeScript() {
   });
 
   window.addEventListener('message', function(ev) {
-    var d = ev.data || {};
+    var d = (ev && ev.data) || {};
     if (d.source !== 'donegate-uiboard') return;
-    if (d.type === 'dg-ui:set-mode') applyBridgeMode(d.mode);
-    else if (d.type === 'dg-ui:apply-tokens' && d.tokens) {
+    if (d.type === 'dg-ui:clear-selection') {
+      selectedEl = null;
+      if (selectBox) selectBox.style.display = 'none';
+      if (tagPill) tagPill.style.display = 'none';
+    } else if (d.type === 'dg-ui:apply-tokens' && d.tokens) {
       var root = document.documentElement;
       Object.keys(d.tokens).forEach(function(k) { root.style.setProperty(k, d.tokens[k]); });
       postUp('dg-ui:tokens-applied', { proposalId: d.proposalId });
     }
-  });
+  });`;
+}
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { applyBridgeMode('edit'); });
-  } else {
-    applyBridgeMode('edit');
-  }
-})();`;
+export function buildInjectedUiBridgeScript() {
+  return [
+    '(function initDoneGateUiBridge() {',
+    '  if (window.__DG_UI_BRIDGE_ACTIVE__) return;',
+    '  window.__DG_UI_BRIDGE_ACTIVE__ = true;',
+    buildUiBridgeDomHelpersSource(),
+    buildUiBridgeEventListenersSource(),
+    '})();'
+  ].join('\n');
 }

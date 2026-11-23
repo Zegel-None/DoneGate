@@ -46,7 +46,7 @@ export function createInitialCheckpoint(projectRoot, runId, pack, ticket = {}) {
   const cp = {
     runId,
     packId: (pack && pack.id) || 'default',
-    packName: (pack && pack.name) || (pack && pack.id) || '未命名开发流',
+    packName: (pack && pack.name) || (pack && pack.id) || '未命名工作流',
     state: AUTOPILOT_STATES.PREFLIGHT,
     startedAt: now,
     updatedAt: now,
