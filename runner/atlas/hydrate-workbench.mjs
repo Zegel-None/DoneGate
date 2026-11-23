@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -372,11 +373,17 @@ export function hydrateWorkbenchData(projectRoot, baseAtlas) {
   const hostSandbox = buildHostSandboxFromAtlas(baseAtlas, savedState);
   const siblingSandboxes = scanSiblingWorkspaces(projectRoot);
   const registeredTemplates = loadRegisteredAdapterTemplates(projectRoot);
+  const depsBundle = inspectAllKnownWorkflowPacks(projectRoot, savedState.customPacks);
+  const uiboardToolchain = readUiToolchainStatus(projectRoot);
   return {
     hostId: hostSandbox.id,
     hostSandbox,
     siblingSandboxes,
     registeredTemplates,
-    savedState
+    savedState,
+    packDepReports: depsBundle.reports,
+    sharedPool: depsBundle.sharedPool,
+    depsRefreshStamp: depsBundle.refreshStamp,
+    uiboardToolchain
   };
 }

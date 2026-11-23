@@ -6,10 +6,14 @@ import { readSavedWorkbenchState } from '../atlas/contract.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage, verifySubagentNodeReceipt } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer, resolveSafeWorkspaceFolders } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
-import { inspectWorkflowDeps, provisionWorkflowDeps, readSharedRefreshStamp, readWorkflowDepsStatus, refreshWorkflowDepsStamp } from './workflow-deps.mjs';
+import {
+  inspectAllKnownWorkflowPacks, inspectWorkflowDeps, provisionWorkflowDeps,
+  readSharedRefreshStamp, readWorkflowDepsStatus, reconcileSharedPoolOnRefresh
+} from './workflow-deps.mjs';
 import { loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import { loadCampaignCheckpoint } from './campaign-autopilot.mjs';
 import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
+import { readUiToolchainStatus } from './ui-board-engine.mjs';
 import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
 import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
 import { buildJitBootstrapSummary } from './workflow-jit.mjs';
@@ -20,7 +24,16 @@ function syncHubDepsRefreshStamp(root, hub) {
   const stamp = readSharedRefreshStamp(root);
   if (stamp.exists && stamp.seq > Number(hub.lastDepsRefreshSeq || 0)) {
     hub.lastDepsRefreshSeq = stamp.seq;
-    hub.emit({ type: 'workflow_deps_updated', packId: stamp.workflowId || '_shared', refreshStamp: stamp });
+    const allDeps = inspectAllKnownWorkflowPacks(root);
+    const uiboardToolchain = readUiToolchainStatus(root);
+    hub.emit({
+      type: 'workflow_deps_updated',
+      packId: stamp.workflowId || '_shared',
+      refreshStamp: stamp,
+      sharedPool: allDeps.sharedPool,
+      reports: allDeps.reports,
+      uiboardToolchain
+    });
   }
   return stamp;
 }
@@ -61,12 +74,27 @@ async function handleSystemAndProjectRoutes(req, res, cleanPath, root, hub, opts
     sendJson(res, 200, { ok: true, mode: 'dsh-web', root });
     return true;
   }
-  if (cleanPath === '/atlas/refresh' && req.method === 'POST') {
+  if ((cleanPath === '/atlas/refresh' && req.method === 'POST') || (cleanPath === '/rescan' && (req.method === 'POST' || req.method === 'GET'))) {
     const refreshedAt = new Date().toISOString();
-    const depsRefreshStamp = syncHubDepsRefreshStamp(root, hub);
+    const rec = reconcileSharedPoolOnRefresh(root, null, { trigger: 'atlas-refresh' });
+    hub.lastDepsRefreshSeq = rec.refreshStamp.seq;
+    const allDeps = inspectAllKnownWorkflowPacks(root);
+    const uiboardToolchain = readUiToolchainStatus(root);
+    hub.emit({
+      type: 'workflow_deps_updated',
+      packId: '_shared',
+      refreshStamp: rec.refreshStamp,
+      sharedPool: allDeps.sharedPool,
+      reports: allDeps.reports,
+      uiboardToolchain
+    });
     mkdirSync(join(root, '.donegate'), { recursive: true });
     exportDashboardHtml(root, join(root, '.donegate', 'dashboard.html'));
-    sendJson(res, 200, { ok: true, refreshedAt, depsRefreshStamp, atlas: buildDashboardPayload(root) });
+    sendJson(res, 200, {
+      ok: true, refreshedAt, depsRefreshStamp: rec.refreshStamp,
+      sharedPool: allDeps.sharedPool, packDepReports: allDeps.reports, uiboardToolchain,
+      atlas: buildDashboardPayload(root)
+    });
     return true;
   }
   if (cleanPath === '/github/star' && req.method === 'POST') {
@@ -154,8 +182,10 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opt
 
     if (cleanPath === '/bootstrap' && req.method === 'GET') {
       const depsRefreshStamp = syncHubDepsRefreshStamp(root, hub);
+      const allDeps = inspectAllKnownWorkflowPacks(root);
       sendJson(res, 200, {
         ok: true, platform: process.platform, depsRefreshStamp,
+        sharedPool: allDeps.sharedPool, packDepReports: allDeps.reports, uiboardToolchain: readUiToolchainStatus(root),
         atlas: buildDashboardPayload(root), state: readSavedWorkbenchState(root),
         jit: buildJitBootstrapSummary(root), autopilot: loadAutopilotCheckpoint(root),
         campaign: loadCampaignCheckpoint(root), nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
@@ -295,37 +325,57 @@ async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub,
       return true;
     }
 
-    if (cleanPath === '/workflow-deps/inspect' && (req.method === 'POST' || req.method === 'GET')) {
+    if ((cleanPath === '/workflow-deps/inspect' || cleanPath === '/deps/status') && (req.method === 'POST' || req.method === 'GET')) {
       const refreshStamp = syncHubDepsRefreshStamp(root, hub);
+      const uiboardToolchain = readUiToolchainStatus(root);
       if (req.method === 'GET') {
         const u = new URL(req.url || '/', 'http://127.0.0.1');
         const wfId = u.searchParams.get('workflow') || u.searchParams.get('packId') || null;
-        sendJson(res, 200, { ok: true, refreshStamp, report: readWorkflowDepsStatus(root, wfId) });
+        const allDeps = inspectAllKnownWorkflowPacks(root);
+        sendJson(res, 200, {
+          ok: true, refreshStamp, sharedPool: allDeps.sharedPool,
+          reports: allDeps.reports, uiboardToolchain,
+          report: readWorkflowDepsStatus(root, wfId)
+        });
         return true;
       }
       const body = await readJsonBody(req);
       if (body.packs && typeof body.packs === 'object') {
-        const reports = {};
-        for (const [k, pk] of Object.entries(body.packs)) reports[k] = inspectWorkflowDeps(root, pk);
-        sendJson(res, 200, { ok: true, refreshStamp, reports });
+        const allDeps = inspectAllKnownWorkflowPacks(root, body.packs);
+        sendJson(res, 200, { ok: true, refreshStamp, sharedPool: allDeps.sharedPool, reports: allDeps.reports, uiboardToolchain });
         return true;
       }
-      sendJson(res, 200, { ok: true, refreshStamp, report: body.pack ? inspectWorkflowDeps(root, body.pack) : readWorkflowDepsStatus(root, body.workflowId || body.packId || null) });
+      const allDeps = inspectAllKnownWorkflowPacks(root);
+      sendJson(res, 200, {
+        ok: true, refreshStamp, sharedPool: allDeps.sharedPool, reports: allDeps.reports, uiboardToolchain,
+        report: body.pack ? inspectWorkflowDeps(root, body.pack) : readWorkflowDepsStatus(root, body.workflowId || body.packId || null)
+      });
       return true;
     }
 
-    if (cleanPath === '/workflow-deps/refresh' && req.method === 'POST') {
+    if ((cleanPath === '/workflow-deps/refresh' || cleanPath === '/deps/refresh') && req.method === 'POST') {
       const body = await readJsonBody(req);
       const wfId = body.workflowId || body.packId || (body.pack && body.pack.id) || null;
-      const refreshStamp = refreshWorkflowDepsStamp(root, { trigger: 'http-refresh', workflowId: wfId });
-      hub.lastDepsRefreshSeq = refreshStamp.seq;
-      const report = body.pack ? inspectWorkflowDeps(root, body.pack) : readWorkflowDepsStatus(root, wfId);
-      hub.emit({ type: 'workflow_deps_updated', packId: report.packId, refreshStamp, report });
-      sendJson(res, 200, { ok: true, refreshStamp, report });
+      const rec = reconcileSharedPoolOnRefresh(root, wfId, { trigger: 'http-refresh' });
+      hub.lastDepsRefreshSeq = rec.refreshStamp.seq;
+      const extraPacks = (body.packs && typeof body.packs === 'object') ? body.packs : {};
+      const allDeps = inspectAllKnownWorkflowPacks(root, extraPacks);
+      const uiboardToolchain = readUiToolchainStatus(root);
+      const report = body.pack
+        ? inspectWorkflowDeps(root, body.pack)
+        : (wfId && allDeps.reports[wfId] ? allDeps.reports[wfId] : readWorkflowDepsStatus(root, wfId));
+      hub.emit({
+        type: 'workflow_deps_updated', packId: report.packId, refreshStamp: rec.refreshStamp,
+        sharedPool: allDeps.sharedPool, reports: allDeps.reports, report, uiboardToolchain
+      });
+      sendJson(res, 200, {
+        ok: true, refreshStamp: rec.refreshStamp, sharedPool: allDeps.sharedPool,
+        reports: allDeps.reports, report, uiboardToolchain
+      });
       return true;
     }
 
-    if (cleanPath === '/workflow-deps/provision' && req.method === 'POST') {
+    if ((cleanPath === '/workflow-deps/provision' || cleanPath === '/deps/provision') && req.method === 'POST') {
       const body = await readJsonBody(req);
       const rawPack = body.pack || {};
       const onlyNodeId = body.onlyNodeId ? String(body.onlyNodeId).trim() : '';

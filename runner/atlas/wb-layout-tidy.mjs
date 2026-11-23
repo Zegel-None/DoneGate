@@ -426,7 +426,9 @@ const WB_LAYOUT_TIDY_LINES = [
   "                const isProv = Boolean(state.provisioningPacks && state.provisioningPacks[pk.id]);",
   "                const depBtn = dep.missingCount > 0",
   "                  ? `<button type=\"button\" data-action=\"provision-pack-deps\" data-pack=\"${esc(pk.id)}\" class=\"px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0\" style=\"background: var(--warn-bg); color: var(--warn);\" data-tip=\"尚缺 ${dep.missingCount} 项开源/环境依赖（类 ComfyUI 禁跑），点击让后台 Agent 自动补齐至 ${esc(dep.depsDir)}/\">${isProv ? `补齐中(${dep.missingCount})` : `补齐(${dep.missingCount})`}</button>`",
-  "                  : `<button type=\"button\" data-action=\"provision-pack-deps\" data-pack=\"${esc(pk.id)}\" class=\"opacity-0 group-hover:opacity-100 px-1.5 py-0.5 rounded text-[10px] border shrink-0 transition-opacity\" style=\"background: var(--surface); border-color: var(--border-subtle); color: var(--primary);\" data-tip=\"一键检查或更新此工作流在 ${esc(dep.depsDir)}/ 下的项目与环境依赖\">补齐</button>`;",
+  "                  : (dep.total > 0",
+  "                      ? `<button type=\"button\" data-action=\"provision-pack-deps\" data-pack=\"${esc(pk.id)}\" class=\"px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0\" style=\"background: var(--ok-bg); color: var(--ok);\" data-tip=\"全部 ${dep.total} 项依赖已在共享底座池就绪\">✓ 就绪</button>`",
+  "                      : `<button type=\"button\" data-action=\"provision-pack-deps\" data-pack=\"${esc(pk.id)}\" class=\"opacity-0 group-hover:opacity-100 px-1.5 py-0.5 rounded text-[10px] border shrink-0 transition-opacity\" style=\"background: var(--surface); border-color: var(--border-subtle); color: var(--primary);\" data-tip=\"一键检查或更新此工作流在 ${esc(dep.depsDir)}/ 下的项目与环境依赖\">补齐</button>`);",
   "                const nameSpan = state.editingPackId === pk.id ? `<input id=\"pack-title-editor\" type=\"text\" class=\"inline-text-rename flex-1\" data-pack-title-input=\"${esc(pk.id)}\" data-stop-drag=\"1\" value=\"${esc(pk.name)}\">` : `<span class=\"truncate min-w-0 flex-1\" data-pack-title=\"${esc(pk.id)}\">${esc(pk.name)}</span>`;",
   "                return `",
   "                  <div draggable=\"${state.editingPackId === pk.id ? 'false' : 'true'}\" data-drag-pack=\"${esc(pk.id)}\" data-ui-owner=\"runner/atlas/wb-layout-tidy.mjs\" data-switch-pack=\"${esc(pk.id)}\" data-tip=\"${esc(pk.tip)} · 双击名称原地重命名，右键可一键补齐依赖\" class=\"group px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-between gap-1.5 transition-colors\" style=\"background: ${active ? 'var(--primary-soft)' : 'transparent'}; color: ${active ? 'var(--primary-text)' : 'var(--text-main)'}; font-weight: ${active ? '600' : '400'};\">",
@@ -501,7 +503,7 @@ const WB_LAYOUT_TIDY_LINES = [
   "      });",
   "      const items = [...seen.values()];",
   "      const missing = items.filter((x) => !x.ready);",
-  "      return { packId: pk.id, packName: pk.name, depsDir, ready: missing.length === 0, total: items.length, missingCount: missing.length, missing };",
+  "      return { packId: pk.id, packName: pk.name, depsDir, ready: missing.length === 0, total: items.length, missingCount: missing.length, items, missing };",
   "    }"
 ];
 

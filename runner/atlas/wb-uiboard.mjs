@@ -1,4 +1,4 @@
-// Agent Native UI 看板前端控制器：完整窗口原生交互、分组美学方案 0ms 秒切与锁定、Alt+单击拾取蓝胶囊与假动作转真后端接线台
+// Agent Native UI 看板前端控制器：完整窗口原生交互、四件套实时激活状态、Puck 编排切换、组件栈蓝胶囊与真后端接线台
 import { AESTHETIC_PROPOSALS, ARCHETYPE_CSS, buildInjectedUiBridgeScript, renderProposalArchetypeBody } from '../dsh/contract.mjs';
 
 const EMBEDDED_PROPOSALS_JSON = JSON.stringify(AESTHETIC_PROPOSALS);
@@ -14,10 +14,16 @@ const renderClientArchetypeBody = ${EMBEDDED_ARCHETYPE_FN};
 
 const uiBoardState = {
   initialized: false,
+  wasActiveTab: false,
   viewport: 'desktop',
   sourceMode: 'prototype',
   editorMode: 'builtin',
   puckInstalled: false,
+  toolchain: {
+    ready: false, readyCount: 0, total: 4, puckInstalled: false, lovinspInstalled: false,
+    reactGrabInstalled: false, agentBrowserInstalled: false, versions: {}, versionSummary: '',
+    badgeLabel: '📦 按需补齐 UI 增强套件'
+  },
   devUrl: '',
   activeProposalId: 'swiss-minimal',
   lockedProposalId: null,
@@ -32,6 +38,12 @@ const uiBoardState = {
   selfPlayOk: true,
   runtimeErrors: 0
 };
+
+function applyUiBoardToolchainSnapshot(tc) {
+  if (!tc || typeof tc !== 'object') return;
+  uiBoardState.toolchain = { ...uiBoardState.toolchain, ...tc };
+  uiBoardState.puckInstalled = Boolean(tc.puckInstalled);
+}
 
 function resolveProposalGroupLabel(p) {
   if (p && p.group) return p.group;
@@ -56,10 +68,11 @@ function buildOfflineUiSrcdoc() {
   ].join('\\n');
 }
 
-async function syncUiBoardBackendStatus() {
-  if (!/^https?:$/i.test(location.protocol)) return;
+async function syncUiBoardBackendStatus(forceReload) {
+  if (!/^https?:$/i.test(location.protocol)) return null;
   try {
-    const r = await fetch('/donegate/api/uiboard/status');
+    const url = typeof withDshSessionUrl === 'function' ? withDshSessionUrl('/donegate/api/uiboard/status') : '/donegate/api/uiboard/status';
+    const r = await fetch(url);
     const j = await r.json();
     if (r.ok && j && j.ok && j.uiboard) {
       const u = j.uiboard;
@@ -68,22 +81,29 @@ async function syncUiBoardBackendStatus() {
       if (u.activeProposalId) uiBoardState.activeProposalId = u.activeProposalId;
       if (u.lockedDesign && u.lockedDesign.proposalId) uiBoardState.lockedProposalId = u.lockedDesign.proposalId;
       if (u.wiring && Array.isArray(u.wiring.actions)) uiBoardState.wiringActions = u.wiring.actions;
-      if (u.puckInstalled !== undefined) uiBoardState.puckInstalled = Boolean(u.puckInstalled);
-      else if (u.deps && u.deps.puckInstalled !== undefined) uiBoardState.puckInstalled = Boolean(u.deps.puckInstalled);
+      if (u.toolchain) applyUiBoardToolchainSnapshot(u.toolchain);
+      else if (u.puckInstalled !== undefined) uiBoardState.puckInstalled = Boolean(u.puckInstalled);
       if (!uiBoardState.devUrl && u.suggestedDevUrl) uiBoardState.devUrl = u.suggestedDevUrl;
+      if (state.leftTab === 'uiboard') {
+        renderLeftDrawer();
+        renderUiBoardStageDom(Boolean(forceReload));
+      }
+      return u;
     }
   } catch (err) { void err; }
+  return null;
 }
 
 function getUiBoardIframeUrl() {
   if (!/^https?:$/i.test(location.protocol)) return '';
+  const wrapUrl = (u) => (typeof withDshSessionUrl === 'function' ? withDshSessionUrl(u) : u);
   if (uiBoardState.sourceMode === 'proxy' && uiBoardState.devUrl.trim()) {
-    return '/donegate/api/uiboard/proxy?url=' + encodeURIComponent(uiBoardState.devUrl.trim());
+    return wrapUrl('/donegate/api/uiboard/proxy?url=' + encodeURIComponent(uiBoardState.devUrl.trim()));
   }
   if (uiBoardState.editorMode === 'puck' && uiBoardState.puckInstalled) {
-    return '/donegate/api/uiboard/prototype?editor=puck&theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now();
+    return wrapUrl('/donegate/api/uiboard/prototype?editor=puck&theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now());
   }
-  return '/donegate/api/uiboard/prototype?theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now();
+  return wrapUrl('/donegate/api/uiboard/prototype?theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now());
 }
 
 function postToUiIframe(msg) {
@@ -103,18 +123,15 @@ function renderUiBoardStageVisibility() {
   const active = state.leftTab === 'uiboard';
   stageEl.classList.toggle('hidden', !active); stageEl.classList.toggle('flex', active);
   Object.assign(stageEl.style, { display: active ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: '0' });
-  if (!active) return;
+  if (!active) { uiBoardState.wasActiveTab = false; return; }
 
-  if (!uiBoardState.initialized) {
-    uiBoardState.initialized = true;
-    syncUiBoardBackendStatus().then(() => {
-      if (state.leftTab === 'uiboard') {
-        renderLeftDrawer();
-        renderUiBoardStageDom(true);
-      }
-    });
-  }
+  const justEntered = !uiBoardState.initialized || !uiBoardState.wasActiveTab;
+  uiBoardState.initialized = true;
+  uiBoardState.wasActiveTab = true;
   renderUiBoardStageDom(false);
+  if (justEntered) {
+    syncUiBoardBackendStatus(true);
+  }
 }
 
 function renderUiBoardStageDom(forceReloadIframe) {
@@ -122,9 +139,10 @@ function renderUiBoardStageDom(forceReloadIframe) {
   if (!stageEl) return;
   const vpWidth = uiBoardState.viewport === 'mobile' ? '390px' : (uiBoardState.viewport === 'tablet' ? '768px' : '100%');
   const sel = uiBoardState.selectedElement;
+  const stackSuffix = sel && Array.isArray(sel.componentStack) && sel.componentStack.length ? (' [' + sel.componentStack.slice(-2).join(' › ') + ']') : '';
   const hintTxt = sel
-    ? ('已拾取：<' + sel.tag + '>「' + sel.label + '」 @ ' + String(sel.sourceFile || '').split('/').pop() + ':' + (sel.sourceLine || 1))
-    : '普通点击直接原生交互 · 按住 Alt+单击任意元素累加蓝胶囊';
+    ? ('已拾取：<' + sel.tag + '>「' + sel.label + '」' + stackSuffix + ' @ ' + String(sel.sourceFile || '').split('/').pop() + ':' + (sel.sourceLine || 1))
+    : '普通点击直接原生交互 · 按住 Alt+单击任意元素抓取组件栈与蓝胶囊';
 
   const existingIframe = document.getElementById('uiboard-iframe');
   if (!existingIframe) {
@@ -132,8 +150,8 @@ function renderUiBoardStageDom(forceReloadIframe) {
       '<div data-ui-owner="runner/atlas/wb-uiboard.mjs" class="px-3 py-2 border-b flex items-center justify-between gap-2 flex-wrap shrink-0" style="background: var(--surface); border-color: var(--border-subtle);">',
       '  <div class="flex items-center gap-2 flex-wrap">',
       '    <div class="seg-bar" role="group" aria-label="UI舞台源窗口切换">',
-      '      <button type="button" id="uib-src-proto" class="seg-btn is-active" data-uib-act="use-prototype" data-tip="内置原型窗口（原生交互 + Alt+单击拾取）">内置原型</button>',
-      '      <button type="button" id="uib-src-puck" class="seg-btn" data-uib-act="use-puck" data-tip="切换完整 Puck 可视化窗口（需装妥 measuredco/puck）">Puck完整窗口</button>',
+      '      <button type="button" id="uib-src-proto" class="seg-btn is-active" data-uib-act="use-prototype" data-tip="内置原型窗口（原生交互 + Lovinsp 悬浮定位 + Alt+单击抓取组件栈）">内置原型</button>',
+      '      <button type="button" id="uib-src-puck" class="seg-btn" data-uib-act="use-puck" data-tip="切换完整 Puck 可视化积木编排画布（基于 @puckeditor/core）">Puck完整窗口</button>',
       '    </div>',
       '    <div class="flex items-center gap-1">',
       '      <input id="uib-dev-url" type="text" placeholder="本地运行服务如 http://127.0.0.1:5173" class="px-2 py-1 rounded-lg border text-[11px] font-mono w-52 outline-none" style="background: var(--surface-soft); border-color: var(--border-subtle); color: var(--text-main);">',
@@ -147,8 +165,10 @@ function renderUiBoardStageDom(forceReloadIframe) {
       '    <span id="uib-selection-banner" class="text-[11px] flex items-center gap-1.5" style="color: var(--text-secondary);"></span>',
       '  </div>',
       '  <div class="flex items-center gap-1.5">',
+      '    <button type="button" id="uib-toolchain-pill" class="px-2 py-0.5 rounded-full text-[11px] font-semibold border cursor-pointer" data-uib-act="provision-ui-deps" style="background: var(--surface-soft); border-color: var(--border-subtle); color: var(--text-secondary);"></button>',
+      '    <button type="button" class="ghost-btn text-[11px] px-2 py-1" data-uib-act="refresh-uiboard" data-tip="立即重新扫描 _shared/npm 与 uiboard 增强套件并刷新预览窗口">↻ 刷新</button>',
       '    <span id="uib-selfplay-pill" class="px-2 py-0.5 rounded-full text-[11px] font-semibold" style="background: var(--surface-soft); color: var(--text-secondary);"></span>',
-      '    <button type="button" class="ghost-btn text-[11px]" data-uib-act="run-self-play" data-tip="让 Agent 自动点按控件排雷并检查反AI模板脸">🤖 Agent点按自测</button>',
+      '    <button type="button" class="ghost-btn text-[11px]" data-uib-act="run-self-play" data-tip="调用 agent-browser 与内置探针自动点按控件排雷并检查反AI模板脸">🤖 Agent点按自测</button>',
       '  </div>',
       '</div>',
       '<div class="flex-1 min-h-0 overflow-auto p-3 flex justify-center items-stretch" style="flex:1 1 0%;min-height:0;background:var(--bg-app);">',
@@ -171,6 +191,14 @@ function renderUiBoardStageDom(forceReloadIframe) {
   if (wrap) wrap.style.width = vpWidth;
   const urlInp = document.getElementById('uib-dev-url');
   if (urlInp && !urlInp.matches(':focus')) urlInp.value = uiBoardState.devUrl;
+  const tcPill = document.getElementById('uib-toolchain-pill');
+  if (tcPill) {
+    const tc = uiBoardState.toolchain || {};
+    tcPill.textContent = tc.badgeLabel || '📦 按需补齐 UI 增强套件';
+    tcPill.style.color = tc.ready ? 'var(--ok)' : (tc.readyCount > 0 ? 'var(--primary)' : 'var(--text-secondary)');
+    tcPill.style.background = tc.ready ? 'var(--ok-bg)' : 'var(--surface-soft)';
+    tcPill.setAttribute('data-tip', tc.versionSummary ? ('已激活版本：' + tc.versionSummary) : '点击检查或补齐 @puckeditor/core、lovinsp、react-grab、agent-browser');
+  }
   const spPill = document.getElementById('uib-selfplay-pill');
   if (spPill) {
     spPill.textContent = uiBoardState.selfPlayBadge + (uiBoardState.runtimeErrors > 0 ? (' · ⚠ ' + uiBoardState.runtimeErrors + ' 报错') : '');
@@ -187,9 +215,10 @@ function renderUiBoardStageDom(forceReloadIframe) {
 
 function renderUiBoardDrawer(headEl, bodyEl, footEl) {
   const mockPending = uiBoardState.wiringActions.filter((a) => a.status === 'mock').length;
+  const tc = uiBoardState.toolchain || {};
   headEl.innerHTML = [
     '<span class="text-xs font-semibold" style="color: var(--text-secondary);">UI 看板控制台</span>',
-    '<span class="text-[10.5px] px-1.5 py-0.2 rounded font-semibold" style="background: var(--primary-soft); color: var(--primary);">实时换肤</span>'
+    '<span class="text-[10.5px] px-1.5 py-0.2 rounded font-semibold" style="background: ' + (tc.ready ? 'var(--ok-bg)' : 'var(--primary-soft)') + '; color: ' + (tc.ready ? 'var(--ok)' : 'var(--primary)') + ';">' + (tc.ready ? '4/4 已激活' : '实时换肤') + '</span>'
   ].join('');
 
   const grouped = new Map();
@@ -239,7 +268,8 @@ function renderUiBoardDrawer(headEl, bodyEl, footEl) {
     '</div>'
   ].join('\\n');
 
-  footEl.innerHTML = '<button type="button" data-ui-owner="runner/atlas/wb-uiboard.mjs" data-uib-act="provision-ui-deps" class="ghost-btn w-full justify-center text-[11px]" data-tip="按需派发编队子代理将 measuredco/puck、lovinsp、react-grab、agent-browser 安装至 workflows/.deps/uiboard/">📦 按需补齐 UI 增强套件</button>';
+  const verLine = tc.versionSummary ? ('<div class="text-[10px] font-mono truncate text-center" style="color:var(--text-muted);" title="' + esc(tc.versionSummary) + '">' + esc(tc.versionSummary) + '</div>') : '';
+  footEl.innerHTML = verLine + '<button type="button" data-ui-owner="runner/atlas/wb-uiboard.mjs" data-uib-act="provision-ui-deps" class="ghost-btn w-full justify-center text-[11px]" style="' + (tc.ready ? 'color:var(--ok);border-color:var(--ok);' : '') + '" data-tip="' + esc(tc.versionSummary || '按需派发编队子代理将 @puckeditor/core、lovinsp、react-grab、agent-browser 安装至共享底座池') + '">' + esc(tc.badgeLabel || '📦 按需补齐 UI 增强套件') + '</button>';
 }
 
 window.addEventListener('message', async (ev) => {
@@ -253,6 +283,8 @@ window.addEventListener('message', async (ev) => {
     if (typeof buildDshQuoteTarget === 'function' && typeof emitDshQuote === 'function') {
       const srcFile = String(p.sourceFile || '.donegate/ui-prototype/index.html');
       const srcLine = p.sourceLine || 1;
+      const stackTxt = Array.isArray(p.componentStack) && p.componentStack.length ? (' · 组件栈: ' + p.componentStack.join(' > ')) : '';
+      const domSnap = p.domSnapshot ? (' · DOM快照: ' + String(p.domSnapshot).slice(0, 140)) : '';
       const q = buildDshQuoteTarget({
         kind: 'ui',
         id: 'ui-' + (p.actionId || (p.tag + '-' + srcLine)),
@@ -261,13 +293,14 @@ window.addEventListener('message', async (ev) => {
         scopes: [srcFile],
         uiOwner: p.uiOwner || 'runner/atlas/wb-uiboard.mjs',
         sliceCmd: p.sliceCmd || null,
-        desc: 'UI元素 <' + (p.tag || 'div') + '>「' + (p.label || '') + '」位于 ' + srcFile + ':' + srcLine + (p.wiringState === 'mock' ? '（前端 Mock 待接真后端）' : '')
+        desc: 'UI元素 <' + (p.tag || 'div') + '>「' + (p.label || '') + '」位于 ' + srcFile + ':' + srcLine + stackTxt + (p.wiringState === 'mock' ? '（前端 Mock 待接真后端）' : '') + domSnap
       });
       emitDshQuote(q);
     }
   } else if (d.type === 'dg-ui:inline-text-edited') {
     if (/^https?:$/i.test(location.protocol)) {
-      fetch('/donegate/api/uiboard/inline-edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) }).catch((err) => { void err; });
+      const url = typeof withDshSessionUrl === 'function' ? withDshSessionUrl('/donegate/api/uiboard/inline-edit') : '/donegate/api/uiboard/inline-edit';
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) }).catch((err) => { void err; });
     }
     showToast('✏️ 已原地更新界面文案：「' + String(p.after || '').slice(0, 18) + '」');
   } else if (d.type === 'dg-ui:runtime-error') {
@@ -300,10 +333,15 @@ document.addEventListener('click', async (e) => {
   const actEl = e.target.closest('[data-uib-act]');
   if (!actEl) return;
   const act = actEl.getAttribute('data-uib-act');
+  const wrapApi = (u) => (typeof withDshSessionUrl === 'function' ? withDshSessionUrl(u) : u);
 
   if (act === 'set-vp') {
     uiBoardState.viewport = actEl.getAttribute('data-uib-vp') || 'desktop';
     renderUiBoardStageDom(false);
+  } else if (act === 'refresh-uiboard') {
+    const u = await syncUiBoardBackendStatus(true);
+    const tc = (u && u.toolchain) || uiBoardState.toolchain;
+    showToast(tc && tc.readyCount > 0 ? ('已同步 UI 增强套件：' + tc.badgeLabel + (tc.versionSummary ? '（' + tc.versionSummary + '）' : '')) : '已刷新 UI 看板状态与预览');
   } else if (act === 'connect-dev-url') {
     const val = (document.getElementById('uib-dev-url')?.value || '').trim();
     if (!val) { showToast('请先输入本地服务地址，例如 http://127.0.0.1:5173'); return; }
@@ -316,13 +354,14 @@ document.addEventListener('click', async (e) => {
     uiBoardState.sourceMode = 'prototype'; uiBoardState.editorMode = 'builtin';
     reloadUiBoardIframe(); renderUiBoardStageDom(false); showToast('已切换至内置原型完整窗口');
   } else if (act === 'use-puck') {
-    if (!uiBoardState.puckInstalled) { showToast('尚未检测到 measuredco/puck，请先点击左栏底部「📦 按需补齐 UI 增强套件」'); return; }
+    if (!uiBoardState.puckInstalled) await syncUiBoardBackendStatus(false);
+    if (!uiBoardState.puckInstalled) { showToast('尚未检测到 @puckeditor/core，请先点击「📦 按需补齐 UI 增强套件」'); return; }
     uiBoardState.sourceMode = 'prototype'; uiBoardState.editorMode = 'puck';
-    reloadUiBoardIframe(); renderUiBoardStageDom(false); showToast('已切换至完整 Puck 可视化窗口');
+    reloadUiBoardIframe(); renderUiBoardStageDom(false); showToast('已切换至完整 Puck 可视化积木编排画布');
   } else if (act === 'lock-theme') {
     uiBoardState.lockedProposalId = uiBoardState.activeProposalId;
     if (/^https?:$/i.test(location.protocol)) {
-      await fetch('/donegate/api/uiboard/theme-lock', {
+      await fetch(wrapApi('/donegate/api/uiboard/theme-lock'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ proposalId: uiBoardState.activeProposalId, projectName: (ATLAS && ATLAS.project && ATLAS.project.name) || 'Project' })
       });
@@ -331,13 +370,13 @@ document.addEventListener('click', async (e) => {
     showToast('🔒 已将当前美学方案锁定写入 design-system/MASTER.md');
   } else if (act === 'run-self-play') {
     if (/^https?:$/i.test(location.protocol)) {
-      const r = await fetch('/donegate/api/uiboard/self-play', {
+      const r = await fetch(wrapApi('/donegate/api/uiboard/self-play'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ proposalId: uiBoardState.activeProposalId, liveUrl: uiBoardState.sourceMode === 'proxy' ? uiBoardState.devUrl : null })
       });
       const rep = await r.json();
       uiBoardState.selfPlayOk = Boolean(rep.ok);
-      uiBoardState.selfPlayBadge = rep.ok ? ('✓ 自测 ' + rep.checkedControls + ' 控件 0 报错') : ('⚠ ' + (rep.issues || []).length + ' 项待修');
+      uiBoardState.selfPlayBadge = rep.ok ? ('✓ 自测 ' + rep.checkedControls + ' 控件' + (rep.engine === 'agent-browser' ? ' (agent-browser)' : ' 0 报错')) : ('⚠ ' + (rep.issues || []).length + ' 项待修');
       renderUiBoardStageDom(false);
       showToast(rep.summary || '已完成 Agent 自动点按自测');
       return;
@@ -348,7 +387,7 @@ document.addEventListener('click', async (e) => {
   } else if (act === 'wire-single' || act === 'wire-all') {
     const ids = act === 'wire-single' ? [actEl.getAttribute('data-act-id')] : [];
     if (/^https?:$/i.test(location.protocol)) {
-      const r = await fetch('/donegate/api/uiboard/wire-backend', {
+      const r = await fetch(wrapApi('/donegate/api/uiboard/wire-backend'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionIds: ids, markWired: true })
       });
@@ -366,19 +405,22 @@ document.addEventListener('click', async (e) => {
   } else if (act === 'provision-ui-deps') {
     if (/^https?:$/i.test(location.protocol)) {
       const sessId = typeof DSH_SESSION_ID !== 'undefined' ? DSH_SESSION_ID : 'default';
-      const r = await fetch('/donegate/api/uiboard/provision', {
+      const r = await fetch(wrapApi('/donegate/api/uiboard/provision'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: sessId, spawnSubagent: true })
       });
       const rep = await r.json().catch(() => ({}));
+      if (rep && rep.toolchain) applyUiBoardToolchainSnapshot(rep.toolchain);
       if (rep && rep.ready) {
         uiBoardState.puckInstalled = Boolean(rep.puckInstalled ?? true);
-        renderLeftDrawer(); renderUiBoardStageDom(false);
-        showToast('✅ UI 增强套件（measuredco/puck、lovinsp、react-grab、agent-browser）已就位');
+        renderLeftDrawer(); renderUiBoardStageDom(true);
+        showToast('✅ ' + ((uiBoardState.toolchain && uiBoardState.toolchain.badgeLabel) || 'UI 增强套件 (4/4) 已激活') + (uiBoardState.toolchain.versionSummary ? '：' + uiBoardState.toolchain.versionSummary : ''));
       } else if (rep && rep.subagentDispatched) {
+        if (typeof startWorkflowDepsPoll === 'function') startWorkflowDepsPoll('uiboard', null);
         showToast('🚀 已在编队派发子代理（' + (rep.subagentName || 'worker') + '）后台安装 UI 增强套件');
       } else if (rep && rep.fallbackAutoSubmit && typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
         window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:dispatch-subagent', prompt: rep.agentPrompt }, '*');
+        if (typeof startWorkflowDepsPoll === 'function') startWorkflowDepsPoll('uiboard', null);
         showToast('🚀 已触发主对话拉起编队子代理安装 UI 增强套件');
       } else {
         showToast('当前为离线静态快照，请在 DSH Web 中打开以派发编队子代理安装 UI 增强套件');

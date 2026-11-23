@@ -1,39 +1,87 @@
-// Agent Native UI 看板全栈引擎：本地 UI 自动探测、Puck 式 JSON 声明式布局渲染、agent-browser 自测排雷与假动作转真后端接线账本
-import { spawnSync } from 'node:child_process';
+// Agent Native UI 看板全栈引擎：本地 UI 自动探测、Puck 可视化布局渲染、agent-browser 异步自测排雷与假动作转真后端接线账本
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { basename, join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
 import {
   AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
-  lockDesignSystemMaster, readDesignSystemLock, recommendAestheticProposals
+  readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
 import { ARCHETYPE_CSS, renderProposalArchetypeBody, resolveProposalArchetype } from './ui-archetypes.mjs';
+import { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
+import { renderPuckInteractiveEditorHtml } from './ui-puck-editor.mjs';
 import { buildWinCmdSpawn } from './win-paths.mjs';
-import { findExecutableInDirs, getSharedWorkflowDepsPaths, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
+import {
+  findExecutableInDirs, getSharedWorkflowDepsPaths, getWorkflowDepsPaths,
+  inspectWorkflowDeps, provisionWorkflowDeps, verifyInstalledNpmPackage
+} from './workflow-deps.mjs';
 
 export const UI_TOOLCHAIN_DEPS_PACK = {
   id: 'uiboard',
   name: 'UI 看板增强套件（跨框架点选 / 拖拽 / Agent 自测）',
   deps: [
-    { id: 'lovinsp', title: 'Lovinsp 跨框架 DOM 源码定位器', repo: 'lovstudio/lovinsp', version: 'v1.8.0', kind: 'npm', pkg: 'lovinsp', bin: 'lovinsp' },
-    { id: 'react-grab', title: 'React Grab 组件栈拾取器', repo: 'aidenybai/react-grab', version: 'v0.1.0', kind: 'npm', pkg: 'react-grab' },
-    { id: 'puck', title: 'Puck 模块化拖拽布局核', repo: 'measuredco/puck', version: 'v0.24.1', kind: 'npm', pkg: '@puckeditor/core' },
-    { id: 'agent-browser', title: 'Vercel Agent Browser 自测 CLI', repo: 'vercel-labs/agent-browser', version: 'v0.43.0', kind: 'npm', pkg: 'agent-browser', bin: 'agent-browser' }
+    { id: 'lovinsp', title: 'Lovinsp 跨框架 DOM 源码定位器', repo: 'lovstudio/lovinsp', version: 'v1.8.0', kind: 'npm-lib', pkg: 'lovinsp' },
+    { id: 'react-grab', title: 'React Grab 组件栈拾取器', repo: 'aidenybai/react-grab', version: 'v0.1.0', kind: 'npm-lib', pkg: 'react-grab' },
+    { id: 'puck', title: 'Puck 模块化拖拽布局核', repo: 'measuredco/puck', version: 'v0.24.1', kind: 'npm-lib', pkg: '@puckeditor/core' },
+    { id: 'agent-browser', title: 'Vercel Agent Browser 自测 CLI', repo: 'vercel-labs/agent-browser', version: 'v0.43.0', kind: 'npm-cli', pkg: 'agent-browser', bin: 'agent-browser' }
   ],
   nodes: []
 };
 
-export function isPuckInstalled(projectRoot) {
+export function readUiToolchainStatus(projectRoot) {
   const root = resolve(projectRoot);
   const uiPaths = getWorkflowDepsPaths(root, 'uiboard');
   const sharedPaths = getSharedWorkflowDepsPaths(root);
-  const candidates = [
-    join(uiPaths.absDir, 'npm', 'node_modules', '@puckeditor', 'core', 'package.json'),
-    join(uiPaths.absDir, 'node_modules', '@puckeditor', 'core', 'package.json'),
-    join(sharedPaths.absDir, 'npm', 'node_modules', '@puckeditor', 'core', 'package.json'),
-    join(sharedPaths.absDir, 'node_modules', '@puckeditor', 'core', 'package.json')
-  ];
-  return candidates.some((p) => existsSync(p));
+  const rep = inspectWorkflowDeps(root, UI_TOOLCHAIN_DEPS_PACK);
+  const byId = new Map((rep.items || []).map((x) => [x.id, x]));
+  const tools = {};
+  const versions = {};
+  for (const dep of UI_TOOLCHAIN_DEPS_PACK.deps) {
+    const npmChk = verifyInstalledNpmPackage(root, dep.pkg, 'uiboard');
+    const item = byId.get(dep.id);
+    const ready = Boolean((item && item.ready) || (dep.kind === 'npm-lib' && npmChk.ok));
+    const ver = (npmChk.ok && npmChk.version) || (item && item.detectedVersion) || (ready ? String(dep.version || '').replace(/^v/i, '') : '');
+    tools[dep.id] = {
+      id: dep.id, pkg: dep.pkg, kind: dep.kind, ready, version: ver,
+      resolvedVia: (item && item.resolvedVia) || (npmChk.ok ? `${npmChk.scope}-npm-pkg` : null),
+      entryPath: npmChk.ok ? npmChk.relEntry : (item?.resolvedPath || null)
+    };
+    if (ver) versions[dep.id] = ver;
+  }
+  const abBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir, sharedPaths.binDir, sharedPaths.npmBinDir]);
+  if (abBin && !tools['agent-browser'].ready) {
+    const abNpm = verifyInstalledNpmPackage(root, 'agent-browser', 'uiboard');
+    tools['agent-browser'].ready = true;
+    tools['agent-browser'].version = (abNpm.ok && abNpm.version) || tools['agent-browser'].version || '0.43.0';
+    versions['agent-browser'] = tools['agent-browser'].version;
+  }
+  const readyList = Object.values(tools).filter((t) => t.ready);
+  const readyCount = readyList.length;
+  const total = UI_TOOLCHAIN_DEPS_PACK.deps.length;
+  const verSummary = readyList.map((t) => `${t.id}${t.version ? '@' + t.version : ''}`).join(' · ');
+  return {
+    ready: readyCount === total,
+    readyCount,
+    total,
+    missingCount: total - readyCount,
+    puckInstalled: Boolean(tools.puck?.ready),
+    lovinspInstalled: Boolean(tools.lovinsp?.ready),
+    reactGrabInstalled: Boolean(tools['react-grab']?.ready),
+    agentBrowserInstalled: Boolean(tools['agent-browser']?.ready),
+    agentBrowserBin: abBin || null,
+    versions,
+    versionSummary: verSummary,
+    tools,
+    refreshStamp: rep.refreshStamp,
+    badgeLabel: readyCount === total
+      ? `✓ 增强套件已激活 (${readyCount}/${total})`
+      : (readyCount > 0 ? `⚡ 增强套件已就绪 (${readyCount}/${total})` : '📦 按需补齐 UI 增强套件')
+  };
+}
+
+export function isPuckInstalled(projectRoot) {
+  return readUiToolchainStatus(projectRoot).puckInstalled;
 }
 
 export const PUCK_BLOCK_TEMPLATES = {
@@ -125,16 +173,41 @@ function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function decorateInspectorMetadata(rawBody, archetype, blockTypeMap) {
+  const withBlocks = rawBody.replace(/data-dg-block="([^"]+)"(\s+data-dg-source="([^"]+)")?/g, (_m, blkId, _s, src) => {
+    const bType = blockTypeMap.get(blkId) || 'section';
+    const insp = src ? ` data-insp-path="${src}" data-dg-source="${src}"` : ` data-insp-path=".donegate/ui-prototype/index.html:1:1"`;
+    return `data-dg-block="${blkId}" data-dg-component="${bType}" data-component-stack="UIPrototype > ${archetype} > ${bType}#${blkId}"${insp}`;
+  });
+  return withBlocks.replace(/(?<!data-insp-path="[^"]*"\s)data-dg-source="([^"]+)"/g, 'data-insp-path="$1" data-dg-source="$1"');
+}
+
 export function renderPrototypeHtml(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const { layout, wiring } = loadOrInitUiLayoutAndWiring(root);
+  const toolchain = readUiToolchainStatus(root);
   const lock = readDesignSystemLock(root);
   const activeProposalId = opts.proposalId || lock?.proposalId || 'swiss-minimal';
   const archetype = resolveProposalArchetype(activeProposalId);
   const cssVars = buildCssVariablesStyleText(activeProposalId);
-  const wireById = new Map(wiring.actions.map((a) => [a.actionId, a.status === 'wired' || a.status === 'verified' ? 'wired' : 'mock']));
 
+  if (opts.editorMode === 'puck' && toolchain.puckInstalled) {
+    const puckHtml = renderPuckInteractiveEditorHtml({
+      layout, wiring, activeProposalId, archetype, cssVars,
+      puckVersion: toolchain.versions.puck || '0.24.1',
+      blockTemplates: PUCK_BLOCK_TEMPLATES,
+      toolchain
+    });
+    const protoDir = join(root, '.donegate', 'ui-prototype');
+    mkdirSync(protoDir, { recursive: true });
+    const puckOutPath = join(protoDir, 'puck-editor.html');
+    writeFileSync(puckOutPath, puckHtml, 'utf8');
+    return { outPath: puckOutPath, html: puckHtml, editorMode: 'puck', activeProposalId, archetype, layout, wiring, toolchain };
+  }
+
+  const wireById = new Map(wiring.actions.map((a) => [a.actionId, a.status === 'wired' || a.status === 'verified' ? 'wired' : 'mock']));
   const content = layout.content || [];
+  const blockTypeMap = new Map(content.map((b) => [b.id, b.type]));
   const findBlk = (t) => content.find((b) => b.type === t);
   const usedIds = new Set();
   const hBlk = findBlk('hero_nav'); if (hBlk) usedIds.add(hBlk.id);
@@ -150,7 +223,7 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
   const kp = (kBlk && kBlk.props) || PUCK_BLOCK_TEMPLATES.kpi_row.defaultProps;
   const fp = (fBlk && fBlk.props) || PUCK_BLOCK_TEMPLATES.action_form.defaultProps;
   const tp = (tBlk && tBlk.props) || PUCK_BLOCK_TEMPLATES.data_table.defaultProps;
-  const bodyMarkup = renderProposalArchetypeBody(activeProposalId, {
+  const rawBodyMarkup = renderProposalArchetypeBody(activeProposalId, {
     sourceFile: '.donegate/ui-prototype/index.html',
     hero: { id: (hBlk && hBlk.id) || 'blk-hero', ...hp, ctaWiring: wireById.get(hp.ctaActionId) || 'mock' },
     kpi: { id: (kBlk && kBlk.id) || 'blk-kpi', ...kp },
@@ -158,6 +231,7 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
     table: { id: (tBlk && tBlk.id) || 'blk-table', ...tp, exportWiring: wireById.get(tp.exportActionId) || 'mock' },
     extraBlocks
   });
+  const bodyMarkup = decorateInspectorMetadata(rawBodyMarkup, archetype, blockTypeMap);
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -174,7 +248,7 @@ ${ARCHETYPE_CSS}
     #ui-confirm-modal { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: none; align-items: center; justify-content: center; z-index: 9100; }
   </style>
 </head>
-<body data-proposal-id="${escHtml(activeProposalId)}" data-archetype="${escHtml(archetype)}">
+<body data-proposal-id="${escHtml(activeProposalId)}" data-archetype="${escHtml(archetype)}" data-lovinsp-active="${toolchain.lovinspInstalled ? '1' : '0'}" data-lovinsp-version="${escHtml(toolchain.versions.lovinsp || '')}" data-react-grab-active="${toolchain.reactGrabInstalled ? '1' : '0'}" data-react-grab-version="${escHtml(toolchain.versions['react-grab'] || '')}">
 ${bodyMarkup}
   <div id="ui-mock-toast"></div>
   <div id="ui-confirm-modal">
@@ -215,7 +289,7 @@ ${bodyMarkup}
   mkdirSync(protoDir, { recursive: true });
   const outPath = join(protoDir, 'index.html');
   writeFileSync(outPath, html, 'utf8');
-  return { outPath, html, activeProposalId, archetype, layout, wiring };
+  return { outPath, html, editorMode: 'builtin', activeProposalId, archetype, layout, wiring, toolchain };
 }
 
 export function mutateUiLayoutBlocks(projectRoot, mutation = {}) {
@@ -241,6 +315,9 @@ export function mutateUiLayoutBlocks(projectRoot, mutation = {}) {
   } else if (mutation.op === 'remove' && mutation.blockId) {
     const idx = list.findIndex((x) => x.id === mutation.blockId);
     if (idx >= 0) list.splice(idx, 1);
+  } else if (mutation.op === 'update_props' && mutation.blockId && mutation.props && typeof mutation.props === 'object') {
+    const idx = list.findIndex((x) => x.id === mutation.blockId);
+    if (idx >= 0) list[idx] = { ...list[idx], props: { ...(list[idx].props || {}), ...mutation.props } };
   }
 
   const nextLayout = { ...layout, content: list, updatedAt: new Date().toISOString() };
@@ -257,11 +334,16 @@ export function detectProjectUiEntry(projectRoot) {
   const proposals = recommendAestheticProposals(intentTxt + ' ' + basename(root), 3);
   const lock = readDesignSystemLock(root);
   const proto = renderPrototypeHtml(root, { proposalId: lock?.proposalId || proposals[0]?.id });
+  const tc = proto.toolchain || readUiToolchainStatus(root);
 
   return {
     projectName: basename(root),
     hasDevScript,
-    puckInstalled: isPuckInstalled(root),
+    puckInstalled: tc.puckInstalled,
+    lovinspInstalled: tc.lovinspInstalled,
+    reactGrabInstalled: tc.reactGrabInstalled,
+    agentBrowserInstalled: tc.agentBrowserInstalled,
+    toolchain: tc,
     suggestedDevUrl: scripts.dev && String(scripts.dev).includes('next') ? 'http://127.0.0.1:3000' : (hasDevScript ? 'http://127.0.0.1:5173' : null),
     previewPath: '/donegate/api/uiboard/prototype',
     activeProposalId: proto.activeProposalId,
@@ -275,10 +357,25 @@ export function detectProjectUiEntry(projectRoot) {
   };
 }
 
-/**
- * Phase 2：Agent 自动点按自测排雷（优先调已补齐的 agent-browser CLI，内置零依赖 DOM/交互动作/反AI模板脸静态探针兜底）
- */
-export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
+function spawnAsync(bin, args, timeoutMs = 8000) {
+  return new Promise((resolveRun) => {
+    let cmd = bin, cmdArgs = args, extra = { windowsHide: true };
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+      const wb = buildWinCmdSpawn(bin, args);
+      cmd = wb.cmd; cmdArgs = wb.args; extra = { windowsHide: true, ...wb.extraOpts };
+    }
+    let stdout = '', stderr = '', settled = false;
+    const done = (status) => { if (!settled) { settled = true; clearTimeout(timer); resolveRun({ status, stdout, stderr }); } };
+    const child = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'], ...extra });
+    const timer = setTimeout(() => { try { child.kill(); } catch (err) { void err; } done(124); }, timeoutMs);
+    child.stdout?.on('data', (c) => { stdout += String(c); });
+    child.stderr?.on('data', (c) => { stderr += String(c); });
+    child.on('error', (err) => { stderr += String(err.message || err); done(1); });
+    child.on('close', (code) => done(code ?? 1));
+  });
+}
+
+export async function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const proto = renderPrototypeHtml(root, opts);
   const html = proto.html;
@@ -288,31 +385,55 @@ export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
 
   let cliUsed = 'builtin-dom-probe';
   let cliSnapSummary = null;
-  const uiPaths = getWorkflowDepsPaths(root, 'uiboard');
-  const sharedPaths = getSharedWorkflowDepsPaths(root);
-  const localAbBin = findExecutableInDirs('agent-browser', [uiPaths.binDir, uiPaths.npmBinDir, sharedPaths.binDir, sharedPaths.npmBinDir]);
-  const runAb = (abArgs) => {
-    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(localAbBin)) {
-      const wb = buildWinCmdSpawn(localAbBin, abArgs);
-      return spawnSync(wb.cmd, wb.args, { encoding: 'utf8', timeout: 8000, ...wb.extraOpts });
-    }
-    return spawnSync(localAbBin, abArgs, { encoding: 'utf8', timeout: 8000, windowsHide: true });
-  };
-  if (opts.liveUrl && localAbBin && existsSync(localAbBin)) {
-    const snap = runAb(['open', opts.liveUrl]);
-    if (snap.status === 0) {
-      cliUsed = 'agent-browser';
-      const s2 = runAb(['snapshot', '-i']);
-      cliSnapSummary = (s2.stdout || '').slice(0, 600);
+  let cliExitCode = null;
+  let cliDiagnostic = null;
+  const tc = proto.toolchain || readUiToolchainStatus(root);
+  const localAbBin = tc.agentBrowserBin;
+
+  if (localAbBin && existsSync(localAbBin)) {
+    let tempServer = null;
+    let targetUrl = opts.liveUrl || '';
+    try {
+      if (!targetUrl) {
+        const bridgeJs = buildInjectedUiBridgeScript();
+        tempServer = createServer((req, res) => {
+          if ((req.url || '').startsWith('/donegate/api/uiboard/bridge.js')) {
+            res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
+            res.end(bridgeJs);
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(html);
+        });
+        await new Promise((r) => tempServer.listen(0, '127.0.0.1', r));
+        targetUrl = `http://127.0.0.1:${tempServer.address().port}/`;
+      }
+      const openRes = await spawnAsync(localAbBin, ['open', targetUrl], 8000);
+      cliExitCode = openRes.status;
+      if (openRes.status === 0) {
+        cliUsed = 'agent-browser';
+        const s2 = await spawnAsync(localAbBin, ['snapshot', '-i'], 8000);
+        cliSnapSummary = ((s2.stdout || openRes.stdout || '')).trim().slice(0, 600);
+        await spawnAsync(localAbBin, ['close'], 3000);
+      } else {
+        cliDiagnostic = (openRes.stderr || openRes.stdout || `exit ${openRes.status}`).trim().slice(0, 240);
+      }
+    } finally {
+      if (tempServer) tempServer.close();
     }
   }
 
   const issues = [...slopAudit.warnings];
   if (interactiveTags.length === 0) issues.push('页面未检出任何可交互按钮或输入控件');
+  const engineNote = cliUsed === 'agent-browser' ? '（agent-browser 实机快照通过）' : (localAbBin ? '（已调 agent-browser 并结合 DOM 探针核验）' : '');
 
   return {
     ok: issues.length === 0,
     engine: cliUsed,
+    agentBrowserDetected: Boolean(localAbBin),
+    agentBrowserBin: localAbBin || null,
+    cliExitCode,
+    cliDiagnostic,
     checkedControls: interactiveTags.length,
     interactiveActions: actionMatches,
     mockCount: proto.wiring.actions.filter((a) => a.status === 'mock').length,
@@ -321,14 +442,11 @@ export function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
     cliSnapSummary,
     issues,
     summary: issues.length === 0
-      ? `🤖 Agent 自测通过：已巡检 ${interactiveTags.length} 个交互控件与 ${actionMatches.length} 条动作链路，0 遮挡死点，美学反套路核查通过`
+      ? `🤖 Agent 自测通过${engineNote}：已巡检 ${interactiveTags.length} 个交互控件与 ${actionMatches.length} 条动作链路，0 遮挡死点，美学反套路核查通过`
       : `🤖 Agent 自测发现 ${issues.length} 项待修问题：${issues.join('；')}`
   };
 }
 
-/**
- * Phase 3：将前端 Mock 假跳转/假按钮渐进接通为真实后端 API、数据库表与 DoneGate 验收判据
- */
 export function buildBackendWiringPlan(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const { wiring } = loadOrInitUiLayoutAndWiring(root);

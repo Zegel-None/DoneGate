@@ -103,12 +103,8 @@ export function repairGitRepoCleanIndex(repoDir, env = process.env, opts = {}) {
     return { ok: false, hasGit: true, lockRemoved: lockClean.removed, reason: 'MISSING_GIT_HEAD' };
   }
 
+  // 严禁执行 git add -A（防止静默吞掉工作树人工改动或纳入未跟踪文件）；仅重置索引至 HEAD 清除虚假 D 记录
   runHardenedGit(absRepo, ['read-tree', '--reset', 'HEAD'], env);
-  const midSt = runHardenedGit(absRepo, ['status', '--porcelain'], env);
-  if (!midSt.ok || countPorcelainDeletedEntries(midSt.stdout) > 0 || opts.stageWorktree === true) {
-    cleanStaleGitIndexLock(absRepo, opts);
-    runHardenedGit(absRepo, ['add', '-A'], env);
-  }
   const afterSt = runHardenedGit(absRepo, ['status', '--porcelain'], env);
   const dirtyDeletionsAfter = countPorcelainDeletedEntries(afterSt.stdout);
   if (dirtyDeletionsAfter > 0 && opts.degradeBrokenGitToSnapshot === true) {
@@ -213,7 +209,11 @@ export async function downloadWithRangeResume(url, destPath, opts = {}) {
   const actualSha256 = sha256(readFileSync(partPath));
   if (opts.expectedSha256) {
     const want = String(opts.expectedSha256).trim().replace(/^sha256:/i, '').toLowerCase();
-    if (actualSha256 !== want) throw new Error(`SHA-256 verification failed: expected ${want}, got ${actualSha256}`);
+    if (actualSha256 !== want) {
+      rmSync(partPath, { force: true });
+      if (existsSync(absDest)) rmSync(absDest, { force: true });
+      throw new Error(`SHA-256 verification failed: expected ${want}, got ${actualSha256}`);
+    }
   }
   if (existsSync(absDest)) rmSync(absDest, { force: true });
   renameSync(partPath, absDest);
@@ -254,6 +254,6 @@ export async function provisionCleanRepoSnapshot(opts = {}) {
       if (gitDir) rmSync(gitDir, { recursive: true, force: true });
     }
   }
-  const indexReport = repairGitRepoCleanIndex(repoDir, env, { ...opts, stageWorktree: true, degradeBrokenGitToSnapshot: opts.allowSnapshotFallback !== false });
+  const indexReport = repairGitRepoCleanIndex(repoDir, env, { ...opts, degradeBrokenGitToSnapshot: opts.allowSnapshotFallback !== false });
   return { ok: indexReport.ok, repoDir, archivePath, download: dl, indexReport };
 }

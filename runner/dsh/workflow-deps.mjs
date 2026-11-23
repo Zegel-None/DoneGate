@@ -12,18 +12,21 @@ import {
 } from './shared-pool-net.mjs';
 import {
   assertPureAsciiBatch, buildSharedPoolLauncherScripts, ensureSharedPoolSkeleton,
-  installSharedPoolBinaryDep, isWritableDir, readSharedRefreshStamp, recordSharedPoolDepReady,
-  refreshWorkflowDepsStamp, resolvePoolGradleUserHome, verifySharedPoolLauncher,
-  writeJsonAtomic, writeSharedPoolLaunchers
+  installSharedPoolBinaryDep, isWritableDir, parseFlexibleDepsManifest, readSharedRefreshStamp,
+  reconcileSharedPoolOnRefresh, recordSharedPoolDepReady, refreshWorkflowDepsStamp,
+  resolvePoolGradleUserHome, scanSharedPoolDiskInventory, verifyInstalledNpmPackage,
+  verifySharedPoolLauncher, writeJsonAtomic, writeSharedPoolLaunchers, writeStandaloneDepsCli
 } from './shared-pool-installer.mjs';
 
 export {
   DEFAULT_RANGE_CHUNK_BYTES, assertPureAsciiBatch, buildSharedPoolLauncherScripts,
   buildWinHardenedGitArgs, cleanStaleGitIndexLock, downloadWithRangeResume,
   ensureSharedPoolSkeleton, installSharedPoolBinaryDep, isWritableDir,
-  provisionCleanRepoSnapshot, readSharedRefreshStamp, recordSharedPoolDepReady,
-  refreshWorkflowDepsStamp, repairGitRepoCleanIndex, resolvePoolGradleUserHome,
-  verifySharedPoolLauncher, writeJsonAtomic, writeSharedPoolLaunchers
+  parseFlexibleDepsManifest, provisionCleanRepoSnapshot, readSharedRefreshStamp,
+  reconcileSharedPoolOnRefresh, recordSharedPoolDepReady, refreshWorkflowDepsStamp,
+  repairGitRepoCleanIndex, resolvePoolGradleUserHome, scanSharedPoolDiskInventory,
+  verifyInstalledNpmPackage, verifySharedPoolLauncher, writeJsonAtomic,
+  writeSharedPoolLaunchers, writeStandaloneDepsCli
 };
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -31,12 +34,30 @@ const BUILTIN_ZERO_DEP_TPLS = new Set([
   'tpl-blank', 'tpl-router-rule', 'tpl-router-ai', 'tpl-deai-polish', 'tpl-prompt-gen', 'tpl-anti-slop', 'tpl-human-gate'
 ]);
 const KNOWN_TEMPLATE_BINS = {
-  'tpl-openspec': { id: 'openspec', bin: 'openspec', repo: 'Fission-AI/OpenSpec', kind: 'npm', pkg: '@fission-ai/openspec' },
-  'tpl-biome-knip': { id: 'biome', bin: 'biome', repo: 'biomejs/biome', kind: 'npm', pkg: '@biomejs/biome' },
-  'tpl-gradle': { id: 'gradle', bin: 'gradle', repo: 'gradle/gradle', kind: 'binary' },
-  'tpl-maestro': { id: 'maestro', bin: 'maestro', repo: 'mobile-dev-inc/Maestro', kind: 'binary' },
-  'tpl-playwright': { id: 'playwright', bin: 'playwright', repo: 'microsoft/playwright', kind: 'npm', pkg: '@playwright/test' },
-  'tpl-gitleaks': { id: 'gitleaks', bin: 'gitleaks', repo: 'gitleaks/gitleaks', kind: 'binary' }
+  'tpl-openspec': { id: 'openspec', bin: 'openspec', repo: 'Fission-AI/OpenSpec', kind: 'npm-cli', pkg: '@fission-ai/openspec' },
+  'tpl-biome-knip': { id: 'biome', bin: 'biome', repo: 'biomejs/biome', kind: 'npm-cli', pkg: '@biomejs/biome' },
+  'tpl-gradle': { id: 'gradle', bin: 'gradle', repo: 'gradle/gradle', kind: 'archive-bin' },
+  'tpl-maestro': { id: 'maestro', bin: 'maestro', repo: 'mobile-dev-inc/Maestro', kind: 'archive-bin' },
+  'tpl-playwright': { id: 'playwright', bin: 'playwright', repo: 'microsoft/playwright', kind: 'npm-cli', pkg: '@playwright/test' },
+  'tpl-gitleaks': { id: 'gitleaks', bin: 'gitleaks', repo: 'gitleaks/gitleaks', kind: 'archive-bin' }
+};
+export const BUILTIN_CATALOG_PACK_SPECS = {
+  'pack-core-logic': { id: 'pack-core-logic', name: '核心纯逻辑工作流', nodes: [{ id: 'cl-1', tplId: 'tpl-anti-slop' }, { id: 'cl-2', tplId: 'tpl-router-rule' }, { id: 'cl-3', tplId: 'tpl-prompt-gen' }] },
+  'pack-api-guard': { id: 'pack-api-guard', name: '接口与密钥工作流', nodes: [{ id: 'ag-1', tplId: 'tpl-anti-slop' }, { id: 'ag-2', tplId: 'tpl-gitleaks', title: '密钥密码防泄漏', repoSlug: 'gitleaks/gitleaks', pinnedVersion: 'v8.18.4' }, { id: 'ag-3', tplId: 'tpl-router-rule' }] },
+  'pack-android': { id: 'pack-android', name: '安卓应用工作流', nodes: [{ id: 'n-guard', tplId: 'tpl-anti-slop' }, { id: 'n-gradle', tplId: 'tpl-gradle', title: '安卓安装包构建', repoSlug: 'gradle/gradle', pinnedVersion: 'v8.10.2' }, { id: 'n-maestro', tplId: 'tpl-maestro', title: '安卓界面交互验收', repoSlug: 'mobile-dev-inc/Maestro', pinnedVersion: 'v1.38.1' }] },
+  'pack-polish-loop': { id: 'pack-polish-loop', name: '去 AI 味润色工作流', nodes: [{ id: 'p-spec', tplId: 'tpl-openspec', title: '需求规格审校', repoSlug: 'Fission-AI/OpenSpec', pinnedVersion: 'v0.2.4' }, { id: 'p-loop', tplId: 'tpl-deai-polish' }, { id: 'p-final', tplId: 'tpl-prompt-gen' }] },
+  'pack-web': { id: 'pack-web', name: '网页全栈工作流', nodes: [{ id: 'w-1', tplId: 'tpl-anti-slop' }, { id: 'w-2', tplId: 'tpl-biome-knip', title: '语法与死代码检查', repoSlug: 'biomejs/biome', pinnedVersion: 'v1.9.4' }, { id: 'w-3', tplId: 'tpl-router-rule' }, { id: 'w-4', tplId: 'tpl-playwright', title: '网页真机点击联调', repoSlug: 'microsoft/playwright', pinnedVersion: 'v1.48.0' }, { id: 'w-5', tplId: 'tpl-prompt-gen' }] },
+  'pack-release': { id: 'pack-release', name: '上线安全工作流', nodes: [{ id: 'r-1', tplId: 'tpl-gitleaks', title: '密钥密码防泄漏', repoSlug: 'gitleaks/gitleaks', pinnedVersion: 'v8.18.4' }, { id: 'r-2', tplId: 'tpl-router-ai' }] },
+  uiboard: {
+    id: 'uiboard', name: 'UI 看板增强套件（跨框架点选 / 拖拽 / Agent 自测）',
+    deps: [
+      { id: 'lovinsp', title: 'Lovinsp 跨框架 DOM 源码定位器', repo: 'lovstudio/lovinsp', version: 'v1.8.0', kind: 'npm-lib', pkg: 'lovinsp', allowHostEnv: false },
+      { id: 'react-grab', title: 'React Grab 组件栈拾取器', repo: 'aidenybai/react-grab', version: 'v0.1.0', kind: 'npm-lib', pkg: 'react-grab', allowHostEnv: false },
+      { id: 'puck', title: 'Puck 模块化拖拽布局核', repo: 'measuredco/puck', version: 'v0.24.1', kind: 'npm-lib', pkg: '@puckeditor/core', allowHostEnv: false },
+      { id: 'agent-browser', title: 'Vercel Agent Browser 自测 CLI', repo: 'vercel-labs/agent-browser', version: 'v0.43.0', kind: 'npm-cli', pkg: 'agent-browser', bin: 'agent-browser', allowHostEnv: false }
+    ],
+    nodes: []
+  }
 };
 
 const sanitizeId = (s) => String(s || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'default';
@@ -45,6 +66,8 @@ const versionsMatch = (want, have) => {
   const w = normalizeDepVer(want), h = normalizeDepVer(have);
   return !w || !h || w === h;
 };
+const isNpmLibItem = (it) => Boolean(it && it.pkg && (it.kind === 'npm-lib' || (it.kind === 'npm' && !it.bin)));
+const isNpmCliItem = (it) => Boolean(it && it.pkg && (it.kind === 'npm-cli' || (it.kind === 'npm' && it.bin)));
 
 export function getWorkflowDepsPaths(projectRoot, packId, platform = process.platform) {
   const root = resolve(projectRoot);
@@ -89,19 +112,10 @@ function isNonEmptyRepoDir(dir) {
   try {
     if (!statSync(dir).isDirectory()) return false;
     return existsSync(join(dir, '.git')) || readdirSync(dir).length > 0;
-  } catch {
+  } catch (err) {
+    void err;
     return false;
   }
-}
-
-function findInstalledNpmPkg(absDepsDir, pkgName) {
-  if (!absDepsDir || !pkgName) return null;
-  const segs = String(pkgName).split('/').filter(Boolean);
-  for (const base of [join(absDepsDir, 'npm', 'node_modules'), join(absDepsDir, 'node_modules')]) {
-    const pkgJson = join(base, ...segs, 'package.json');
-    if (existsSync(pkgJson)) return pkgJson;
-  }
-  return null;
 }
 
 function readBrickMeta(projectRoot, toolName) {
@@ -126,13 +140,14 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
       return;
     }
     const repo = String(raw.repo || raw.repoSlug || '').trim();
+    const pkg = String(raw.pkg || raw.package || '').trim();
+    const bin = raw.kind === 'npm-lib' ? '' : String(raw.bin || '').trim();
+    const kind = String(raw.kind || (pkg ? (bin ? 'npm-cli' : 'npm-lib') : 'git'));
     byId.set(id, {
       id, title: String(raw.title || id), nodeIds: nodeId ? [nodeId] : [],
       repo, repoUrl: String(raw.repoUrl || (repo ? `https://github.com/${repo}` : '')),
       version: String(raw.version || raw.pinnedVersion || '').trim(),
-      kind: String(raw.kind || 'git'), bin: String(raw.bin || '').trim(),
-      pkg: String(raw.pkg || raw.package || '').trim(),
-      installCmd: String(raw.installCmd || '').trim(),
+      kind, bin, pkg, installCmd: String(raw.installCmd || '').trim(),
       allowHostEnv: raw.allowHostEnv !== false
     });
   };
@@ -161,7 +176,7 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
       addDep({
         id: toolName, title: nd.title || (cap && cap.card && cap.card.title) || toolName,
         repo: inst.repo || up.repo || nd.repoSlug || '', version: inst.version || nd.pinnedVersion || '',
-        kind: inst.kind || 'binary', bin: inst.bin !== undefined ? inst.bin : toolName,
+        kind: inst.kind || 'archive-bin', bin: inst.bin !== undefined ? inst.bin : toolName,
         pkg: inst.pkg || inst.package || '', installCmd: inst.installCmd || '',
         allowHostEnv: inst.allowHostEnv !== false
       }, nd.id);
@@ -178,41 +193,57 @@ export function resolveWorkflowDepItems(projectRoot, pack) {
 export function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missing) {
   const packId = sanitizeId((pack && pack.id) || 'default');
   const name = (pack && pack.name) || packId || '当前工作流';
+  const cliRel = `${sharedRelDir}/dg-deps-cli.mjs`;
   if (!missing.length) {
     return `工作流「${name}」所需的外部项目与环境依赖已全部就位（共享池：${sharedRelDir}，工作流目录：${relDepsDir}）。`;
   }
   const lines = [
-    `请为工作流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，统一装入跨工作流共享底座池 \`${sharedRelDir}/\`（自动递归创建 \`${sharedRelDir}/{.bin,dists,repos}\` 骨架，一次安装供所有工作流与节点级 JIT 派生工作流复用）：`
+    `请为工作流「${name}」在后台补齐以下 ${missing.length} 项开源项目与运行环境依赖，统一装入跨工作流共享底座池 \`${sharedRelDir}/\`（已预置零外部依赖自包含 CLI \`${cliRel}\`，自动维护 \`${sharedRelDir}/{.bin,dists,repos,npm}\` 四大目录，一次安装全局复用）：`
   ];
   for (const m of missing) {
     const ver = m.version ? ` (${m.version})` : '';
+    const cleanVer = normalizeDepVer(m.version);
     const src = m.repoUrl ? ` · ${m.repoUrl}` : '';
-    const hint = m.installCmd ? `执行 \`${m.installCmd}\``
-      : (m.kind === 'npm' && m.pkg ? `执行 \`npm install --prefix ${sharedRelDir}/npm ${m.pkg}${m.version ? '@' + normalizeDepVer(m.version) : ''}\``
-        : (m.repoUrl ? `落盘至 \`${sharedRelDir}/repos/${m.id}\` 并生成 \`${sharedRelDir}/.bin\` 启动器` : `补齐可执行工具 \`${m.bin || m.id}\``));
+    let hint;
+    if (m.installCmd) hint = `执行 \`${m.installCmd}\``;
+    else if (isNpmLibItem(m)) {
+      hint = `[npm-lib 纯库] 执行 \`npm install --prefix ${sharedRelDir}/npm --no-save ${m.pkg}${cleanVer ? '@' + cleanVer : ''}\`，随后直接运行 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${m.id} --kind npm-lib --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''}\`（严禁对 npm-lib 调用 write-launchers 生成 dists/*.bat 或脱离 npm/node_modules 复制文件！）`;
+    } else if (isNpmCliItem(m)) {
+      hint = `[npm-cli 工具] 执行 \`npm install --prefix ${sharedRelDir}/npm --no-save ${m.pkg}${cleanVer ? '@' + cleanVer : ''}\`，随后运行 \`node ${cliRel} write-launchers --project . --bin ${m.bin || m.id} --npm-bin\` 与 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${m.id} --kind npm-cli --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''} --bin ${sharedRelDir}/.bin/${m.bin || m.id}\``;
+    } else if (m.repoUrl) {
+      hint = `落盘至 \`${sharedRelDir}/repos/${m.id}\` 并生成 \`${sharedRelDir}/.bin\` 启动器`;
+    } else {
+      hint = `补齐可执行工具 \`${m.bin || m.id}\``;
+    }
     lines.push(`- **${m.title}** (\`${m.id}\`${ver})${src} → ${hint}`);
   }
-  const sample = missing[0];
+  const sample = missing.find((x) => !isNpmLibItem(x)) || missing[0];
   const sampleBin = sample.bin || sample.id;
   const sampleVer = normalizeDepVer(sample.version) || 'latest';
   lines.push(
     '',
-    '### Windows 11 共享池防坑硬规约（必读）',
-    '1. **禁用原生 curl/Invoke-WebRequest，规避 Schannel 与脏 Git 索引**：Windows Schannel 易报 `SEC_E_NO_CREDENTIALS` 且大仓完整 clone 易断连残留 24000+ 条 `D ` 脏记录与 `.git/index.lock`。Git 命令统一加 `-c core.longpaths=true -c http.sslBackend=openssl`（有代理时显式加 `-c http.proxy=... -c https.proxy=...`）；优先用 Node `fetch` 下载 GitHub/codeload tag tarball 解压，随后执行 `node runner/dsh/workflow-deps.mjs repair-git --repo ' + `${sharedRelDir}/repos/${sample.id}` + '` 清理陈旧 `index.lock` 并执行 `read-tree --reset HEAD` / `add -A` 确保零 `D ` 脏记录。',
-    '2. **大体积压缩包 1 MiB HTTP Range 分块断点续传**：下载大体积发行包（如 Gradle zip）须使用 `runner/dsh/workflow-deps.mjs` 导出的 `downloadWithRangeResume`（默认 `1 MiB = 1048576` 字节 `Range` 分块、支持 302/307 跳转、`.part` 断点续传、单块最多 8 次指数退避重试、字节长度与 SHA-256 校验通过后原子重命名）。',
-    '3. **纯 ASCII 启动器与池内可写沙盒目录**：执行 `node runner/dsh/workflow-deps.mjs write-launchers --project . --bin ' + sampleBin + ' --dist <dist-dir>` 生成三入口启动器；`.bat`/`.cmd` 强制 100% 纯 ASCII（`/^[\x00-\x7F]*$/`）+ CRLF 换行，严禁在 `rem` 注释混入中文（防 `cmd.exe` GBK 解码报 `-pool` 错误），统一用 `%~dp0` 相对解析 `..\\dists\\<dist-dir>`；Gradle 类工具自动将 `GRADLE_USER_HOME` 指向池内可写 `' + `${sharedRelDir}/.gradle-home` + '`（避开不可写的 `~/.gradle` 与 `native-platform.dll` 初始化失败）。',
-    '4. **双层 `manifest.json` 落盘与免 401 本地 CLI 刷新**：严禁直接请求 `http://127.0.0.1:3200/`（会撞 `401 Unauthorized`）。完成 `--version` 自检后，直接运行免鉴权本地命令：`node runner/dsh/workflow-deps.mjs mark-ready --project . --workflow ' + packId + ' --id ' + sample.id + ' --version ' + sampleVer + ' --bin ' + `${sharedRelDir}/.bin/${sampleBin}` + '`（或 `node runner/dsh/workflow-deps.mjs refresh --project . --workflow ' + packId + '`），自动原子写入 `' + `${sharedRelDir}/manifest.json` + '` 与 `' + `${relDepsDir}/manifest.json` + '`（`ready: true`）并更新 `.refresh-stamp.json` 触发工作台状态同步。'
+    '### Windows 11 共享池防坑硬规约（必读 · 统一调用工作区自包含 CLI）',
+    `1. **禁用原生 curl/Invoke-WebRequest，规避 Schannel 与脏 Git 索引**：Windows Schannel 易报 \`SEC_E_NO_CREDENTIALS\` 且大仓完整 clone 易断连残留 24000+ 条 \`D \` 脏记录与 \`.git/index.lock\`。Git 命令统一加 \`-c core.longpaths=true -c http.sslBackend=openssl\`（有代理时显式加 \`-c http.proxy=... -c https.proxy=...\`）；优先下载 tag tarball 解压，随后执行 \`node ${cliRel} repair-git --repo ${sharedRelDir}/repos/${sample.id}\` 清理陈旧 \`index.lock\` 并仅执行 \`read-tree --reset HEAD\`（严禁 \`git add -A\`）确保零 \`D \` 脏记录。`,
+    `2. **大体积压缩包 1 MiB HTTP Range 分块断点续传**：下载大体积发行包（如 Gradle zip）须运行 \`node ${cliRel} download --url <url> --dest ${sharedRelDir}/dists/<file>\` 或导入 \`./${cliRel}\` 的 \`downloadWithRangeResume\`（默认 \`1 MiB = 1048576\` 字节 \`Range\` 分块、支持 302/307 跳转、\`.part\` 断点续传、单块最多 8 次指数退避重试、字节长度与 SHA-256 校验通过后原子重命名）。`,
+    `3. **严格区分 npm-lib / npm-cli / archive-bin 启动器与沙盒目录**：\`npm-lib\` 纯库直接留在 \`${sharedRelDir}/npm/node_modules/\` 靠 \`package.json\` 验真，严禁生成 \`dists/.../bin/*.bat\`；\`npm-cli\` 传 \`--npm-bin\` 指向 \`..\\npm\\node_modules\\.bin\`；独立发行包执行 \`node ${cliRel} write-launchers --project . --bin ${sampleBin} --dist <dist-dir>\` 生成 100% 纯 ASCII + CRLF 三入口启动器（\`%~dp0\` 相对解析，Gradle 自动绑定可写 \`GRADLE_USER_HOME\` 至 \`${sharedRelDir}/.gradle-home\`）。`,
+    `4. **双层 \`manifest.json\` 落盘与免 401 本地 CLI 刷新**：严禁直接请求 \`http://127.0.0.1:3200/\`（会撞 \`401 Unauthorized\`）。自检通过后运行免鉴权本地命令 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${sample.id} --version ${sampleVer} --detected-version ${sampleVer}\`（单包名称用 \`--label\` 仅写条目自身，绝不覆盖工作流顶层 \`label\`；亦可执行 \`node ${cliRel} refresh --project . --workflow ${packId}\`），原子更新双层 \`manifest.json\` 与 \`.refresh-stamp.json\`。`
   );
   return lines.join('\n');
 }
 
+function checkVerifyPathExists(root, relPath) {
+  if (!relPath) return true;
+  const abs = resolve(root, relPath);
+  return existsSync(abs) || existsSync(`${abs}.bat`) || existsSync(`${abs}.cmd`) || existsSync(`${abs}.exe`);
+}
+
 function isManifestRecValid(rec, sharedRec, root, ignoreSharedPool) {
-  if (!rec || rec.ready !== true) return false;
-  if (rec.verifyPath && !existsSync(resolve(root, rec.verifyPath))) return false;
+  if (!rec || rec.ready !== true || rec.versionMismatch === true || rec.status === 'missing-on-disk') return false;
+  if (rec.verifyPath && !checkVerifyPathExists(root, rec.verifyPath)) return false;
   if (rec.sharedPool === true) {
     if (ignoreSharedPool) return false;
-    if (sharedRec && sharedRec.ready === false) return false;
-    if (sharedRec && sharedRec.verifyPath && !existsSync(resolve(root, sharedRec.verifyPath))) return false;
+    if (sharedRec && (sharedRec.ready === false || sharedRec.versionMismatch === true || sharedRec.status === 'missing-on-disk')) return false;
+    if (sharedRec && sharedRec.verifyPath && !checkVerifyPathExists(root, sharedRec.verifyPath)) return false;
   }
   return true;
 }
@@ -226,9 +257,10 @@ export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
   const shared = getSharedWorkflowDepsPaths(root, platform);
 
   const manifestRes = existsSync(paths.manifestPath) ? readJsonStrict(paths.manifestPath) : { ok: false };
-  const installedMap = (manifestRes.ok && manifestRes.value && manifestRes.value.installed) || {};
+  const wfManifest = manifestRes.ok && manifestRes.value ? parseFlexibleDepsManifest(manifestRes.value) : { entriesById: {}, lookup: () => null };
   const sharedManifestRes = existsSync(shared.manifestPath) ? readJsonStrict(shared.manifestPath) : { ok: false };
-  const sharedInstalledMap = (sharedManifestRes.ok && sharedManifestRes.value && sharedManifestRes.value.installed) || {};
+  const sharedManifest = sharedManifestRes.ok && sharedManifestRes.value ? parseFlexibleDepsManifest(sharedManifestRes.value) : { entriesById: {}, lookup: () => null };
+  const sharedDisk = opts.ignoreSharedPool === true ? { exists: false, tools: [], lookup: () => null } : scanSharedPoolDiskInventory(root, platform);
   const refreshStamp = readSharedRefreshStamp(root);
 
   const localBins = [paths.binDir, paths.npmBinDir, paths.venvBinDir];
@@ -238,39 +270,67 @@ export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
   const hostBins = [join(root, 'node_modules', '.bin'), join(DG_ROOT, 'node_modules', '.bin'), ...rawPath.split(pathSep).filter(Boolean)];
 
   const items = resolveWorkflowDepItems(root, pack).map((it) => {
-    const rec = installedMap[it.id];
-    const sharedRec = sharedInstalledMap[it.id];
+    const repoShort = it.repo ? it.repo.split('/').pop() : '';
+    const matchKeys = [it.id, it.pkg, it.bin, it.repo, repoShort].filter(Boolean);
+    const rec = wfManifest.lookup(matchKeys);
+    const sharedRec = sharedManifest.lookup(matchKeys);
+    const npmCheck = it.pkg ? verifyInstalledNpmPackage(root, it.pkg, opts.ignoreSharedPool ? packId : packId) : { ok: false };
+    const allowSharedNpm = !(opts.ignoreSharedPool === true && npmCheck.scope === 'shared');
+    const diskRec = isNpmLibItem(it) ? null : sharedDisk.lookup(matchKeys);
     const repoCloneDir = join(paths.reposDir, sanitizeId(it.id));
-    const sharedRepoDir = join(shared.reposDir, sanitizeId(it.id));
+    const sharedRepoDir = join(shared.reposDir, sanitizeId(repoShort || it.id));
+    const explicitMismatch = Boolean(
+      (rec && (rec.versionMismatch || (rec.detectedVersion && !versionsMatch(it.version, rec.detectedVersion)))) ||
+      (sharedRec && (sharedRec.versionMismatch || (sharedRec.detectedVersion && !versionsMatch(it.version, sharedRec.detectedVersion))))
+    );
+
     let resolvedVia = null;
     let resolvedPath = null;
-    if (isManifestRecValid(rec, sharedRec, root, opts.ignoreSharedPool === true) && versionsMatch(it.version, rec.version || sharedRec?.version)) {
-      resolvedVia = rec.sharedPool ? 'workflow-shared-manifest' : 'workflow-manifest';
-      resolvedPath = rec.verifyPath || rec.bin || sharedRec?.bin || (rec.sharedPool ? shared.relDir : paths.relDir);
-    } else if (opts.ignoreSharedPool !== true && isManifestRecValid(sharedRec, null, root, false) && versionsMatch(it.version, sharedRec.version)) {
-      resolvedVia = 'shared-manifest';
-      resolvedPath = sharedRec.verifyPath || sharedRec.bin || shared.relDir;
-    } else if (it.bin) {
-      const inWf = findExecutableInDirs(it.bin, localBins, platform);
-      const inShared = opts.ignoreSharedPool === true ? null : findExecutableInDirs(it.bin, sharedBins, platform);
-      if (inWf) { resolvedVia = 'workflow-deps'; resolvedPath = normalizeSlashes(inWf); }
-      else if (inShared) { resolvedVia = 'shared-deps'; resolvedPath = normalizeSlashes(inShared); }
-      else if (it.allowHostEnv) {
-        const inHost = findExecutableInDirs(it.bin, hostBins, platform);
-        if (inHost) { resolvedVia = 'host-env'; resolvedPath = normalizeSlashes(inHost); }
+    let detectedVersion = normalizeDepVer(
+      (npmCheck.ok && allowSharedNpm ? npmCheck.version : '') ||
+      rec?.detectedVersion || sharedRec?.detectedVersion || rec?.version || sharedRec?.version || diskRec?.version || ''
+    );
+
+    if (!explicitMismatch) {
+      if (isNpmLibItem(it) && npmCheck.ok && allowSharedNpm && versionsMatch(it.version, npmCheck.version)) {
+        resolvedVia = npmCheck.scope === 'shared' ? 'shared-npm' : 'workflow-npm';
+        resolvedPath = npmCheck.relPkgJson;
+        detectedVersion = npmCheck.version;
+      } else if (isManifestRecValid(rec, sharedRec, root, opts.ignoreSharedPool === true) && versionsMatch(it.version, rec.detectedVersion || rec.version || sharedRec?.version)) {
+        resolvedVia = rec.sharedPool ? 'workflow-shared-manifest' : 'workflow-manifest';
+        resolvedPath = rec.verifyPath || rec.entry || rec.bin || sharedRec?.bin || (rec.sharedPool ? shared.relDir : paths.relDir);
+      } else if (opts.ignoreSharedPool !== true && isManifestRecValid(sharedRec, null, root, false) && versionsMatch(it.version, sharedRec.detectedVersion || sharedRec.version)) {
+        resolvedVia = 'shared-manifest';
+        resolvedPath = sharedRec.verifyPath || sharedRec.entry || sharedRec.bin || shared.relDir;
+      } else if (it.bin) {
+        const inWf = findExecutableInDirs(it.bin, localBins, platform);
+        const inShared = opts.ignoreSharedPool === true ? null : findExecutableInDirs(it.bin, sharedBins, platform);
+        if (inWf) { resolvedVia = 'workflow-deps'; resolvedPath = normalizeSlashes(inWf); }
+        else if (inShared) { resolvedVia = 'shared-deps'; resolvedPath = normalizeSlashes(inShared); }
+        else if (diskRec && versionsMatch(it.version, diskRec.version)) {
+          resolvedVia = 'shared-deps'; resolvedPath = diskRec.relBin;
+          if (diskRec.version) detectedVersion = normalizeDepVer(diskRec.version);
+        } else if (it.allowHostEnv) {
+          const inHost = findExecutableInDirs(it.bin, hostBins, platform);
+          if (inHost) { resolvedVia = 'host-env'; resolvedPath = normalizeSlashes(inHost); }
+        }
+      }
+      if (!resolvedVia && it.pkg && npmCheck.ok && allowSharedNpm && versionsMatch(it.version, npmCheck.version)) {
+        resolvedVia = npmCheck.scope === 'shared' ? 'shared-npm' : 'workflow-npm';
+        resolvedPath = npmCheck.relPkgJson;
+      }
+      if (!resolvedVia && !it.bin && !isNpmLibItem(it)) {
+        if (isNonEmptyRepoDir(repoCloneDir)) { resolvedVia = 'workflow-repo'; resolvedPath = normalizeSlashes(repoCloneDir); }
+        else if (opts.ignoreSharedPool !== true && (isNonEmptyRepoDir(sharedRepoDir) || isNonEmptyRepoDir(join(shared.reposDir, sanitizeId(it.id))))) {
+          resolvedVia = 'shared-repo'; resolvedPath = normalizeSlashes(isNonEmptyRepoDir(sharedRepoDir) ? sharedRepoDir : join(shared.reposDir, sanitizeId(it.id)));
+        }
       }
     }
-    if (!resolvedVia && !it.bin && it.kind === 'npm' && it.pkg) {
-      const inWfNpm = findInstalledNpmPkg(paths.absDir, it.pkg);
-      const inSharedNpm = opts.ignoreSharedPool === true ? null : findInstalledNpmPkg(shared.absDir, it.pkg);
-      if (inWfNpm) { resolvedVia = 'workflow-npm'; resolvedPath = normalizeSlashes(inWfNpm); }
-      else if (inSharedNpm) { resolvedVia = 'shared-npm'; resolvedPath = normalizeSlashes(inSharedNpm); }
-    }
-    if (!resolvedVia && !it.bin) {
-      if (isNonEmptyRepoDir(repoCloneDir)) { resolvedVia = 'workflow-repo'; resolvedPath = normalizeSlashes(repoCloneDir); }
-      else if (opts.ignoreSharedPool !== true && isNonEmptyRepoDir(sharedRepoDir)) { resolvedVia = 'shared-repo'; resolvedPath = normalizeSlashes(sharedRepoDir); }
-    }
-    return { ...it, ready: Boolean(resolvedVia), resolvedVia, resolvedPath };
+    const ready = Boolean(resolvedVia);
+    return {
+      ...it, ready, status: ready ? 'ready' : (explicitMismatch ? 'version-mismatch' : 'missing'),
+      detectedVersion, resolvedVia, resolvedPath
+    };
   });
 
   const missing = items.filter((x) => !x.ready);
@@ -279,6 +339,82 @@ export function inspectWorkflowDeps(projectRoot, pack, opts = {}) {
     ready: missing.length === 0, total: items.length, readyCount: items.length - missing.length,
     missingCount: missing.length, items, missing, refreshStamp,
     agentPrompt: buildProvisionAgentPrompt(pack, paths.relDir, shared.relDir, missing)
+  };
+}
+
+export function summarizeSharedPoolStatus(projectRoot, opts = {}) {
+  const root = resolve(projectRoot || process.cwd());
+  const platform = opts.platform || process.platform;
+  const shared = getSharedWorkflowDepsPaths(root, platform);
+  const mRes = existsSync(shared.manifestPath) ? readJsonStrict(shared.manifestPath) : { ok: false };
+  const parsed = mRes.ok && mRes.value ? parseFlexibleDepsManifest(mRes.value) : { entriesById: {}, lookup: () => null };
+  const disk = scanSharedPoolDiskInventory(root, platform);
+  const byId = new Map();
+  for (const rec of Object.values(parsed.entriesById)) {
+    if (!rec.ready || rec.versionMismatch) continue;
+    byId.set(rec.id.toLowerCase(), {
+      id: rec.id, version: rec.detectedVersion || rec.version || '',
+      bin: rec.bin || rec.entry || `workflows/.deps/_shared/.bin/${rec.id}`, source: 'shared-manifest'
+    });
+  }
+  for (const t of disk.tools) {
+    const known = parsed.lookup([t.id]);
+    if (known && (known.versionMismatch || known.status === 'pending')) continue;
+    const k = t.id.toLowerCase();
+    if (!byId.has(k)) byId.set(k, { id: t.id, version: t.version || '', bin: t.relBin, source: 'shared-disk' });
+    else if (!byId.get(k).version && t.version) byId.get(k).version = t.version;
+  }
+  for (const d of BUILTIN_CATALOG_PACK_SPECS.uiboard.deps) {
+    const k = d.id.toLowerCase();
+    if (!byId.has(k) && d.pkg) {
+      const chk = verifyInstalledNpmPackage(root, d.pkg, 'uiboard');
+      if (chk.ok) byId.set(k, { id: d.id, version: chk.version, bin: chk.relPkgJson, source: 'shared-npm' });
+    }
+  }
+  const readyItems = [...byId.values()];
+  const labels = readyItems.map((x) => {
+    const cap = x.id.charAt(0).toUpperCase() + x.id.slice(1);
+    return x.version ? `${cap} ${x.version}` : cap;
+  });
+  return {
+    sharedDepsDir: shared.relDir,
+    readyCount: readyItems.length,
+    readyItems,
+    summaryLabel: labels.length > 0
+      ? (labels.length <= 2 ? `${labels.join('、')} 已就绪` : `${labels.slice(0, 2).join('、')} 等 ${labels.length} 项已就绪`)
+      : ''
+  };
+}
+
+export function inspectAllKnownWorkflowPacks(projectRoot, extraPacks = {}, opts = {}) {
+  const root = resolve(projectRoot || process.cwd());
+  const mergedPacks = { ...BUILTIN_CATALOG_PACK_SPECS };
+  for (const base of [DG_ROOT, root]) {
+    const wfDir = join(base, 'workflows');
+    if (!existsSync(wfDir)) continue;
+    try {
+      for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
+        const r = readJsonStrict(join(wfDir, f));
+        if (r.ok && r.value && r.value.id && Array.isArray(r.value.nodes)) mergedPacks[r.value.id] = r.value;
+      }
+    } catch (err) { void err; }
+  }
+  const wbState = join(root, '.donegate', 'workbench-state.json');
+  if (existsSync(wbState)) {
+    const st = readJsonStrict(wbState);
+    if (st.ok && st.value?.customPacks && typeof st.value.customPacks === 'object') {
+      Object.assign(mergedPacks, st.value.customPacks);
+    }
+  }
+  if (extraPacks && typeof extraPacks === 'object') Object.assign(mergedPacks, extraPacks);
+  const reports = {};
+  for (const [id, pk] of Object.entries(mergedPacks)) {
+    if (pk && typeof pk === 'object') reports[id] = inspectWorkflowDeps(root, pk, opts);
+  }
+  return {
+    refreshStamp: readSharedRefreshStamp(root),
+    sharedPool: summarizeSharedPoolStatus(root, opts),
+    reports
   };
 }
 
@@ -300,15 +436,28 @@ export function readWorkflowDepsStatus(projectRoot, workflowOrPack = null, opts 
       const customPack = st.ok && st.value?.customPacks?.[wfId];
       if (customPack) return inspectWorkflowDeps(root, customPack, opts);
     }
+    if ((opts.useCatalogSpec === true || wfId === 'uiboard') && BUILTIN_CATALOG_PACK_SPECS[wfId]) {
+      return inspectWorkflowDeps(root, BUILTIN_CATALOG_PACK_SPECS[wfId], opts);
+    }
   }
   const paths = getWorkflowDepsPaths(root, wfId, opts.platform);
   const shared = getSharedWorkflowDepsPaths(root, opts.platform);
-  const wfInstalled = (existsSync(paths.manifestPath) && readJsonStrict(paths.manifestPath).value?.installed) || {};
-  const sharedInstalled = (existsSync(shared.manifestPath) && readJsonStrict(shared.manifestPath).value?.installed) || {};
-  const allIds = [...new Set([...Object.keys(wfInstalled), ...(opts.ignoreSharedPool === true ? [] : Object.keys(sharedInstalled))])];
+  const wfParsed = existsSync(paths.manifestPath) ? parseFlexibleDepsManifest(readJsonStrict(paths.manifestPath).value) : { entriesById: {} };
+  const sharedParsed = existsSync(shared.manifestPath) ? parseFlexibleDepsManifest(readJsonStrict(shared.manifestPath).value) : { entriesById: {} };
+  const disk = opts.ignoreSharedPool === true ? { tools: [] } : scanSharedPoolDiskInventory(root, opts.platform);
+  const wfInstalled = wfParsed.entriesById;
+  const sharedInstalled = sharedParsed.entriesById;
+  const diskIds = disk.tools.map((t) => t.id);
+  const allIds = [...new Set([...Object.keys(wfInstalled), ...(opts.ignoreSharedPool === true ? [] : [...Object.keys(sharedInstalled), ...diskIds])])];
+  if (allIds.length === 0 && BUILTIN_CATALOG_PACK_SPECS[wfId]) {
+    return inspectWorkflowDeps(root, BUILTIN_CATALOG_PACK_SPECS[wfId], opts);
+  }
   const syntheticDeps = allIds.map((id) => {
-    const rec = wfInstalled[id] || sharedInstalled[id] || {};
-    return { id, title: id, version: rec.version || '', bin: rec.bin ? String(rec.bin).split('/').pop() : id, kind: 'binary', allowHostEnv: false };
+    const rec = wfInstalled[id] || sharedInstalled[id] || disk.tools.find((t) => t.id === id) || {};
+    const isLib = rec.kind === 'npm-lib' || (rec.pkg && !rec.bin);
+    const rawBin = rec.bin || rec.canonicalRelBin || '';
+    const binTail = isLib ? '' : (rawBin ? normalizeSlashes(rawBin).replace(/\.(?:exe|cmd|bat|com|ps1|sh)$/i, '').split('/').pop() : id);
+    return { id, title: rec.label || id, version: rec.version || '', kind: rec.kind || (isLib ? 'npm-lib' : 'archive-bin'), pkg: rec.pkg || '', bin: isLib ? '' : (binTail || id), repo: rec.repo || '', allowHostEnv: false };
   });
   return inspectWorkflowDeps(root, { id: wfId, name: wfId, deps: syntheticDeps, nodes: [] }, opts);
 }
@@ -336,7 +485,7 @@ export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env, 
 
 export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.platform) {
   if (!/^[a-zA-Z0-9@/._-]+$/.test(String(spec || ''))) return { status: 2, error: new Error('非法包名规格') };
-  const npmArgs = ['install', '--no-audit', '--no-fund', '--prefix', prefixDir, spec];
+  const npmArgs = ['install', '--no-audit', '--no-fund', '--no-save', '--prefix', prefixDir, spec];
   const cliCands = [
     join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
@@ -344,7 +493,7 @@ export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.pla
   const npmCli = cliCands.find((p) => existsSync(p));
   if (npmCli) return spawnSync(process.execPath, [npmCli, ...npmArgs], { cwd, encoding: 'utf8', timeout: 180000, windowsHide: true });
   if (platform === 'win32') {
-    const cmdLine = `"npm.cmd install --no-audit --no-fund --prefix "${String(prefixDir).replace(/"/g, '')}" "${spec}""`;
+    const cmdLine = `"npm.cmd install --no-audit --no-fund --no-save --prefix "${String(prefixDir).replace(/"/g, '')}" "${spec}""`;
     return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], { cwd, encoding: 'utf8', timeout: 180000, windowsVerbatimArguments: true, windowsHide: true });
   }
   return spawnSync('npm', npmArgs, { cwd, encoding: 'utf8', timeout: 180000 });
@@ -353,28 +502,34 @@ export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.pla
 export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
   const root = resolve(projectRoot || process.cwd());
   const packId = (pack && pack.id) || 'default';
+  const packName = (pack && pack.name) || packId;
   const paths = getWorkflowDepsPaths(root, packId);
   const shared = getSharedWorkflowDepsPaths(root);
   const useShared = opts.isolatedOnly !== true;
 
   for (const d of [paths.binDir, paths.distsDir, join(paths.absDir, 'npm'), paths.reposDir]) mkdirSync(d, { recursive: true });
   const before = inspectWorkflowDeps(root, pack, opts.env ? { env: opts.env } : {});
+  let cliRelPath = 'workflows/.deps/_shared/dg-deps-cli.mjs';
   if (useShared) {
-    ensureSharedPoolSkeleton(root, { includeGradleHome: before.items.some((x) => x.id === 'gradle' || x.bin === 'gradle') });
+    const skel = ensureSharedPoolSkeleton(root, { includeGradleHome: before.items.some((x) => x.id === 'gradle' || x.bin === 'gradle') });
+    cliRelPath = skel.cliRelPath;
   }
 
-  const curManifest = existsSync(paths.manifestPath) ? (readJsonStrict(paths.manifestPath).value || {}) : {};
-  const installed = { ...(curManifest.installed || {}) };
-  const curShared = (useShared && existsSync(shared.manifestPath)) ? (readJsonStrict(shared.manifestPath).value || {}) : {};
-  const sharedInstalled = { ...(curShared.installed || {}) };
+  const curManifestDoc = existsSync(paths.manifestPath) ? (readJsonStrict(paths.manifestPath).value || {}) : {};
+  const curWfParsed = parseFlexibleDepsManifest(curManifestDoc);
+  const installed = { ...curWfParsed.entriesById };
+  const curSharedDoc = (useShared && existsSync(shared.manifestPath)) ? (readJsonStrict(shared.manifestPath).value || {}) : {};
+  const curSharedParsed = parseFlexibleDepsManifest(curSharedDoc);
+  const sharedInstalled = { ...curSharedParsed.entriesById };
   const itemById = new Map(before.items.map((x) => [x.id, x]));
   const now = new Date().toISOString();
 
   if (Array.isArray(opts.markInstalledIds)) {
     for (const rawId of opts.markInstalledIds) {
       const id = String(rawId);
-      const metaVer = normalizeDepVer(itemById.get(id)?.version || '');
-      const sharedRec = { id, ready: true, version: metaVer, updatedAt: now, source: 'agent-verified' };
+      const it = itemById.get(id);
+      const metaVer = normalizeDepVer(it?.version || '');
+      const sharedRec = { id, ...(it?.kind ? { kind: it.kind } : {}), ...(it?.pkg ? { pkg: it.pkg } : {}), ready: true, status: 'ready', version: metaVer, detectedVersion: metaVer, updatedAt: now, source: 'agent-verified' };
       installed[id] = useShared ? { ...sharedRec, sharedPool: true, sharedManifest: '../_shared/manifest.json' } : sharedRec;
       if (useShared) sharedInstalled[id] = sharedRec;
     }
@@ -382,11 +537,13 @@ export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
   if (opts.runNpm === true) {
     const targetNpmPrefix = useShared ? join(shared.absDir, 'npm') : join(paths.absDir, 'npm');
     for (const m of before.missing) {
-      if (m.kind === 'npm' && m.pkg) {
+      if ((isNpmLibItem(m) || isNpmCliItem(m)) && m.pkg) {
         const spec = m.version ? `${m.pkg}@${normalizeDepVer(m.version)}` : m.pkg;
         const r = runNpmPrefixInstall(targetNpmPrefix, spec, root);
         if (r.status === 0) {
-          const sharedRec = { id: m.id, ready: true, version: normalizeDepVer(m.version), updatedAt: now, source: useShared ? 'shared-npm-prefix' : 'npm-prefix' };
+          if (useShared && isNpmCliItem(m) && m.bin) writeSharedPoolLaunchers(root, { binName: m.bin, npmBin: true });
+          const cleanVer = normalizeDepVer(m.version);
+          const sharedRec = { id: m.id, kind: m.kind, pkg: m.pkg, ready: true, status: 'ready', version: cleanVer, detectedVersion: cleanVer, updatedAt: now, source: useShared ? 'shared-npm-prefix' : 'npm-prefix' };
           installed[m.id] = useShared ? { ...sharedRec, sharedPool: true, sharedManifest: '../_shared/manifest.json' } : sharedRec;
           if (useShared) sharedInstalled[m.id] = sharedRec;
         }
@@ -394,15 +551,16 @@ export function provisionWorkflowDeps(projectRoot, pack, opts = {}) {
     }
   }
 
-  writeJsonAtomic(paths.planPath, { packId, packName: (pack && pack.name) || packId, depsDir: paths.relDir, sharedDepsDir: shared.relDir, generatedAt: now, items: before.items, agentPrompt: before.agentPrompt });
-  writeJsonAtomic(paths.manifestPath, { packId, updatedAt: now, installed });
+  const wfLabel = curWfParsed.topLabel || packName;
+  writeJsonAtomic(paths.planPath, { packId, packName, depsDir: paths.relDir, sharedDepsDir: shared.relDir, cliHelper: cliRelPath, generatedAt: now, items: before.items, agentPrompt: before.agentPrompt });
+  writeJsonAtomic(paths.manifestPath, { packId, label: wfLabel, updatedAt: now, installed });
   let refreshStamp = null;
   if (useShared) {
-    writeJsonAtomic(shared.manifestPath, { packId: '_shared', updatedAt: now, installed: sharedInstalled });
+    writeJsonAtomic(shared.manifestPath, { packId: '_shared', ...(curSharedParsed.topLabel ? { label: curSharedParsed.topLabel } : {}), updatedAt: now, installed: sharedInstalled });
     refreshStamp = refreshWorkflowDepsStamp(root, { trigger: 'provision', workflowId: packId });
   }
   const after = inspectWorkflowDeps(root, pack, opts.env ? { env: opts.env } : {});
-  return { ok: true, ...after, refreshStamp: refreshStamp || after.refreshStamp, planFile: `${paths.relDir}/PROVISION-PLAN.json`, manifestFile: `${paths.relDir}/manifest.json`, sharedManifestFile: `${shared.relDir}/manifest.json` };
+  return { ok: true, ...after, cliHelper: cliRelPath, refreshStamp: refreshStamp || after.refreshStamp, planFile: `${paths.relDir}/PROVISION-PLAN.json`, manifestFile: `${paths.relDir}/manifest.json`, sharedManifestFile: `${shared.relDir}/manifest.json` };
 }
 
 export function runWorkflowDepsCli(argv = process.argv.slice(2), defaultRoot = process.cwd()) {
@@ -418,51 +576,85 @@ export function runWorkflowDepsCli(argv = process.argv.slice(2), defaultRoot = p
     const id = pull('--id', null);
     if (!id) return { exitCode: 3, payload: { ok: false, error: 'mark-ready requires --id <depId>' } };
     const binName = pull('--bin-name', id);
-    if (argv.includes('--run-verify')) {
+    const detVer = pull('--detected-version', undefined);
+    const pending = argv.includes('--pending');
+    const kind = pull('--kind', '');
+    if (argv.includes('--run-verify') && kind !== 'npm-lib') {
       const ver = verifySharedPoolLauncher(root, { id, binName });
       if (!ver.ok) return { exitCode: 1, payload: { ok: false, stage: 'verify', verification: ver } };
       const out = recordSharedPoolDepReady(root, {
-        id, binName, workflowId, version: pull('--version', ''), tag: pull('--tag', ''),
-        commit: pull('--commit', ''), repo: pull('--repo', ''), bin: pull('--bin', ''),
+        id, label: pull('--label', ''), workflowLabel: pull('--workflow-label', ''), kind, pkg: pull('--pkg', ''),
+        binName, workflowId, version: pull('--version', ''), detectedVersion: detVer, pending,
+        tag: pull('--tag', ''), commit: pull('--commit', ''), repo: pull('--repo', ''), bin: pull('--bin', ''),
         distSubdir: pull('--dist', ''), verified: { command: ver.command, output: ver.output, status: 'pass' }, trigger: 'cli-mark-ready'
       });
       return { exitCode: 0, payload: out };
     }
     const out = recordSharedPoolDepReady(root, {
-      id, binName, workflowId, version: pull('--version', ''), tag: pull('--tag', ''),
-      commit: pull('--commit', ''), repo: pull('--repo', ''), bin: pull('--bin', ''),
+      id, label: pull('--label', ''), workflowLabel: pull('--workflow-label', ''), kind, pkg: pull('--pkg', ''),
+      binName, workflowId, version: pull('--version', ''), detectedVersion: detVer, pending,
+      tag: pull('--tag', ''), commit: pull('--commit', ''), repo: pull('--repo', ''), bin: pull('--bin', ''),
       distSubdir: pull('--dist', ''), verifyCommand: pull('--verify-cmd', ''), verifyOutput: pull('--verify-output', 'pass'), trigger: 'cli-mark-ready'
     });
     return { exitCode: 0, payload: out };
   }
+  if (cmd === 'verify-npm') {
+    const pkg = pull('--pkg', pull('--id', ''));
+    if (!pkg) return { exitCode: 3, payload: { ok: false, error: 'verify-npm requires --pkg' } };
+    const res = verifyInstalledNpmPackage(root, pkg, workflowId);
+    const want = normalizeDepVer(pull('--version', ''));
+    const ok = res.ok && (!want || res.version === want);
+    return { exitCode: ok ? 0 : 1, payload: { ...res, ok } };
+  }
   if (cmd === 'refresh') {
-    const refreshStamp = refreshWorkflowDepsStamp(root, { trigger: 'cli-refresh', workflowId });
+    const rec = reconcileSharedPoolOnRefresh(root, workflowId, { trigger: 'cli-refresh' });
     const status = readWorkflowDepsStatus(root, workflowId);
-    return { exitCode: 0, payload: { ok: true, refreshStamp, status } };
+    return { exitCode: 0, payload: { ok: true, refreshStamp: rec.refreshStamp, status } };
   }
   if (cmd === 'write-launchers') {
     const binName = pull('--bin', pull('--id', ''));
     const distSubdir = pull('--dist', '');
+    const npmBin = argv.includes('--npm-bin') || pull('--kind', '') === 'npm-cli';
+    if (!binName || (!distSubdir && !npmBin)) return { exitCode: 3, payload: { ok: false, error: 'write-launchers requires --bin and (--dist or --npm-bin)' } };
     const out = writeSharedPoolLaunchers(root, {
-      binName, distSubdir, posixEntryRel: pull('--posix-entry', null),
+      binName, distSubdir, npmBin, posixEntryRel: pull('--posix-entry', null),
       winEntryRel: pull('--win-entry', null), comment: pull('--comment', '')
     });
     return { exitCode: 0, payload: out };
   }
   if (cmd === 'repair-git') {
-    const repoDir = resolve(root, pull('--repo', '.'));
-    const out = repairGitRepoCleanIndex(repoDir);
+    const repoArg = pull('--repo', '');
+    if (!repoArg) return { exitCode: 3, payload: { ok: false, error: 'repair-git requires --repo' } };
+    const out = repairGitRepoCleanIndex(resolve(root, repoArg));
     return { exitCode: out.ok ? 0 : 1, payload: out };
   }
-  const status = readWorkflowDepsStatus(root, workflowId);
-  return { exitCode: 0, payload: { ok: true, status, refreshStamp: status.refreshStamp } };
+  if (cmd === 'status') {
+    const status = readWorkflowDepsStatus(root, workflowId);
+    return { exitCode: 0, payload: { ok: true, status, refreshStamp: status.refreshStamp } };
+  }
+  return { exitCode: 3, payload: { ok: false, error: `Unknown subcommand: ${cmd}` } };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { exitCode, payload } = runWorkflowDepsCli(process.argv.slice(2));
-    console.log(JSON.stringify(payload, null, 2));
-    process.exit(exitCode);
+    const argv = process.argv.slice(2);
+    if (argv[0] === 'download') {
+      const pull = (flag, fb = '') => { const i = argv.indexOf(flag); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fb; };
+      const root = resolve(pull('--project', pull('--root', process.cwd())));
+      const url = pull('--url', ''), dest = pull('--dest', pull('--out', ''));
+      if (!url || !dest) { console.error(JSON.stringify({ ok: false, error: 'download requires --url and --dest' })); process.exit(3); }
+      downloadWithRangeResume(url, resolve(root, dest), { expectedSha256: pull('--sha256', '') }).then((out) => {
+        console.log(JSON.stringify(out, null, 2));
+        process.exit(0);
+      }).catch((err) => {
+        console.error(JSON.stringify({ ok: false, error: String(err.message || err) }));
+        process.exit(1);
+      });
+    } else {
+      const { exitCode, payload } = runWorkflowDepsCli(argv);
+      console.log(JSON.stringify(payload, null, 2));
+      process.exit(exitCode);
+    }
   } catch (err) {
     console.error(JSON.stringify({ ok: false, error: String(err.message || err) }));
     process.exit(1);

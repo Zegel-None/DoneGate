@@ -1,11 +1,11 @@
-// UI 看板同源 HTTP 路由模块（/donegate/api/uiboard/*：状态探测、原型渲染、本地 DevServer 同源注入代理、美学锁定、拖拽更新、自测与真后端接线）
+// UI 看板同源 HTTP 路由模块（/donegate/api/uiboard/*：状态探测、原型/Puck 渲染、同源注入代理、美学锁定、拖拽更新、自测与真后端接线）
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { lockDesignSystemMaster } from './ui-aesthetics.mjs';
 import { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
 import {
   buildBackendWiringPlan, detectProjectUiEntry, mutateUiLayoutBlocks,
-  provisionUiBoardDeps, renderPrototypeHtml, runUiAgentSelfPlayCheck
+  provisionUiBoardDeps, readUiToolchainStatus, renderPrototypeHtml, runUiAgentSelfPlayCheck
 } from './ui-board-engine.mjs';
 
 function sendJson(res, status, payload) {
@@ -41,7 +41,8 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
   if (subPath === '/uiboard/prototype' && req.method === 'GET') {
     const u = new URL(req.url || '/', 'http://127.0.0.1');
     const proposalId = u.searchParams.get('theme') || undefined;
-    const proto = renderPrototypeHtml(root, { proposalId });
+    const editorMode = u.searchParams.get('editor') || undefined;
+    const proto = renderPrototypeHtml(root, { proposalId, editorMode });
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(proto.html);
     return true;
@@ -83,7 +84,7 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
   if (subPath === '/uiboard/layout' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const out = mutateUiLayoutBlocks(root, body);
-    sendJson(res, 200, { ok: true, layout: out.layout, wiring: out.wiring });
+    sendJson(res, 200, { ok: true, layout: out.layout, wiring: out.wiring, toolchain: out.toolchain });
     return true;
   }
 
@@ -107,7 +108,7 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
 
   if (subPath === '/uiboard/self-play' && req.method === 'POST') {
     const body = await readJsonBody(req);
-    const report = runUiAgentSelfPlayCheck(root, { liveUrl: body.liveUrl || null, proposalId: body.proposalId });
+    const report = await runUiAgentSelfPlayCheck(root, { liveUrl: body.liveUrl || null, proposalId: body.proposalId });
     hub.emit({ type: 'dock_item', item: { id: `uiself-${Date.now()}`, kind: report.ok ? 'summary' : 'question', tone: report.ok ? 'ok' : 'warn', title: report.summary } });
     sendJson(res, 200, report);
     return true;
@@ -127,6 +128,7 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
       runNpm: body.runNpm === true,
       markInstalledIds: Array.isArray(body.markInstalledIds) ? body.markInstalledIds : undefined
     });
+    const toolchain = readUiToolchainStatus(root);
     let subRes = null;
     if (rep.missingCount > 0 && body.spawnSubagent === true && typeof opts.dispatchSubagent === 'function') {
       subRes = await opts.dispatchSubagent({
@@ -135,14 +137,16 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
         prompt: rep.agentPrompt
       });
     }
+    const basePayload = { ...rep, puckInstalled: toolchain.puckInstalled, toolchain };
     const payload = (rep.missingCount > 0 && body.spawnSubagent === true)
       ? {
-          ...rep,
+          ...basePayload,
           subagentDispatched: Boolean(subRes?.dispatched),
           subagentName: subRes?.name || null,
           fallbackAutoSubmit: !subRes?.dispatched
         }
-      : rep;
+      : basePayload;
+    hub.emit({ type: 'workflow_deps_updated', packId: 'uiboard', report: rep, uiboardToolchain: toolchain });
     hub.emit({ type: 'dock_item', item: { id: `uidep-${Date.now()}`, kind: 'receipt', tone: rep.ready ? 'ok' : 'warn', title: `📦 UI 看板增强套件目录 ${rep.depsDir} 已就绪（待补齐 ${rep.missingCount} 项）` } });
     sendJson(res, 200, payload);
     return true;

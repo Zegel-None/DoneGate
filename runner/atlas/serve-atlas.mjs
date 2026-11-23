@@ -1,4 +1,4 @@
-// 零第三方依赖工作台本地实时同步服务（绑定 127.0.0.1，支持实时重扫、外部陈旧项目导入、工作台状态持久化与基于契约 scope 的目录定位）
+// 零第三方依赖工作台本地实时同步服务（绑定 127.0.0.1，支持实时重扫、共享池对账、外部陈旧项目导入与基于契约 scope 的目录定位）
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../skill/hash.mjs';
 import { exportDashboardHtml, openInSystemBrowser } from '../core/index.mjs';
 import { buildProjectAtlas, readSavedWorkbenchState } from './contract.mjs';
-import { createDoneGateWebRouteHandler, resolveSafeWorkspaceFolders } from '../dsh/index.mjs';
+import { createDoneGateWebRouteHandler, reconcileSharedPoolOnRefresh, resolveSafeWorkspaceFolders } from '../dsh/index.mjs';
 export { resolveSafeWorkspaceFolders };
 
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -20,7 +20,7 @@ export function computeLivePort(projectRoot) {
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-DSH-Session-Id, X-DoneGate-Root');
   res.setHeader('Cache-Control', 'no-store');
 }
 
@@ -167,10 +167,17 @@ export function startAtlasHttpServer(projectRoot, opts = {}) {
     }
 
     if (url === '/api/atlas' || url === '/api/atlas/refresh') {
+      if (url === '/api/atlas/refresh') reconcileSharedPoolOnRefresh(root, null, { trigger: 'atlas-refresh' });
       const outHtml = join(root, '.donegate', 'dashboard.html');
       const r = exportDashboardHtml(root, outHtml);
       if (!r.ok) { sendJson(res, 500, { ok: false, reason: r.reason }); return; }
-      sendJson(res, 200, { ok: true, refreshedAt: new Date().toISOString(), atlas: r.atlas });
+      sendJson(res, 200, {
+        ok: true, refreshedAt: new Date().toISOString(),
+        sharedPool: r.atlas?.workbench?.sharedPool,
+        packDepReports: r.atlas?.workbench?.packDepReports,
+        uiboardToolchain: r.atlas?.workbench?.uiboardToolchain,
+        atlas: r.atlas
+      });
       return;
     }
 

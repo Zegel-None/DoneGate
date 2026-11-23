@@ -1,13 +1,49 @@
-// 工作台实时后端桥接外壳：ATLAS 注水、SSE 脉冲呼吸灯、依赖补齐、过夜挂机、盲审打包与 .workflow.json 导入导出
+// 工作台实时后端桥接外壳：ATLAS 注水、SSE 脉冲呼吸灯、共享池依赖对账刷新、窗口焦点自同步、过夜挂机与工作流导入导出
 const WB_UI_SHELL_SCRIPT = String.raw`
 let liveServerConnected = false;
 let persistTimer = null;
 let dgEventSource = null;
+let lastAutoDepSyncTs = 0;
 const dgDepPollTimers = new Map();
 
+function withDshSessionUrl(rawUrl) {
+  const sid = (typeof DSH_SESSION_ID !== 'undefined' && DSH_SESSION_ID) ? String(DSH_SESSION_ID) : '';
+  if (!sid || sid === 'default' || !String(rawUrl || '').startsWith('/donegate/api/')) return rawUrl;
+  return rawUrl + (rawUrl.includes('?') ? '&' : '?') + 'sessionId=' + encodeURIComponent(sid);
+}
+
 async function fetchDoneGateApi(primaryUrl, fallbackUrl, init) {
-  const r = await fetch(primaryUrl, init);
+  const sid = (typeof DSH_SESSION_ID !== 'undefined' && DSH_SESSION_ID && DSH_SESSION_ID !== 'default') ? String(DSH_SESSION_ID) : '';
+  const mergedInit = sid
+    ? { ...(init || {}), headers: { ...((init && init.headers) || {}), 'x-dsh-session-id': sid } }
+    : init;
+  const r = await fetch(withDshSessionUrl(primaryUrl), mergedInit);
   return (r.status === 404 && fallbackUrl) ? fetch(fallbackUrl, init) : r;
+}
+
+function applySyncedDepReports(reports, sharedPool, uiboardTc) {
+  if (!state.packDepReports) state.packDepReports = {};
+  if (sharedPool && typeof sharedPool === 'object') state.sharedPool = sharedPool;
+  if (reports && typeof reports === 'object') {
+    state.packDepReports = { ...state.packDepReports, ...reports };
+    Object.entries(reports).forEach(([pid, rep]) => {
+      if (!rep || typeof rep !== 'object') return;
+      if (rep.ready && state.provisioningPacks) delete state.provisioningPacks[pid];
+      if (Array.isArray(rep.items)) {
+        rep.items.filter((it) => it && it.ready).forEach((it) => {
+          (it.nodeIds || []).forEach((nid) => {
+            if (state.provisioningNodes) delete state.provisioningNodes[nid];
+            if (state.nodeTelemetry && state.nodeTelemetry[nid] && state.nodeTelemetry[nid].exitCode === 3) {
+              delete state.nodeTelemetry[nid];
+            }
+          });
+        });
+      }
+    });
+  }
+  if (uiboardTc && typeof applyUiBoardToolchainSnapshot === 'function') {
+    applyUiBoardToolchainSnapshot(uiboardTc);
+  }
 }
 
 function applyThemeClasses(theme) {
@@ -34,6 +70,8 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
   if (!state.componentWorkflows) state.componentWorkflows = {};
   if (!(state.collapsedWfGroups instanceof Set)) state.collapsedWfGroups = new Set();
   if (!(state.collapsedNodeCats instanceof Set)) state.collapsedNodeCats = new Set();
+
+  applySyncedDepReports(wb.packDepReports, wb.sharedPool, wb.uiboardToolchain);
 
   if (Array.isArray(wb.registeredTemplates)) {
     wb.registeredTemplates.forEach((tpl) => {
@@ -90,7 +128,7 @@ function hydrateWorkbenchFromAtlas(atlasData, preservePositions) {
 function connectDoneGateLiveEvents() {
   if (!/^https?:$/i.test(location.protocol) || typeof EventSource === 'undefined' || dgEventSource) return;
   try {
-    dgEventSource = new EventSource('/donegate/api/events');
+    dgEventSource = new EventSource(withDshSessionUrl('/donegate/api/events'));
     dgEventSource.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data || '{}');
@@ -115,11 +153,15 @@ function connectDoneGateLiveEvents() {
           WORKFLOW_PACKS[msg.packId] = msg.pack;
           if (msg.pack.group && !WORKFLOW_GROUPS.includes(msg.pack.group)) WORKFLOW_GROUPS.push(msg.pack.group);
           renderLeftDrawer();
-        } else if (msg.type === 'workflow_deps_updated' && msg.packId && msg.report) {
-          state.packDepReports = { ...(state.packDepReports || {}), [msg.packId]: msg.report };
-          if (msg.report.ready && state.provisioningPacks) delete state.provisioningPacks[msg.packId];
-          renderLeftDrawer();
-          renderCanvas();
+        } else if (msg.type === 'workflow_deps_updated') {
+          if (msg.reports || msg.report || msg.sharedPool || msg.uiboardToolchain) {
+            const repMap = { ...(msg.reports || {}), ...(msg.packId && msg.report ? { [msg.packId]: msg.report } : {}) };
+            applySyncedDepReports(repMap, msg.sharedPool, msg.uiboardToolchain);
+            renderAll();
+            if (state.leftTab === 'uiboard' && typeof renderUiBoardStageDom === 'function') renderUiBoardStageDom(true);
+          } else {
+            syncAllWorkflowDepsFromBackend(state.activePackId, true);
+          }
         }
       } catch (err) { void err; }
     };
@@ -134,7 +176,7 @@ async function previewNodeObservation(nodeId) {
   const tel = state.nodeTelemetry && state.nodeTelemetry[nodeId];
   if (/^https?:$/i.test(location.protocol)) {
     try {
-      const r = await fetch('/donegate/api/observation-preview?tool=' + encodeURIComponent(tool) + '&nodeId=' + encodeURIComponent(nodeId));
+      const r = await fetchDoneGateApi('/donegate/api/observation-preview?tool=' + encodeURIComponent(tool) + '&nodeId=' + encodeURIComponent(nodeId));
       const j = await r.json();
       if (r.ok && j && j.ok) {
         openRightFilePreview(j.sourcePath || ('bricks/' + tool + '/capabilities.json'), nd.title + ' · 观测与门禁输出', j.content);
@@ -156,7 +198,7 @@ async function triggerJudgePackForCard(nodeId) {
   if (!/^https?:$/i.test(location.protocol)) { showToast('连接本地服务后可一键打包契约「' + cid + '」的门 5 复核包'); return; }
   showToast('⚖️ 正在打包契约「' + cid + '」门 5 独立复核包...');
   try {
-    const r = await fetch('/donegate/api/judge/pack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contractId: cid }) });
+    const r = await fetchDoneGateApi('/donegate/api/judge/pack', null, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contractId: cid }) });
     const out = await r.json();
     if (out && out.ok && out.relPackDir) {
       if (typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
@@ -216,7 +258,7 @@ async function importWorkflowJsonText(rawText, sourceName) {
 
   if (/^https?:$/i.test(location.protocol)) {
     try {
-      await fetch('/donegate/api/workflow-pack/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: normalized }) });
+      await fetchDoneGateApi('/donegate/api/workflow-pack/save', null, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: normalized }) });
       await syncAllWorkflowDepsFromBackend(packId);
     } catch (err) { void err; }
   }
@@ -243,7 +285,7 @@ function triggerWorkflowJsonFilePicker() {
   inp.click();
 }
 
-async function syncAllWorkflowDepsFromBackend(focusPackId, silent) {
+async function syncAllWorkflowDepsFromBackend(focusPackId, silent, forceReconcile) {
   if (!/^https?:$/i.test(location.protocol)) {
     if (!silent && focusPackId && WORKFLOW_PACKS[focusPackId]) {
       const s = computeClientPackDepSummary(WORKFLOW_PACKS[focusPackId]);
@@ -252,17 +294,22 @@ async function syncAllWorkflowDepsFromBackend(focusPackId, silent) {
     return null;
   }
   try {
-    const r = await fetch('/donegate/api/workflow-deps/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packs: WORKFLOW_PACKS }) });
+    const endpoint = forceReconcile ? '/donegate/api/workflow-deps/refresh' : '/donegate/api/workflow-deps/inspect';
+    const r = await fetchDoneGateApi(endpoint, null, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowId: focusPackId || state.activePackId || null, packs: WORKFLOW_PACKS })
+    });
     const j = await r.json();
-    if (r.ok && j && j.reports) {
-      state.packDepReports = { ...(state.packDepReports || {}), ...j.reports };
-      Object.entries(j.reports).forEach(([pid, rep]) => { if (rep && rep.ready && state.provisioningPacks) delete state.provisioningPacks[pid]; });
-      renderLeftDrawer(); renderCanvas();
-      if (!silent && focusPackId && j.reports[focusPackId]) {
-        const rep = j.reports[focusPackId];
+    if (r.ok && j && (j.reports || j.report)) {
+      const repMap = j.reports || { [j.report.packId]: j.report };
+      applySyncedDepReports(repMap, j.sharedPool, j.uiboardToolchain);
+      renderHeader(); renderLeftDrawer(); renderCanvas();
+      if (!silent && focusPackId && state.packDepReports[focusPackId]) {
+        const rep = state.packDepReports[focusPackId];
         showToast(rep.ready ? ('✓「' + rep.packName + '」全部 ' + rep.total + ' 项依赖已就位') : ('「' + rep.packName + '」尚缺 ' + rep.missingCount + ' 项依赖待补齐'));
       }
-      return j.reports;
+      return state.packDepReports;
     }
   } catch (err) { void err; }
   return null;
@@ -271,7 +318,7 @@ async function syncAllWorkflowDepsFromBackend(focusPackId, silent) {
 async function syncAutopilotMorningBrief() {
   if (!/^https?:$/i.test(location.protocol)) return;
   try {
-    const r = await fetch('/donegate/api/autopilot/status');
+    const r = await fetchDoneGateApi('/donegate/api/autopilot/status');
     const j = await r.json();
     const ap = j && j.autopilot;
     if (!ap || ap.state === 'COMPLETED') return;
@@ -296,7 +343,7 @@ async function triggerStartAutopilot() {
     if (!nodes.length) { showToast('当前项目看板无可挂机组件节点'); return; }
     showToast('🌙 已启动全看板 ' + nodes.length + ' 个组件拓扑级过夜挂机（共享 Git Worktree 沙箱 + 组件级写边界锁）...');
     try {
-      const r = await fetch('/donegate/api/autopilot/start-project', {
+      const r = await fetchDoneGateApi('/donegate/api/autopilot/start-project', null, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodes, links: cont.links || [], componentWorkflows: state.componentWorkflows || {}, useWorktreeSandbox: true, useFingerprintCache: true })
       });
@@ -319,7 +366,7 @@ async function triggerStartAutopilot() {
   if (!pk) return;
   showToast('🌙 已启动过夜挂机长跑（独立 Git Worktree 零污染沙箱 + 断点续跑）...');
   try {
-    const r = await fetch('/donegate/api/autopilot/start', {
+    const r = await fetchDoneGateApi('/donegate/api/autopilot/start', null, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: pk, useWorktreeSandbox: true, useFingerprintCache: true })
     });
     const out = await r.json();
@@ -341,7 +388,7 @@ async function approveAndResumeAutopilot(runId, nodeId, campaignId) {
   const pk = WORKFLOW_PACKS[state.activePackId];
   if (!/^https?:$/i.test(location.protocol)) return;
   try {
-    const r = await fetch('/donegate/api/autopilot/approve', {
+    const r = await fetchDoneGateApi('/donegate/api/autopilot/approve', null, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ runId, nodeId, campaignId: campaignId || null, pack: campaignId ? null : pk, by: '业主' })
     });
@@ -365,17 +412,20 @@ function startWorkflowDepsPoll(packId, onlyNodeId) {
   let attempts = 0;
   const timer = setInterval(async () => {
     attempts += 1;
-    const reports = await syncAllWorkflowDepsFromBackend(packId, true);
+    const reports = await syncAllWorkflowDepsFromBackend(packId, true, true);
+    if (packId === 'uiboard' && typeof syncUiBoardBackendStatus === 'function') await syncUiBoardBackendStatus(true);
     const rep = reports && reports[packId];
-    const nodeReady = onlyNodeId && rep && Array.isArray(rep.missing) ? !rep.missing.some((m) => m.nodeId === onlyNodeId) : false;
-    if ((rep && rep.ready) || nodeReady || attempts >= 20) {
+    const nodeReady = onlyNodeId && rep && Array.isArray(rep.missing)
+      ? !rep.missing.some((m) => (Array.isArray(m.nodeIds) && m.nodeIds.includes(onlyNodeId)) || m.nodeId === onlyNodeId)
+      : false;
+    if ((rep && rep.ready) || nodeReady || attempts >= 24) {
       clearInterval(timer); dgDepPollTimers.delete(pollKey);
-      if (state.provisioningPacks && (!rep || rep.ready || attempts >= 20)) delete state.provisioningPacks[packId];
+      if (state.provisioningPacks && (!rep || rep.ready || attempts >= 24)) delete state.provisioningPacks[packId];
       if (onlyNodeId && state.provisioningNodes) delete state.provisioningNodes[onlyNodeId];
       renderAll();
       if ((rep && rep.ready) || nodeReady) showToast('✅「' + ((WORKFLOW_PACKS[packId] && WORKFLOW_PACKS[packId].name) || packId) + '」依赖已安装就位');
     }
-  }, 3000);
+  }, 2500);
   dgDepPollTimers.set(pollKey, timer);
 }
 
@@ -395,13 +445,13 @@ async function triggerProvisionWorkflowDeps(packId, opts = {}) {
   if (/^https?:$/i.test(location.protocol)) {
     try {
       const sessId = typeof DSH_SESSION_ID !== 'undefined' ? DSH_SESSION_ID : 'default';
-      const r = await fetch('/donegate/api/workflow-deps/provision', {
+      const r = await fetchDoneGateApi('/donegate/api/workflow-deps/provision', null, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pack: pk, onlyNodeId, sessionId: sessId, spawnSubagent: true })
       });
       const rep = await r.json();
       if (r.ok && rep && rep.ok) {
-        state.packDepReports = { ...(state.packDepReports || {}), [pk.id]: rep };
+        applySyncedDepReports({ [pk.id]: rep }, null, null);
         if (rep.ready === true) {
           clearProvisioning(); renderAll();
           showToast('✅「' + pk.name + '」依赖已全部就位（' + rep.depsDir + '/）');
@@ -477,11 +527,20 @@ async function refreshBackendData() {
     ATLAS = data.atlas; liveServerConnected = true;
     const syncBadge = document.getElementById('atlas-ov-sync');
     if (syncBadge) syncBadge.textContent = '实时同步已连接';
+    applySyncedDepReports(data.packDepReports, data.sharedPool, data.uiboardToolchain);
     hydrateWorkbenchFromAtlas(ATLAS, true);
-    await syncAllWorkflowDepsFromBackend();
+    await syncAllWorkflowDepsFromBackend(state.activePackId, true, true);
+    if (typeof syncUiBoardBackendStatus === 'function') await syncUiBoardBackendStatus(state.leftTab === 'uiboard');
     renderAll();
     if (typeof recordHistoryCheckpoint === 'function') recordHistoryCheckpoint();
-    showToast('已重扫全仓最新代码、入口与门禁状态（共 ' + ((ATLAS.project && ATLAS.project.moduleCount) || 0) + ' 个模块）');
+    const uibTc = typeof uiBoardState !== 'undefined' && uiBoardState.toolchain;
+    if (state.leftTab === 'uiboard' && uibTc && uibTc.readyCount > 0) {
+      showToast('已同步共享底座池：' + uibTc.badgeLabel + (uibTc.versionSummary ? '（' + uibTc.versionSummary + '）' : ''));
+    } else if (state.sharedPool && state.sharedPool.readyCount > 0 && state.sharedPool.summaryLabel) {
+      showToast('已同步共享底座池：' + state.sharedPool.summaryLabel);
+    } else {
+      showToast('已重扫全仓最新代码、入口与门禁状态（共 ' + ((ATLAS.project && ATLAS.project.moduleCount) || 0) + ' 个模块）');
+    }
   } catch (err) { void err; showToast('本地同步服务未启动'); } finally { if (icon) icon.classList.remove('dg-spin'); }
 }
 
@@ -519,6 +578,14 @@ async function openFolderViaBackend(dirPath) {
     if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) return;
     if (['Enter', 'Delete', 'Backspace'].includes(e.key) || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) checkHistoryAndPersist();
   });
+  const triggerFocusAutoSync = () => {
+    if (!/^https?:$/i.test(location.protocol) || Date.now() - lastAutoDepSyncTs < 1200) return;
+    lastAutoDepSyncTs = Date.now();
+    syncAllWorkflowDepsFromBackend(state.activePackId, true, true);
+    if (state.leftTab === 'uiboard' && typeof syncUiBoardBackendStatus === 'function') syncUiBoardBackendStatus(true);
+  };
+  window.addEventListener('focus', triggerFocusAutoSync);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) triggerFocusAutoSync(); });
   if (/^https?:$/i.test(location.protocol)) {
     fetchDoneGateApi('/donegate/api/ping', '/api/ping').then((r) => r.json()).then((j) => {
       if (j && j.ok) {
@@ -526,10 +593,11 @@ async function openFolderViaBackend(dirPath) {
         const syncBadge = document.getElementById('atlas-ov-sync');
         if (syncBadge) syncBadge.textContent = '实时同步已连接';
       }
-      syncAllWorkflowDepsFromBackend();
+      syncAllWorkflowDepsFromBackend(state.activePackId, true, true);
+      if (typeof syncUiBoardBackendStatus === 'function') syncUiBoardBackendStatus(false);
       syncAutopilotMorningBrief();
       connectDoneGateLiveEvents();
-    }).catch(() => { syncAllWorkflowDepsFromBackend(); });
+    }).catch(() => { syncAllWorkflowDepsFromBackend(state.activePackId, true, false); });
   }
 })();
 `;

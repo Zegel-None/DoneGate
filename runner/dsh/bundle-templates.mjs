@@ -1,4 +1,4 @@
-// 生成符合 DSH 创造模式 (dsh-doc) 规范的 package.json、Windows/POSIX 自适应 cordis.patch.yml 与服务端入口（<= 250 行）
+// 生成符合 DSH 创造模式 (dsh-doc) 规范的 package.json、Windows/POSIX 自适应 cordis.patch.yml 与动态会话路由入口
 import { normalizeSlashes, toSafeFileUrl } from './win-paths.mjs';
 
 export const DSH_BUNDLE_NAME = '@local/dsh-donegate';
@@ -173,11 +173,19 @@ export function renderDshBundleCordisPatch(projectRoot) {
 export function renderDshHostIndexJs(projectRoot) {
   const routesModuleUrl = toSafeFileUrl(`${normalizeSlashes(projectRoot).replace(/\/+$/, '')}/runner/dsh/host-routes.mjs`);
   const cleanRoot = normalizeSlashes(projectRoot);
-  return `// DSH 0.2.2-rc.5 Host 端插件入口（遵循 dsh-doc 单一 apply 导出规范，通过 file:// URL 安全加载 Windows/POSIX 完结门路由）
+  return `// DSH Host 端插件入口（遵循 dsh-doc 单一 apply 导出规范，按会话工作区动态路由完结门接口）
+import { existsSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 export const inject = ['webServer'];
 
+function isExistingDir(dirPath) {
+  try { return Boolean(dirPath && typeof dirPath === 'string' && existsSync(dirPath) && statSync(dirPath).isDirectory()); }
+  catch (err) { void err; return false; }
+}
+
 export async function apply(ctx, config) {
-  const root = (config && config.projectRoot) || ${JSON.stringify(cleanRoot)};
+  const defaultRoot = (config && config.projectRoot) || ${JSON.stringify(cleanRoot)};
   const mod = await import(${JSON.stringify(routesModuleUrl)});
 
   const dispatchSubagent = async ({ sessionId, label, prompt } = {}) => {
@@ -209,7 +217,32 @@ export async function apply(ctx, config) {
     return { dispatched: false, fallbackAutoSubmit: true };
   };
 
-  const handleRoute = mod.createDoneGateWebRouteHandler(root, { dispatchSubagent });
+  const handlerByRoot = new Map();
+  const getHandler = (rootDir) => {
+    const key = resolve(rootDir || defaultRoot);
+    if (!handlerByRoot.has(key)) handlerByRoot.set(key, mod.createDoneGateWebRouteHandler(key, { dispatchSubagent }));
+    return handlerByRoot.get(key);
+  };
+  getHandler(defaultRoot);
+
+  const resolveRequestRoot = (req, u) => {
+    const hdrs = (req && req.headers) || {};
+    const explicitRoot = u.searchParams.get('workspace') || hdrs['x-donegate-root'] || '';
+    if (isExistingDir(explicitRoot)) return resolve(explicitRoot);
+    const sid = u.searchParams.get('sessionId') || hdrs['x-dsh-session-id'] || '';
+    try {
+      const agents = ctx.get && ctx.get('agents');
+      const sessions = ctx.get && ctx.get('sessions');
+      const ag = (sid && agents && agents.get && agents.get(sid)) || (!sid && agents && agents.list && agents.list()[0]) || null;
+      const ss = (sid && sessions && sessions.get && sessions.get(sid)) || null;
+      const cands = [
+        ag?.cwd, ag?.workDir, ag?.workspaceDir, ag?.projectRoot, ag?.options?.cwd, ag?.config?.cwd,
+        ss?.cwd, ss?.workDir, ss?.workspaceDir, ss?.workspacePath, ss?.projectRoot
+      ];
+      for (const c of cands) if (isExistingDir(c)) return resolve(c);
+    } catch (err) { void err; }
+    return defaultRoot;
+  };
 
   const disposeRoute = ctx.webServer.register({
     kind: 'prefix',
@@ -223,7 +256,8 @@ export async function apply(ctx, config) {
       }
       const subPath = '/' + u.pathname.slice('/donegate/api/'.length);
       try {
-        const handled = await handleRoute(req, res, subPath);
+        const activeRoot = resolveRequestRoot(req, u);
+        const handled = await getHandler(activeRoot)(req, res, subPath);
         if (!handled) {
           res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ ok: false, error: '未知完结门接口: ' + subPath }));

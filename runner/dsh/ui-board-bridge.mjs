@@ -1,11 +1,20 @@
-// 注入被预览应用 <iframe> 的零依赖通信桥：全窗口原生交互放行 + 纯 Alt+单击 (e.altKey) 源码与 uiOwner 定位拾取桥（防双发胶囊）
+// 注入被预览应用 <iframe> 的零依赖通信桥：全窗口原生交互放行 + Lovinsp 悬浮源码面包屑 + React Grab 组件栈与 Alt+单击拾取桥
 
 function buildUiBridgeDomHelpersSource() {
   return `  var hoverBox = null;
   var selectBox = null;
   var tagPill = null;
+  var lovinspHud = null;
   var selectedEl = null;
   var suppressAltClickUntil = 0;
+
+  function isLovinspActive() {
+    return Boolean(document.body && document.body.getAttribute && document.body.getAttribute('data-lovinsp-active') === '1');
+  }
+
+  function isReactGrabActive() {
+    return Boolean(document.body && document.body.getAttribute && document.body.getAttribute('data-react-grab-active') === '1');
+  }
 
   function ensureOverlays() {
     if (hoverBox || !document.body) return;
@@ -18,9 +27,49 @@ function buildUiBridgeDomHelpersSource() {
     tagPill = document.createElement('div');
     tagPill.setAttribute('data-dg-bridge-ui', '1');
     tagPill.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;padding:3px 8px;border-radius:6px;background:#1d4ed8;color:#fff;font:600 11px/1.3 system-ui,sans-serif;white-space:nowrap;display:none;box-shadow:0 4px 12px rgba(15,23,42,0.25);';
+    lovinspHud = document.createElement('div');
+    lovinspHud.setAttribute('data-dg-bridge-ui', '1');
+    lovinspHud.setAttribute('data-lovinsp-hud', '1');
+    lovinspHud.style.cssText = 'position:fixed;right:12px;bottom:12px;pointer-events:none;z-index:2147483643;padding:5px 10px;border-radius:8px;background:rgba(15,23,42,0.88);color:#e2e8f0;font:500 11px/1.35 ui-monospace,monospace;max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:none;box-shadow:0 6px 18px rgba(15,23,42,0.28);border:1px solid rgba(59,130,246,0.45);';
     document.body.appendChild(hoverBox);
     document.body.appendChild(selectBox);
     document.body.appendChild(tagPill);
+    document.body.appendChild(lovinspHud);
+  }
+
+  function extractComponentStack(el) {
+    var stack = [];
+    var cur = el;
+    while (cur && cur !== document.body) {
+      if (cur.getAttribute) {
+        var explicit = cur.getAttribute('data-component-stack');
+        if (explicit) {
+          explicit.split('>').forEach(function(part) {
+            var p = part.trim();
+            if (p && stack.indexOf(p) === -1) stack.push(p);
+          });
+          break;
+        }
+        var comp = cur.getAttribute('data-dg-component') || cur.getAttribute('data-dg-block');
+        if (comp && stack.indexOf(comp) === -1) stack.unshift(comp);
+      }
+      var keys = Object.keys(cur);
+      for (var k = 0; k < keys.length; k++) {
+        if (keys[k].indexOf('__reactFiber$') === 0 || keys[k].indexOf('__reactInternalInstance$') === 0) {
+          var f = cur[keys[k]];
+          var fNames = [];
+          while (f && fNames.length < 5) {
+            var nm = f.type && (f.type.displayName || f.type.name);
+            if (nm && typeof nm === 'string' && fNames.indexOf(nm) === -1) fNames.unshift(nm);
+            f = f.return;
+          }
+          if (fNames.length) return fNames;
+        }
+      }
+      cur = cur.parentElement;
+    }
+    if (!stack.length && el && el.tagName) stack.push(el.tagName.toLowerCase());
+    return stack;
   }
 
   function resolveElementSource(el) {
@@ -106,12 +155,14 @@ function buildUiBridgeDomHelpersSource() {
     box.style.height = Math.max(12, Math.round(r.height)) + 'px';
     if (showPill && tagPill) {
       var src = resolveElementSource(el);
+      var stack = extractComponentStack(el);
       var txt = String(el.innerText || (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('placeholder'))) || '').trim().slice(0, 16);
       var wire = el.getAttribute && el.getAttribute('data-dg-wiring');
       var wTag = wire === 'mock' ? ' · 🔌待接后端' : (wire === 'wired' ? ' · ✓真逻辑' : '');
-      tagPill.textContent = '<' + el.tagName.toLowerCase() + '>' + (txt ? ' "' + txt + '"' : '') + ' · ' + src.file.split('/').pop() + ':' + src.line + wTag;
+      var stackStr = stack.length > 1 ? (' [' + stack.slice(-2).join(' › ') + ']') : '';
+      tagPill.textContent = '<' + el.tagName.toLowerCase() + '>' + (txt ? ' "' + txt + '"' : '') + stackStr + ' · ' + src.file.split('/').pop() + ':' + src.line + wTag;
       tagPill.style.display = 'block';
-      tagPill.style.left = Math.max(6, Math.min((window.innerWidth || 800) - 260, Math.round(r.left))) + 'px';
+      tagPill.style.left = Math.max(6, Math.min((window.innerWidth || 800) - 280, Math.round(r.left))) + 'px';
       tagPill.style.top = (r.top > 28 ? Math.round(r.top - 24) : Math.round(r.bottom + 4)) + 'px';
     }
   }`;
@@ -120,6 +171,7 @@ function buildUiBridgeDomHelpersSource() {
 function buildUiBridgeEventListenersSource() {
   return `  function hideHoverBox() {
     if (hoverBox) hoverBox.style.display = 'none';
+    if (lovinspHud) lovinspHud.style.display = 'none';
     if (!selectedEl && tagPill) tagPill.style.display = 'none';
     else if (selectedEl && selectBox && selectBox.style.display === 'block') placeBox(selectBox, selectedEl, true);
   }
@@ -131,13 +183,26 @@ function buildUiBridgeEventListenersSource() {
   }
 
   document.addEventListener('pointermove', function(e) {
+    var t = e.target;
+    if (!t || t === document.body || t === document.documentElement || (t.getAttribute && t.getAttribute('data-dg-bridge-ui'))) {
+      if (!e.altKey) hideHoverBox();
+      return;
+    }
     if (!e.altKey) {
-      hideHoverBox();
+      if (hoverBox) hoverBox.style.display = 'none';
+      if (!selectedEl && tagPill) tagPill.style.display = 'none';
+      if (isLovinspActive()) {
+        ensureOverlays();
+        var lSrc = resolveElementSource(t);
+        var lStack = extractComponentStack(t);
+        if (lovinspHud) {
+          lovinspHud.textContent = 'Lovinsp · ' + lStack.join(' › ') + ' @ ' + lSrc.file + ':' + lSrc.line + ':' + (lSrc.col || 1) + ' (Alt+单击抓取组件栈)';
+          lovinspHud.style.display = 'block';
+        }
+      }
       return;
     }
     ensureOverlays();
-    var t = e.target;
-    if (!t || t === document.body || t === document.documentElement || (t.getAttribute && t.getAttribute('data-dg-bridge-ui'))) return;
     placeBox(hoverBox, t, true);
   }, true);
 
@@ -161,21 +226,28 @@ function buildUiBridgeEventListenersSource() {
     if (hoverBox) hoverBox.style.display = 'none';
     placeBox(selectBox, pick, true);
     var src = resolveElementSource(pick);
+    var stack = extractComponentStack(pick);
     var uiOwner = resolveUiOwner(pick, src);
     var sliceCmd = deriveBridgeSliceCmd(uiOwner);
     var label = String(pick.innerText || pick.value || (pick.getAttribute && (pick.getAttribute('placeholder') || pick.getAttribute('aria-label'))) || pick.tagName).replace(/\\s+/g, ' ').trim().slice(0, 28);
+    var rawHtml = String(pick.outerHTML || '').replace(/\\s+/g, ' ').trim();
     postUp('dg-ui:element-selected', {
       tag: pick.tagName.toLowerCase(),
       label: label || pick.tagName.toLowerCase(),
       sourceFile: src.file,
       sourceLine: src.line,
+      sourceCol: src.col || 1,
       component: src.component,
+      componentStack: stack,
+      reactGrabActive: isReactGrabActive(),
+      lovinspActive: isLovinspActive(),
       uiOwner: uiOwner,
       sliceCmd: sliceCmd,
       selector: buildCssPath(pick),
       actionId: (pick.getAttribute && pick.getAttribute('data-dg-action')) || null,
       wiringState: (pick.getAttribute && pick.getAttribute('data-dg-wiring')) || null,
-      outerSnippet: String(pick.outerHTML || '').slice(0, 280)
+      outerSnippet: rawHtml.slice(0, 280),
+      domSnapshot: rawHtml.slice(0, 520)
     });
   }, true);
 
