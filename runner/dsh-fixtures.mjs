@@ -2,12 +2,10 @@
 // DSH Web 原生插件包、dsh-doc 规范、Windows 路径、类 ComfyUI 补齐与过夜挂机状态机自检夹具（<= 325 行）
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { cleanGitEnv } from './dsh/autopilot-worktree.mjs';
 import {
   buildDshFileResourceAddress, resolveDshHome,
   resolveDshProfileDir, toSafeFileUrl
@@ -23,26 +21,14 @@ import {
   buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps, runNpmPrefixInstall
 } from './dsh/workflow-deps.mjs';
 import {
-  AUTOPILOT_STATES, approveAutopilotHumanGate, loadAutopilotCheckpoint
-} from './dsh/autopilot-state.mjs';
-import {
-  buildDshBundleDirectory, installDshWebBundle, uninstallDshWebBundle
+  buildDshBundleDirectory, installDshWebBundle, stripCordisPatchText, uninstallDshWebBundle
 } from './dsh/install-dsh-web.mjs';
-import {
-  assignComponentWorkflow, mutateComponentWorkflowJit, promoteComponentJitToMacro
-} from './dsh/workflow-jit.mjs';
-import { executeProjectCampaignAutopilot } from './dsh/campaign-autopilot.mjs';
+import { runAutopilotSandboxChecks } from './dsh/fixtures-autopilot-sandbox.mjs';
+import { runJitAndCampaignChecks } from './dsh/fixtures-campaign-jit.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-export async function runAllDshChecks() {
-  let passed = 0;
-  const check = async (label, fn) => {
-    await fn();
-    passed++;
-    console.log(`  ✓ ${label}`);
-  };
-
+async function verifyWinPathsAndCmdScript(check) {
   await check('1. Windows (win32) 含空格与中文路径归一化及 file:/// / dsh-resource:// 协议安全编码', () => {
     const mockHome = win32.join('C:', 'Users', 'DevUser');
     const winEnv = { USERPROFILE: mockHome };
@@ -63,7 +49,9 @@ export async function runAllDshChecks() {
     const gitAttrs = readFileSync(join(ROOT, '.gitattributes'), 'utf8');
     assert.ok(gitAttrs.includes('*.cmd text eol=crlf') && gitAttrs.includes('* text=auto eol=lf'));
   });
+}
 
+async function verifyQuoteAndReceiptProtocol(check) {
   await check('2. DSH 原生蓝色引用胶囊多元素累加（卡片 + 连线 + 按钮）与两行验真微卡协议', async () => {
     const q1 = buildElementQuotePayload({ kind: 'node', id: 'n-ui', label: 'UI 组件层', contractIds: ['verdict-core'], scopePaths: ['runner/atlas'] });
     const q2 = buildElementQuotePayload({ kind: 'link', id: 'lk-loop-1', label: '门禁失败回跳线' });
@@ -115,7 +103,9 @@ export async function runAllDshChecks() {
       rmSync(tmpRcpt, { recursive: true, force: true });
     }
   });
+}
 
+async function verifyDshDocBundleSpec(check) {
   await check('3. DSH 创造模式 (dsh-doc) 官方规范校验（manifest / engines.dsh / locale / 纯几何 SVG 图标与预览图）', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-dsh-bundle-'));
     try {
@@ -145,7 +135,10 @@ export async function runAllDshChecks() {
 
       const patchYml = readFileSync(join(bundleDir, 'cordis.patch.yml'), 'utf8');
       assert.ok(patchYml.includes("process.platform === 'win32'"));
-      assert.ok(patchYml.includes('@deepseek-ai/dsh-pwsh-sandbox'));
+      assert.ok(patchYml.includes('@deepseek-ai/dsh-tool-pwsh') && patchYml.includes('@deepseek-ai/dsh-tool-bash'));
+      assert.ok(!patchYml.includes('@deepseek-ai/dsh-bash-sandbox'), '禁止在预设内重复嵌套宿主层 bash-sandbox 以免挂载报错');
+      assert.ok(patchYml.includes('sampleOverCapGlobResults: false'), 'tool-fs-search 必须声明 sampleOverCapGlobResults: false 以通过 rc.5 校验');
+      assert.ok(patchYml.includes('@deepseek-ai/dsh-tool-ask-user'), '主调度预设须挂载 dsh-tool-ask-user 支持原生选择框提问');
       assert.ok(patchYml.includes('id: preset-donegate-router'));
       assert.equal((patchYml.match(/compaction:\s*true/g) || []).length, 2, 'router 与 worker 两个预设均须挂载 isolate.compaction 压缩隔离组');
       assert.equal((patchYml.match(/@deepseek-ai\/dsh-compaction-basic/g) || []).length, 2, '压缩隔离组内须默认挂载官方 dsh-compaction-basic');
@@ -154,7 +147,9 @@ export async function runAllDshChecks() {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+}
 
+async function verifyWinProfileInstallLifecycle(check) {
   await check('4. Windows Profile 双形态安装/卸载仿真（含 package.json bundles 列表模式与纯 patch 兜底模式）', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-dsh-winprof-'));
     try {
@@ -182,14 +177,19 @@ export async function runAllDshChecks() {
       assert.ok(afterPkg.dsh.profile.bundles.includes('@local/dsh-donegate'));
       assert.ok(existsSync(join(profWithPkg, 'node_modules', '@local', 'dsh-donegate', 'lib', 'client.js')));
 
+      writeFileSync(join(profWithPkg, 'cordis.patch.yml'), '# --- BEGIN DONEGATE-V4 BUNDLE ---\n- insert: []\n# --- END DONEGATE-V4 BUNDLE ---\n', 'utf8');
+      assert.equal(stripCordisPatchText(readFileSync(join(profWithPkg, 'cordis.patch.yml'), 'utf8')), '[]\n', '剥离完结门补丁块后为空时必须回写合法顶层 YAML 空数组 []');
       uninstallDshWebBundle({ dshHome: join(tmp, 'dsh-home'), profileDir: profWithPkg, platform: 'win32' });
+      assert.equal(readFileSync(join(profWithPkg, 'cordis.patch.yml'), 'utf8'), '[]\n');
       const cleanedPkg = JSON.parse(readFileSync(join(profWithPkg, 'package.json'), 'utf8'));
       assert.ok(!cleanedPkg.dsh.profile.bundles.includes('@local/dsh-donegate'));
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+}
 
+async function verifyClientSandboxAndRunner(check) {
   await check('5. 浏览器端 __ModuleLoader__ 沙箱加载与插槽注册 + 确定性工作流状态机验真', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-dsh-vm-'));
     try {
@@ -226,6 +226,13 @@ export async function runAllDshChecks() {
       const viewEntry = registeredSlots.find((s) => s.opts.id === 'donegate');
       assert.equal(viewEntry.opts.order, 85, '完结门视图 order 必须后置为 85，严禁抢占默认聊天视图');
       assert.ok(clientCode.includes('data-conversation-composer-overlay'), '必须启用 DSH 全屏覆盖模式使工作台铺满输入框底部区域');
+      assert.ok(
+        clientCode.includes('[data-question-key] > *') &&
+        clientCode.includes('[data-approval-key] > *') &&
+        clientCode.includes('[data-plan-review-key] > *') &&
+        clientCode.includes("data-slot='conversation.composer'] > :not([data-chain-overlay-fallback])"),
+        '完结门全屏覆盖下必须恢复主对话选择框、审批框与计划评审卡片的 pointer-events 点击响应'
+      );
       assert.ok(clientCode.includes('--dsh-composer-card-max-width'), '顶部消息栏必须与下方输入框严格共享 --dsh-composer-card-max-width 等宽');
       assert.ok(clientCode.includes('--dsw-specific-input-major') && clientCode.includes('--dsw-radius-xl'), '必须复用 DSH 官方输入框表面与圆角令牌');
       assert.ok(!clientCode.includes('切回对话页') && !clientCode.includes('对话与回执'), '必须彻底移除多余的对话与回执顶栏及切回对话页按钮');
@@ -266,7 +273,9 @@ export async function runAllDshChecks() {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+}
 
+async function verifyWorkflowDepsIsolation(check) {
   await check('6. 类 ComfyUI 开发流缺依赖硬阻断、workflows/.deps/<id>/ 隔离补齐与 PATH 自动注入闭环', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'dg-wf-deps-'));
     try {
@@ -310,365 +319,24 @@ export async function runAllDshChecks() {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+}
 
-  await check('7. 过夜挂机长跑状态机：断点续跑不重跑已完成节点、human-gate 早间简报挂起与三重防烧钱熔断', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'dg-autopilot-'));
-    try {
-      const counterFile = join(tmp, 'step1-count.txt');
-      writeFileSync(counterFile, '0', 'utf8');
-      const nightPack = {
-        id: 'pack-overnight', name: '数据库迁移过夜流',
-        nodes: [
-          {
-            id: 's1', title: '空库迁移演练',
-            exec: { kind: 'adapter_gate', nodeArgs: ['-e', `const fs=require("fs");const n=Number(fs.readFileSync(${JSON.stringify(counterFile)},"utf8"))+1;fs.writeFileSync(${JSON.stringify(counterFile)},String(n));process.exit(0);`] }
-          },
-          { id: 's2-gate', tplId: 'tpl-human-gate', isHumanGate: true, title: '不可逆迁移上线闸门', tip: '确认备份无误后放行' },
-          { id: 's3', title: '对账校验收尾', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }
-        ],
-        links: [
-          { id: 'l1', fromNode: 's1', fromSlot: 'out', toNode: 's2-gate', toSlot: 'in' },
-          { id: 'l2', fromNode: 's2-gate', fromSlot: 'out_go', toNode: 's3', toSlot: 'in' }
-        ]
-      };
+export async function runAllDshChecks() {
+  let passed = 0;
+  const check = async (label, fn) => {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${label}`);
+  };
 
-      const pass1 = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-01' }, nightPack);
-      assert.equal(pass1.suspended, true);
-      assert.equal(pass1.state, AUTOPILOT_STATES.SUSPENDED_HUMAN_GATE);
-      assert.equal(readFileSync(counterFile, 'utf8'), '1');
-      const cp1 = loadAutopilotCheckpoint(tmp, 'night-01');
-      assert.ok(cp1.briefMarkdown.includes('不可逆迁移上线闸门'));
-
-      const app = approveAutopilotHumanGate(tmp, { runId: 'night-01', by: '业主' });
-      assert.equal(app.ok, true);
-      const pass2 = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-01' }, nightPack, { resumeRunId: 'night-01' });
-      assert.equal(pass2.ok, true);
-      assert.equal(pass2.state, AUTOPILOT_STATES.COMPLETED);
-      assert.equal(readFileSync(counterFile, 'utf8'), '1', '断点续跑严禁重复执行已完成的上游节点 s1');
-
-      const loopPack = {
-        id: 'pack-loop-burn', name: '死循环熔断测试流',
-        nodes: [{ id: 'bad1', title: '恒败单测', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(1)'] } }],
-        links: [{ id: 'self-lk', fromNode: 'bad1', fromSlot: 'out', toNode: 'bad1', toSlot: 'in', maxLoops: 2 }]
-      };
-      const trippedLoop = await executeDeterministicWorkflowRun(tmp, { ticketId: 'night-loop' }, loopPack);
-      assert.equal(trippedLoop.ok, false);
-      assert.equal(trippedLoop.code, 'MAX_LOOPS_EXCEEDED');
-      assert.equal(trippedLoop.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
-
-      const gitDir = join(tmp, 'scoped-repo');
-      mkdirSync(join(gitDir, 'src'), { recursive: true });
-      mkdirSync(join(gitDir, 'secret'), { recursive: true });
-      writeFileSync(join(gitDir, '.gitignore'), '.donegate/\n');
-      writeFileSync(join(gitDir, 'src/ok.mjs'), 'export const x = 1;\n');
-      writeFileSync(join(gitDir, 'secret/prod.env'), 'KEY=1\n');
-      spawnSync('git', ['-C', gitDir, 'init', '-q'], { env: cleanGitEnv() });
-      spawnSync('git', ['-C', gitDir, 'config', 'user.email', 't@local'], { env: cleanGitEnv() });
-      spawnSync('git', ['-C', gitDir, 'config', 'user.name', 'T'], { env: cleanGitEnv() });
-      spawnSync('git', ['-C', gitDir, 'add', '.'], { env: cleanGitEnv() });
-      spawnSync('git', ['-C', gitDir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], { env: cleanGitEnv() });
-
-      const scopePack = {
-        id: 'pack-scope', name: '越界写拦截测试流',
-        nodes: [{ id: 'rogue', title: '偷改禁区文件', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'require("fs").writeFileSync("secret/prod.env","KEY=2\\n");process.exit(0);'] } }],
-        links: []
-      };
-      const trippedScope = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-scope', mandate: { allowedWriteScopes: ['src/'] } }, scopePack);
-      assert.equal(trippedScope.ok, false);
-      assert.equal(trippedScope.exitCode, 2);
-      assert.equal(trippedScope.code, 'WRITE_SCOPE_VIOLATION');
-      assert.equal(trippedScope.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
-
-      const trippedDirty = await executeDeterministicWorkflowRun(gitDir, { ticketId: 'night-dirty' }, { id: 'p-clean', name: '净树检查流', nodes: [{ id: 'c1', title: '探针', exec: { kind: 'adapter_gate', nodeArgs: ['-e', 'process.exit(0)'] } }], links: [] }, { requireCleanGit: true });
-      assert.equal(trippedDirty.ok, false);
-      assert.equal(trippedDirty.code, 'DIRTY_WORKTREE_FAULT');
-      assert.equal(trippedDirty.state, AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-
-  await check("8. 过夜挂机 Git Worktree 零污染隔离沙箱与输入材料指纹免跑缓存", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "dg-wt-cache-"));
-    try {
-      mkdirSync(join(tmp, "src"), { recursive: true });
-      writeFileSync(join(tmp, ".gitignore"), ".donegate/\n");
-      writeFileSync(join(tmp, "src/main.mjs"), "export const val = 1;\n");
-      spawnSync('git', ["-C", tmp, "init", "-q"], { env: cleanGitEnv() });
-      spawnSync('git', ["-C", tmp, "config", "user.email", "t@local"], { env: cleanGitEnv() });
-      spawnSync('git', ["-C", tmp, "config", "user.name", "T"], { env: cleanGitEnv() });
-      spawnSync('git', ["-C", tmp, "add", "."], { env: cleanGitEnv() });
-      spawnSync('git', ["-C", tmp, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"], { env: cleanGitEnv() });
-
-      // (A) Worktree 熔断测试：沙箱内污染 src/main.mjs 后触发自循环熔断 -> 主工作区必须 100% 干净零污染！
-      const failWtPack = {
-        id: "pack-wt-fail", name: "沙箱脏改熔断流",
-        nodes: [{
-          id: "dirty-fail", title: "改坏源码但测试不过",
-          exec: { kind: "adapter_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"BROKEN_NIGHT_CODE\\n\"); process.exit(1);"] }
-        }],
-        links: [{ id: "lk-f", fromNode: "dirty-fail", fromSlot: "out", toNode: "dirty-fail", toSlot: "in", maxLoops: 1 }]
-      };
-      const rFail = await executeDeterministicWorkflowRun(tmp, { ticketId: "wt-fail-01" }, failWtPack, { useWorktreeSandbox: true });
-      assert.equal(rFail.ok, false);
-      assert.equal(rFail.sandboxWorktree.status, "quarantined_clean_main");
-      assert.equal(readFileSync(join(tmp, "src/main.mjs"), "utf8"), "export const val = 1;\n", "主工作区源码严禁被失败的过夜挂机污染");
-      const mainSt = spawnSync("git", ["-C", tmp, "status", "--porcelain"], { encoding: "utf8", env: cleanGitEnv() });
-      assert.equal(mainSt.stdout.trim(), "", "熔断后主工作区 git status 必须保持 100% 干净");
-
-      // (B) Worktree 全绿测试：沙箱内演进源码并通过门禁 -> 自动提交并快进合回主分支且清理临时目录！
-      const okWtPack = {
-        id: "pack-wt-ok", name: "沙箱全绿合入流",
-        nodes: [{
-          id: "ok-edit", title: "修复并通过验收",
-          exec: { kind: "adapter_gate", nodeArgs: ["-e", "require(\"fs\").writeFileSync(\"src/main.mjs\", \"export const val = 42;\\n\"); process.exit(0);"] }
-        }],
-        links: []
-      };
-      const rOk = await executeDeterministicWorkflowRun(tmp, { ticketId: "wt-ok-01" }, okWtPack, { useWorktreeSandbox: true });
-      assert.equal(rOk.ok, true);
-      assert.equal(rOk.sandboxWorktree.mergedToMain, true);
-      assert.equal(readFileSync(join(tmp, "src/main.mjs"), "utf8"), "export const val = 42;\n", "全绿挂机成果应自动快进合回主分支");
-
-      // (C) 材料指纹免跑缓存测试：输入未变二次运行自动免跑跳过，改动输入后自动失效重跑！
-      const markerPath = join(tmp, ".donegate", "cache-runs.txt");
-      const cachePack = {
-        id: "pack-fp-cache", name: "指纹免跑验证流",
-        nodes: [{
-          id: "fp-node", title: "昂贵静态扫描", inputs: ["src/"],
-          exec: { kind: "adapter_gate", nodeArgs: ["-e", `const fs=require("fs"),p=${JSON.stringify(markerPath)};fs.writeFileSync(p,String(Number(fs.existsSync(p)?fs.readFileSync(p,"utf8"):0)+1));process.exit(0);`] }
-        }],
-        links: []
-      };
-      const runA = await executeDeterministicWorkflowRun(tmp, { ticketId: "fp-1" }, cachePack, { useFingerprintCache: true });
-      assert.equal(runA.ok, true);
-      assert.equal(runA.cacheHits, 0);
-      assert.equal(readFileSync(markerPath, "utf8"), "1");
-
-      const runB = await executeDeterministicWorkflowRun(tmp, { ticketId: "fp-2" }, cachePack, { useFingerprintCache: true });
-      assert.equal(runB.ok, true);
-      assert.equal(runB.cacheHits, 1, "源码未改动时第二次运行必须命中指纹缓存免跑");
-      assert.equal(readFileSync(markerPath, "utf8"), "1", "命中缓存时底层子进程严禁被重复拉起");
-
-      writeFileSync(join(tmp, "src/main.mjs"), "export const val = 99;\n");
-      const runC = await executeDeterministicWorkflowRun(tmp, { ticketId: "fp-3" }, cachePack, { useFingerprintCache: true });
-      assert.equal(runC.cacheHits, 0, "源码变更后材料指纹变化，必须自动失效并重跑真机节点");
-      assert.equal(readFileSync(markerPath, "utf8"), "2");
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-
-  await check("9. 预置宏打底 + 节点级即时派生 (JIT)：总控/Worker 权限隔离、底座只增不减安全锁与一键另存为宏", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "dg-jit-wf-"));
-    try {
-      const uiComp = {
-        id: "calc-ui", title: "计算器按键与显示屏界面", tip: "React 界面与弹窗交互",
-        scopePaths: ["src/ui/"], modules: [{ name: "CalcView", role: "界面", path: "src/ui/CalcView.tsx" }]
-      };
-      const engineComp = {
-        id: "calc-engine", title: "科学计算核心逻辑模块", tip: "纯函数四则与浮点运算",
-        scopePaths: ["src/core/"], modules: [{ name: "evalExpr", role: "逻辑", path: "src/core/eval.mjs" }]
-      };
-
-      // (A) 执行端 Worker 严禁选配或篡改验收开发流
-      const deniedAssign = assignComponentWorkflow(tmp, engineComp, { actorRole: "worker" });
-      assert.equal(deniedAssign.ok, false);
-      assert.equal(deniedAssign.code, "WORKER_CANNOT_MUTATE_WORKFLOW");
-
-      // (B) 总控自动为不同组件匹配对应基准宏（且优先命中零外部未装依赖的 pack-core-logic）
-      const assignedUi = assignComponentWorkflow(tmp, uiComp, { actorRole: "super-agent" });
-      const assignedEng = assignComponentWorkflow(tmp, engineComp, { actorRole: "super-agent" });
-      assert.equal(assignedUi.ok, true);
-      assert.equal(assignedUi.binding.baseMacroId, "pack-web");
-      assert.equal(assignedEng.ok, true);
-      assert.equal(assignedEng.binding.baseMacroId, "pack-core-logic");
-      assert.equal(assignedEng.binding.depsReady, true);
-
-      // (C) 改需求时在当前节点局部节点派生（不污染全局宏，且禁止注入非标脚本）
-      const badBrick = mutateComponentWorkflowJit(tmp, engineComp, { actorRole: "super-agent", addTplIds: ["raw-shell-hack"] });
-      assert.equal(badBrick.ok, false);
-      assert.equal(badBrick.code, "UNKNOWN_BRICK_REJECTED");
-
-      const mutated = mutateComponentWorkflowJit(tmp, engineComp, {
-        actorRole: "super-agent",
-        requirementText: "改需求：支持自定义公式语法解析，并联网拉取实时汇率 API"
-      });
-      assert.equal(mutated.ok, true);
-      assert.equal(mutated.binding.mode, "jit-forked");
-      assert.ok(mutated.binding.tplIds.includes("tpl-openspec"));
-      assert.ok(mutated.binding.tplIds.includes("tpl-gitleaks"));
-      assert.ok(mutated.binding.tplIds.includes("tpl-anti-slop"));
-      assert.ok(mutated.binding.deltaCount >= 2);
-
-      // (D) 底座护栏「只增不减」安全锁：自动卸载底线护栏必须被拦截并要求人工审批
-      const apiComp = {
-        id: "calc-rate-api", title: "汇率鉴权与收银接口", tip: "OAuth 与密钥签名",
-        scopePaths: ["src/api/"], modules: [{ name: "rateApi", role: "接口", path: "src/api/rate.ts" }]
-      };
-      assignComponentWorkflow(tmp, apiComp, { actorRole: "super-agent" });
-      const locked = mutateComponentWorkflowJit(tmp, apiComp, {
-        actorRole: "super-agent",
-        removeTplIds: ["tpl-gitleaks"]
-      });
-      assert.equal(locked.ok, false);
-      assert.equal(locked.code, "MANDATORY_FLOOR_LOCKED");
-      assert.equal(locked.requiresHumanApproval, true);
-
-      const humanOk = mutateComponentWorkflowJit(tmp, apiComp, {
-        actorRole: "human",
-        removeTplIds: ["tpl-gitleaks"],
-        humanApprovedFloorRemoval: true
-      });
-      assert.equal(humanOk.ok, true);
-      assert.ok(!humanOk.binding.tplIds.includes("tpl-gitleaks"));
-      assert.ok(humanOk.binding.tplIds.includes("tpl-anti-slop"), "防手搓核心护栏仍保持守底");
-
-      // (E) 一键另存为全局预置宏 (.workflow.json)
-      const promoted = promoteComponentJitToMacro(tmp, engineComp.id, {
-        actorRole: "human",
-        macroId: "calc-formula-fx",
-        name: "公式与汇率联防开发流"
-      });
-      assert.equal(promoted.ok, true);
-      assert.ok(existsSync(join(tmp, "workflows", "calc-formula-fx.workflow.json")));
-      assert.equal(promoted.binding.mode, "macro");
-      assert.equal(promoted.binding.baseMacroId, "calc-formula-fx");
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-
-  await check("10. 真实适配器观测落盘与裁决、跨开发流共享 .deps/_shared 池及多组件拓扑级项目挂机闭环", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "dg-p0-full-"));
-    try {
-      const gitInit = (args) => spawnSync("git", ["-C", tmp, ...args], { encoding: "utf8" });
-      gitInit(["init", "-q", "-b", "main"]);
-      gitInit(["config", "user.email", "test@donegate.local"]);
-      gitInit(["config", "user.name", "DoneGate Test"]);
-      writeFileSync(join(tmp, ".gitignore"), ".donegate/\nworkflows/.deps/\n");
-      mkdirSync(join(tmp, "src/core"), { recursive: true });
-      mkdirSync(join(tmp, "src/api"), { recursive: true });
-      mkdirSync(join(tmp, "src/ui"), { recursive: true });
-      writeFileSync(join(tmp, "src/core/calc.mjs"), "export const add = (a, b) => a + b;\n");
-      writeFileSync(join(tmp, "src/api/rate.mjs"), "export const rate = () => 7.2;\n");
-      writeFileSync(join(tmp, "src/ui/view.mjs"), "export const render = () => 'ok';\n");
-      gitInit(["add", "-A"]);
-      gitInit(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init project"]);
-
-      // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 开发流零重复下载直接复用
-      const webPack = { id: "pack-web", name: "网页全栈开发包", nodes: [{ id: "n1", tplId: "tpl-playwright" }, { id: "n2", tplId: "tpl-biome-knip" }] };
-      provisionWorkflowDeps(tmp, webPack, { markInstalledIds: ["playwright", "biome"] });
-      const uiNode = { id: "comp-ui", title: "界面视图组件", scopePaths: ["src/ui/"], modules: [{ name: "view", role: "界面", path: "src/ui/view.mjs" }] };
-      assignComponentWorkflow(tmp, uiNode, { actorRole: "super-agent" });
-      const forkedUi = mutateComponentWorkflowJit(tmp, uiNode, { actorRole: "super-agent", requirementText: "新增复杂公式语法解析规格校验" });
-      assert.equal(forkedUi.ok, true);
-      provisionWorkflowDeps(tmp, { id: "seed-os", nodes: [{ id: "no", tplId: "tpl-openspec" }] }, { markInstalledIds: ["openspec"] });
-      const depForked = inspectWorkflowDeps(tmp, forkedUi.binding.pack, { env: { PATH: "" } });
-      assert.equal(depForked.ready, true, "派生 JIT 新版开发流必须直接命中 _shared 共享底座池就绪状态");
-      assert.ok(depForked.items.some((x) => x.resolvedVia === "shared-manifest"));
-
-      // (B) 真实适配器执行桥：构造共享池 mock gitleaks，验证真落盘 observation.json 并由 check-brick-observations 给出 1/0 裁决
-      const sharedBin = join(tmp, "workflows", ".deps", "_shared", ".bin");
-      mkdirSync(sharedBin, { recursive: true });
-      const mockLeakTrigger = join(tmp, "LEAK_MODE.flag");
-      const mockGitleaksImpl = join(sharedBin, "mock-gitleaks-impl.cjs");
-      writeFileSync(mockGitleaksImpl, `const fs = require("fs");
-const a = process.argv.slice(2);
-if (a[0] === "version") { console.log("8.30.1"); process.exit(0); }
-const i = a.indexOf("--report-path");
-const leak = fs.existsSync(${JSON.stringify(mockLeakTrigger)});
-fs.writeFileSync(a[i + 1], JSON.stringify(leak ? [{ RuleID: "generic-api-key", File: "src/api/rate.mjs", StartLine: 1 }] : []));
-`, "utf8");
-      const mockGitleaks = join(sharedBin, process.platform === "win32" ? "gitleaks.cmd" : "gitleaks");
-      if (process.platform === "win32") {
-        writeFileSync(mockGitleaks, `@echo off\r\n"${process.execPath}" "%~dp0mock-gitleaks-impl.cjs" %*\r\n`, "utf8");
-      } else {
-        writeFileSync(mockGitleaks, `#!/usr/bin/env sh\nexec "${process.execPath}" "${mockGitleaksImpl}" "$@"\n`, { mode: 0o755 });
-      }
-      const apiNode = { id: "comp-api", title: "汇率鉴权接口", scopePaths: ["src/api/"], modules: [{ name: "rate", role: "接口", path: "src/api/rate.mjs" }] };
-      const apiAssign = assignComponentWorkflow(tmp, apiNode, { actorRole: "super-agent", preferredMacroId: "pack-api-guard" });
-      assert.equal(apiAssign.ok, true);
-
-      writeFileSync(mockLeakTrigger, "1");
-      gitInit(["add", "-A"]);
-      gitInit(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "enable leak simulation"]);
-      const leakRun = await executeDeterministicWorkflowRun(tmp, { ticketId: "real-adp-fail" }, apiAssign.binding.pack, { useWorktreeSandbox: false, useFingerprintCache: false });
-      assert.equal(leakRun.ok, false, "检出疑似密钥时必须经 check-brick-observations 判红返回 exit 1");
-      assert.equal(leakRun.exitCode, 1);
-      assert.ok(existsSync(join(tmp, ".donegate/adapters/gitleaks/observation.json")), "必须真实调用适配器落盘 observation.json");
-
-      rmSync(mockLeakTrigger, { force: true });
-      gitInit(["add", "-A"]);
-      gitInit(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "clean leak simulation"]);
-      const cleanRun = await executeDeterministicWorkflowRun(tmp, { ticketId: "real-adp-pass" }, apiAssign.binding.pack, { useWorktreeSandbox: false, useFingerprintCache: false });
-      assert.equal(cleanRun.ok, true, "密钥清零后真实适配器 + 观测断言器应返回 exit 0");
-
-      // (C) 项目看板多组件拓扑级过夜挂机：严格按 core -> api -> ui 依赖顺序运行，校验分组件写边界并在全绿后合回 main
-      const executionOrder = [];
-      const coreNode = { id: "comp-core", title: "计算核心底座", scopePaths: ["src/core/"], nextIds: ["comp-api"], modules: [{ name: "calc", role: "逻辑", path: "src/core/calc.mjs" }] };
-      const apiNodeDag = { ...apiNode, nextIds: ["comp-ui"] };
-      const uiNodeDag = { ...uiNode, nextIds: [] };
-      // 先给 uiNode 绑定纯零依赖的 pack-core-logic 以验证完整三组件直跑
-      assignComponentWorkflow(tmp, coreNode, { actorRole: "super-agent", preferredMacroId: "pack-core-logic" });
-      assignComponentWorkflow(tmp, uiNodeDag, { actorRole: "super-agent", preferredMacroId: "pack-core-logic", forceReassign: true });
-
-      // 故意传打乱顺序 [ui, api, core]，拓扑编排器必须重排为 [core, api, ui]
-      const badCampaign = await executeProjectCampaignAutopilot(tmp, {
-        campaignId: "camp-scope-breach",
-        nodes: [uiNodeDag, apiNodeDag, coreNode],
-        useWorktreeSandbox: true
-      }, {
-        componentHooks: {
-          "comp-core": {
-            runAgentStep: ({ workCwd }) => {
-              // core 组件越界去改了 src/ui/view.mjs！必须触发组件级写边界熔断且保护主工作区零污染
-              writeFileSync(join(workCwd, "src/ui/view.mjs"), "export const hacked = true;\n");
-              return { summary: "out-of-scope write" };
-            }
-          }
-        }
-      });
-      assert.equal(badCampaign.ok, false);
-      assert.equal(badCampaign.code, "WRITE_SCOPE_VIOLATION");
-      assert.equal(badCampaign.failedComponentId, "comp-core");
-      assert.equal(readFileSync(join(tmp, "src/ui/view.mjs"), "utf8"), "export const render = () => 'ok';\n", "越界熔断后主工作区必须 100% 干净零污染");
-
-      const okCampaign = await executeProjectCampaignAutopilot(tmp, {
-        campaignId: "camp-clean-pass",
-        nodes: [uiNodeDag, apiNodeDag, coreNode],
-        useWorktreeSandbox: true
-      }, {
-        componentHooks: {
-          "comp-core": {
-            runAgentStep: ({ workCwd }) => {
-              executionOrder.push("comp-core");
-              writeFileSync(join(workCwd, "src/core/calc.mjs"), "export const add = (a, b) => Number(a) + Number(b);\n");
-              return { summary: "hardened core" };
-            }
-          },
-          "comp-ui": {
-            runAgentStep: ({ workCwd }) => {
-              executionOrder.push("comp-ui");
-              writeFileSync(join(workCwd, "src/ui/view.mjs"), "export const render = () => 'v2-ok';\n");
-              return { summary: "updated ui" };
-            }
-          }
-        }
-      });
-      assert.equal(okCampaign.ok, true);
-      assert.deepEqual(okCampaign.orderedIds, ["comp-core", "comp-api", "comp-ui"], "必须按组件依赖拓扑顺序依次挂机");
-      assert.deepEqual(executionOrder, ["comp-core", "comp-ui"]);
-      assert.equal(okCampaign.sandboxWorktree.mergedToMain, true);
-      assert.ok(readFileSync(join(tmp, "src/core/calc.mjs"), "utf8").includes("Number(a)"));
-      assert.ok(readFileSync(join(tmp, "src/ui/view.mjs"), "utf8").includes("v2-ok"));
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+  await verifyWinPathsAndCmdScript(check);
+  await verifyQuoteAndReceiptProtocol(check);
+  await verifyDshDocBundleSpec(check);
+  await verifyWinProfileInstallLifecycle(check);
+  await verifyClientSandboxAndRunner(check);
+  await verifyWorkflowDepsIsolation(check);
+  await runAutopilotSandboxChecks(check);
+  await runJitAndCampaignChecks(check);
 
   console.log(`RESULT: PASS DSH Web 插件与 Windows 跨平台全套 ${passed} 项端到端断言通过`);
 }
