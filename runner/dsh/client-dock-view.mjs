@@ -1,5 +1,5 @@
 // DSH 卡包抽卡式零缝隙主对话复刻抽屉视图组件（双击改名、滚轮历史翻阅、右上角固定与顶部拖拽调高）
-export function buildDshClientDockViewSource() {
+function buildDockPinIconSource() {
   return String.raw`
     function renderPinIcon(pinned) {
       return h("svg", {
@@ -10,44 +10,35 @@ export function buildDshClientDockViewSource() {
         stroke: "currentColor", strokeWidth: "1.2", strokeLinejoin: "round"
       }));
     }
+`;
+}
 
+function buildDoneGateInputDockMainSource() {
+  return String.raw`
     function DoneGateInputDock(props) {
       var sessionId = resolveSessionId(props);
       var t = props.t || function (k) { return zh[k] || k; };
       var snap = React.useSyncExternalStore
         ? React.useSyncExternalStore(dockStore.subscribe, dockStore.getSnapshot, dockStore.getSnapshot)
         : dockStore.getSnapshot();
-
       var editingState = React.useState ? React.useState(false) : [false, function () {}];
-      var editingName = editingState[0];
-      var setEditingName = editingState[1];
-
+      var editingName = editingState[0], setEditingName = editingState[1];
       var draftNameState = React.useState ? React.useState(snap.agentName) : [snap.agentName, function () {}];
-      var draftName = draftNameState[0];
-      var setDraftName = draftNameState[1];
-
+      var draftName = draftNameState[0], setDraftName = draftNameState[1];
       var draggingState = React.useState ? React.useState(false) : [false, function () {}];
-      var isDragging = draggingState[0];
-      var setIsDragging = draggingState[1];
-
+      var isDragging = draggingState[0], setIsDragging = draggingState[1];
       var openThinkingState = React.useState ? React.useState({}) : [{}, function () {}];
-      var openThinking = openThinkingState[0];
-      var setOpenThinking = openThinkingState[1];
-
+      var openThinking = openThinkingState[0], setOpenThinking = openThinkingState[1];
       var scrollBoxRef = React.useRef ? React.useRef(null) : { current: null };
       var stickBottomRef = React.useRef ? React.useRef(true) : { current: true };
       var nameInputRef = React.useRef ? React.useRef(null) : { current: null };
 
-      var items = (snap && snap.items) || [];
-      var syncedMsgs = (snap && snap.messages) || [];
+      var items = (snap && snap.items) || [], syncedMsgs = (snap && snap.messages) || [];
       var entries = extractLiveConversationEntries(props, syncedMsgs);
-
       var isDoneGateActive = typeof props.isDoneGateActive === "function" ? Boolean(props.isDoneGateActive(sessionId)) : false;
-
-      var topReceipt = items[0] || null;
+      var topReceipt = items[0] || null, agentName = snap.agentName || "Agent";
       var isBlockingReceipt = Boolean(topReceipt && (topReceipt.kind === "question" || topReceipt.kind === "blocked"));
       var expanded = Boolean(isDoneGateActive && (snap.pinned || snap.hovered || isDragging || isBlockingReceipt));
-      var agentName = snap.agentName || "Agent";
 
       var latestAgentEntry = null;
       for (var i = entries.length - 1; i >= 0; i--) {
@@ -56,35 +47,72 @@ export function buildDshClientDockViewSource() {
           break;
         }
       }
-
       var latestAgentLine = latestAgentEntry
         ? (flattenSingleLinePreview(latestAgentEntry.text) || ("正在执行 " + latestAgentEntry.tools.join("、") + "…"))
         : (topReceipt && topReceipt.title ? flattenSingleLinePreview(topReceipt.title) : "");
-
-      var popKey = latestAgentEntry ? (latestAgentEntry.id + ":" + latestAgentLine.length) : "idle";
-      var needsMarquee = latestAgentLine.length > 40;
+      var popKey = latestAgentEntry ? (latestAgentEntry.id + ":" + latestAgentLine.length) : "idle", needsMarquee = latestAgentLine.length > 40;
       var marqueeDurSec = Math.max(9, Math.min(28, Math.round(latestAgentLine.length * 0.22))) + "s";
 
       if (React.useEffect) {
         React.useEffect(function () {
-          if (!isDoneGateActive) return;
-          if (editingName && nameInputRef.current) {
-            try {
-              nameInputRef.current.focus();
-              nameInputRef.current.select();
-            } catch (err) { void err; }
+          if (isDoneGateActive && editingName && nameInputRef.current) {
+            try { nameInputRef.current.focus(); nameInputRef.current.select(); } catch (err) { void err; }
           }
         }, [isDoneGateActive, editingName]);
-
         React.useEffect(function () {
-          if (!isDoneGateActive || !expanded || !scrollBoxRef.current) return;
-          if (stickBottomRef.current) {
+          if (isDoneGateActive && expanded && scrollBoxRef.current && stickBottomRef.current) {
             scrollBoxRef.current.scrollTop = scrollBoxRef.current.scrollHeight;
           }
         }, [isDoneGateActive, expanded, entries.length, latestAgentLine]);
       }
-
       if (!isDoneGateActive) return null;
+
+      var renderAgentPrefix = function () {
+        return renderDockAgentPrefix({ editingName: editingName, setEditingName: setEditingName, draftName: draftName, setDraftName: setDraftName, agentName: agentName, sessionId: sessionId, nameInputRef: nameInputRef, t: t });
+      };
+      var viewCtx = {
+        snap: snap, t: t, entries: entries, topReceipt: topReceipt, editingName: editingName, isDragging: isDragging,
+        openThinking: openThinking, setOpenThinking: setOpenThinking, scrollBoxRef: scrollBoxRef, stickBottomRef: stickBottomRef,
+        renderAgentPrefix: renderAgentPrefix, onStartResizeHeight: createDockResizeHandler(snap, setIsDragging),
+        flyToNode: createDockFlyHandler(props, sessionId), latestAgentLine: latestAgentLine,
+        popKey: popKey, needsMarquee: needsMarquee, marqueeDurSec: marqueeDurSec
+      };
+      var visibleHeight = expanded ? clampHeight(snap.height) : COLLAPSED_LIP_PX;
+      var strokeColor = isBlockingReceipt ? "var(--dsw-alias-state-warn-primary, rgba(245, 158, 11, 0.55))" : "var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.2))";
+
+      return h("div", {
+        "data-donegate-dock-wrap": "",
+        onMouseEnter: function (e) { if (!e || e.pointerType !== "touch") dockStore.setHovered(true); },
+        onMouseLeave: function () { if (!editingName && !isDragging) dockStore.setHovered(false); },
+        style: {
+          boxSizing: "border-box", position: "relative", zIndex: 1, fontFamily: "var(--dsw-font-family, inherit)",
+          margin: "0 auto calc(0px - var(--dsh-composer-stack-gap, 6px) - " + TUCK_OVERLAP_PX + "px)",
+          width: "calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))", maxWidth: "var(--dsh-composer-card-max-width, 760px)"
+        }
+      }, h("div", {
+        "data-donegate-dock-card": "", "data-expanded": expanded ? "1" : "0",
+        style: {
+          boxSizing: "border-box", position: "relative", width: "100%", overflow: "hidden", display: "flex", flexDirection: "column",
+          height: (visibleHeight + TUCK_OVERLAP_PX) + "px", paddingBottom: TUCK_OVERLAP_PX + "px",
+          borderRadius: "var(--dsw-radius-xl, 20px) var(--dsw-radius-xl, 20px) 0 0",
+          borderTop: "0.5px solid " + strokeColor, borderLeft: "0.5px solid " + strokeColor, borderRight: "0.5px solid " + strokeColor, borderBottom: "none",
+          background: "color-mix(in srgb, var(--dsw-specific-input-major, #2c2c2e) 72%, var(--dsw-alias-bg-base, #151517) 28%)",
+          backdropFilter: "var(--dsw-menu-backdrop-filter, blur(36px) saturate(145%))", WebkitBackdropFilter: "var(--dsw-menu-backdrop-filter, blur(36px) saturate(145%))",
+          boxShadow: expanded ? "0 -8px 28px rgba(0, 0, 0, 0.14)" : "0 -2px 10px rgba(0, 0, 0, 0.05)",
+          transition: isDragging ? "none" : "height 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease"
+        }
+      }, expanded ? renderDockExpandedArea(viewCtx) : renderDockCollapsedLip(viewCtx)));
+    }
+`;
+}
+
+function buildDockRenamePrefixSource() {
+  return String.raw`
+    function renderDockAgentPrefix(opts) {
+      var editingName = opts.editingName, setEditingName = opts.setEditingName;
+      var draftName = opts.draftName, setDraftName = opts.setDraftName;
+      var agentName = opts.agentName, sessionId = opts.sessionId;
+      var nameInputRef = opts.nameInputRef, t = opts.t;
 
       function commitAgentRename() {
         setEditingName(false);
@@ -102,8 +130,7 @@ export function buildDshClientDockViewSource() {
         setEditingName(true);
       }
 
-      function renderAgentPrefix() {
-        if (editingName) {
+      if (editingName) {
           return h("input", {
             ref: nameInputRef,
             type: "text",
@@ -131,8 +158,8 @@ export function buildDshClientDockViewSource() {
               flexShrink: 0
             }
           });
-        }
-        return h("span", {
+      }
+      return h("span", {
           title: t("dock.renameTip"),
           onDoubleClick: startAgentRename,
           style: {
@@ -142,10 +169,27 @@ export function buildDshClientDockViewSource() {
             userSelect: "none",
             flexShrink: 0
           }
-        }, agentName + "：");
-      }
+      }, agentName + "：");
+    }
+`;
+}
 
-      function onStartResizeHeight(e) {
+export function buildDshClientDockViewSource() {
+  return [
+    buildDockPinIconSource(),
+    buildDoneGateInputDockMainSource(),
+    buildDockRenamePrefixSource(),
+    buildDockResizeHelperSource(),
+    buildDockExpandedAreaSource(),
+    buildDockEntryItemSource(),
+    buildDockCollapsedLipSource()
+  ].join('\n');
+}
+
+function buildDockResizeHelperSource() {
+  return String.raw`
+    function createDockResizeHandler(snap, setIsDragging) {
+      return function onStartResizeHeight(e) {
         if (e.button !== undefined && e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
@@ -165,65 +209,29 @@ export function buildDshClientDockViewSource() {
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
         window.addEventListener("pointercancel", onUp);
-      }
+      };
+    }
 
-      function flyToNode(nodeId) {
+    function createDockFlyHandler(props, sessionId) {
+      return function flyToNode(nodeId) {
         if (typeof props.activateDoneGateView === "function") props.activateDoneGateView(sessionId);
         var ifr = iframeBySession.get(sessionId);
         if (ifr && ifr.contentWindow) {
           ifr.contentWindow.postMessage({ source: "donegate-host", type: "dg:focus-node", nodeId: nodeId }, "*");
         }
-      }
+      };
+    }
+`;
+}
 
-      var visibleHeight = expanded ? clampHeight(snap.height) : COLLAPSED_LIP_PX;
-      var totalCardHeight = visibleHeight + TUCK_OVERLAP_PX;
-      var strokeColor = isBlockingReceipt
-        ? "var(--dsw-alias-state-warn-primary, rgba(245, 158, 11, 0.55))"
-        : "var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.2))";
-
-      return h("div", {
-        "data-donegate-dock-wrap": "",
-        onMouseEnter: function (e) {
-          if (e && e.pointerType === "touch") return;
-          dockStore.setHovered(true);
-        },
-        onMouseLeave: function () {
-          if (!editingName && !isDragging) dockStore.setHovered(false);
-        },
-        style: {
-          boxSizing: "border-box",
-          position: "relative",
-          zIndex: 1,
-          margin: "0 auto calc(0px - var(--dsh-composer-stack-gap, 6px) - " + TUCK_OVERLAP_PX + "px)",
-          width: "calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))",
-          maxWidth: "var(--dsh-composer-card-max-width, 760px)",
-          fontFamily: "var(--dsw-font-family, inherit)"
-        }
-      }, h("div", {
-        "data-donegate-dock-card": "",
-        "data-expanded": expanded ? "1" : "0",
-        style: {
-          boxSizing: "border-box",
-          position: "relative",
-          width: "100%",
-          height: totalCardHeight + "px",
-          paddingBottom: TUCK_OVERLAP_PX + "px",
-          borderRadius: "var(--dsw-radius-xl, 20px) var(--dsw-radius-xl, 20px) 0 0",
-          borderTop: "0.5px solid " + strokeColor,
-          borderLeft: "0.5px solid " + strokeColor,
-          borderRight: "0.5px solid " + strokeColor,
-          borderBottom: "none",
-          background: "color-mix(in srgb, var(--dsw-specific-input-major, #2c2c2e) 72%, var(--dsw-alias-bg-base, #151517) 28%)",
-          backdropFilter: "var(--dsw-menu-backdrop-filter, blur(36px) saturate(145%))",
-          WebkitBackdropFilter: "var(--dsw-menu-backdrop-filter, blur(36px) saturate(145%))",
-          boxShadow: expanded ? "0 -8px 28px rgba(0, 0, 0, 0.14)" : "0 -2px 10px rgba(0, 0, 0, 0.05)",
-          overflow: "hidden",
-          transition: isDragging ? "none" : "height 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease",
-          display: "flex",
-          flexDirection: "column"
-        }
-      },
-        expanded ? h(React.Fragment || "div", null,
+function buildDockExpandedAreaSource() {
+  return String.raw`
+    function renderDockExpandedArea(ctx) {
+      var snap = ctx.snap, t = ctx.t, isDragging = ctx.isDragging;
+      var scrollBoxRef = ctx.scrollBoxRef, stickBottomRef = ctx.stickBottomRef;
+      var entries = ctx.entries, topReceipt = ctx.topReceipt;
+      var onStartResizeHeight = ctx.onStartResizeHeight, flyToNode = ctx.flyToNode;
+      return h(React.Fragment || "div", null,
           /* 顶部拖拽调高条（拉到多高下次展开就是多高） */
           h("div", {
             "data-donegate-resize-bar": "",
@@ -309,6 +317,41 @@ export function buildDshClientDockViewSource() {
             }
           },
             entries.length ? entries.map(function (entry) {
+              return renderDockEntryItem(entry, ctx);
+            }) : h("div", {
+              style: { color: "var(--dsw-alias-label-tertiary, #81858c)", fontSize: "12.5px", padding: "6px 0" }
+            }, t("dock.empty")),
+
+            topReceipt && topReceipt.targetNodeId ? h("div", {
+              style: {
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
+                padding: "6px 10px", borderRadius: "10px",
+                background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.1))",
+                fontSize: "12px", color: "var(--dsw-alias-label-secondary, #cfd3d6)"
+              }
+            },
+              h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(topReceipt.title || "")),
+              h("button", {
+                type: "button",
+                onClick: function () { flyToNode(topReceipt.targetNodeId); },
+                style: {
+                  height: "22px", padding: "0 8px", borderRadius: "6px",
+                  border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2))",
+                  background: "transparent", color: "var(--dsw-alias-label-primary, #f9fafb)", cursor: "pointer", fontSize: "11.5px", flexShrink: 0
+                }
+              }, t("dock.fly"))
+            ) : null
+          )
+      );
+    }
+`;
+}
+
+function buildDockEntryItemSource() {
+  return String.raw`
+    function renderDockEntryItem(entry, ctx) {
+      var openThinking = ctx.openThinking, setOpenThinking = ctx.setOpenThinking;
+      var renderAgentPrefix = ctx.renderAgentPrefix, t = ctx.t;
               if (entry.role === "user") {
                 return h("div", {
                   key: entry.id,
@@ -389,33 +432,18 @@ export function buildDshClientDockViewSource() {
                   style: { width: "100%", color: "var(--dsw-alias-label-primary, #f9fafb)" }
                 }, renderFormattedChatBlocks(entry.text)) : null
               );
-            }) : h("div", {
-              style: { color: "var(--dsw-alias-label-tertiary, #81858c)", fontSize: "12.5px", padding: "6px 0" }
-            }, t("dock.empty")),
+    }
+`;
+}
 
-            topReceipt && topReceipt.targetNodeId ? h("div", {
-              style: {
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
-                padding: "6px 10px", borderRadius: "10px",
-                background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.1))",
-                fontSize: "12px", color: "var(--dsw-alias-label-secondary, #cfd3d6)"
-              }
-            },
-              h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, String(topReceipt.title || "")),
-              h("button", {
-                type: "button",
-                onClick: function () { flyToNode(topReceipt.targetNodeId); },
-                style: {
-                  height: "22px", padding: "0 8px", borderRadius: "6px",
-                  border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2))",
-                  background: "transparent", color: "var(--dsw-alias-label-primary, #f9fafb)", cursor: "pointer", fontSize: "11.5px", flexShrink: 0
-                }
-              }, t("dock.fly"))
-            ) : null
-          )
-        ) : (
+function buildDockCollapsedLipSource() {
+  return String.raw`
+    function renderDockCollapsedLip(ctx) {
+      var editingName = ctx.editingName, renderAgentPrefix = ctx.renderAgentPrefix, t = ctx.t;
+      var popKey = ctx.popKey, latestAgentLine = ctx.latestAgentLine;
+      var needsMarquee = ctx.needsMarquee, marqueeDurSec = ctx.marqueeDurSec;
           /* 收起态卡口（34px）：仅显示可双击改名的「Agent：」+ 最新一条滚动真实消息 */
-          h("div", {
+          return h("div", {
             onClick: function () { if (!editingName) dockStore.setHovered(true); },
             style: {
               height: COLLAPSED_LIP_PX + "px",
@@ -446,10 +474,7 @@ export function buildDshClientDockViewSource() {
               "data-donegate-marquee": needsMarquee ? "1" : "0",
               style: needsMarquee ? { "--dg-marquee-dur": marqueeDurSec } : undefined
             }, latestAgentLine || t("dock.waiting")))
-          )
-        )
-      ));
+          );
     }
-
 `;
 }

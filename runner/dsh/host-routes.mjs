@@ -45,12 +45,7 @@ function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   });
 }
 
-export function createDoneGateWebRouteHandler(projectRoot) {
-  const root = resolve(projectRoot);
-  const hub = getRunEventHub(root);
-
-  return async function handleDoneGateRoute(req, res, subPath) {
-    const cleanPath = String(subPath || '/').split('?')[0];
+async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub) {
     if (cleanPath.startsWith('/uiboard/')) {
       return handleUiBoardSubRoute(req, res, cleanPath, root, hub, readJsonBody);
     }
@@ -69,7 +64,7 @@ export function createDoneGateWebRouteHandler(projectRoot) {
 
     if (cleanPath === '/slice' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const r = cmdSlice(root, { id: body.nodeId || body.id, routerOnly: Boolean(body.routerOnly), freezeStub: Boolean(body.freezeStub), contextWindow: body.contextWindow, utilization: body.utilization, maxTokens: body.maxTokens, json: true });
+      const r = cmdSlice(root, { id: body.nodeId || body.id, focus: body.focus, routerOnly: Boolean(body.routerOnly), freezeStub: Boolean(body.freezeStub), contextWindow: body.contextWindow, utilization: body.utilization, maxTokens: body.maxTokens, json: true });
       sendJson(res, r.exitCode === 0 ? 200 : 400, { ok: r.exitCode === 0, exitCode: r.exitCode, capsule: r.capsule || null, router: r.router || null, stderr: r.stderr || '' });
       return true;
     }
@@ -214,6 +209,10 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       return true;
     }
 
+    return false;
+}
+
+async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub) {
     if (cleanPath === '/observation-preview' && req.method === 'GET') {
       const u = new URL(req.url || '/', 'http://127.0.0.1');
       const tool = String(u.searchParams.get('tool') || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -309,6 +308,10 @@ export function createDoneGateWebRouteHandler(projectRoot) {
       return true;
     }
 
+    return false;
+}
+
+async function handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub) {
     if (cleanPath === '/dispatch' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const targets = Array.isArray(body.targets) && body.targets.length > 0 ? body.targets : parseQuotedTargetsFromMessage(body.message || '');
@@ -369,5 +372,15 @@ export function createDoneGateWebRouteHandler(projectRoot) {
     }
 
     return false;
+}
+
+export function createDoneGateWebRouteHandler(projectRoot) {
+  const root = resolve(projectRoot);
+  const hub = getRunEventHub(root);
+  return async function handleDoneGateRoute(req, res, subPath) {
+    const cleanPath = String(subPath || '/').split('?')[0];
+    if (await handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub)) return true;
+    if (await handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub)) return true;
+    return handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub);
   };
 }

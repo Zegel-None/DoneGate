@@ -3,12 +3,8 @@ import { DSH_BUNDLE_NAME } from './bundle-templates.mjs';
 import { buildDshClientChatExtractSource } from './client-chat-extract.mjs';
 import { buildDshClientDockViewSource } from './client-dock-view.mjs';
 
-export function renderDshClientBundleJs() {
-  const partExtract = buildDshClientChatExtractSource();
-  const partDock = buildDshClientDockViewSource();
-  const shell = String.raw`window.__ModuleLoader__.load({
-  id: __DSH_BUNDLE_ID__,
-  factory(require) {
+function buildClientHeaderSource() {
+  return String.raw`
     var React = require("react");
     var h = React.createElement;
 
@@ -49,7 +45,11 @@ export function renderDshClientBundleJs() {
       "dock.fly": "Locate",
       "dock.thinking": "Reasoning"
     };
+`;
+}
 
+function buildHostOverlayCssSource() {
+  return String.raw`
     var HOST_OVERLAY_CSS = [
       "[data-conversation-scroll]:has([data-donegate-overlay]) {",
       "  overflow: hidden !important;",
@@ -62,7 +62,25 @@ export function renderDshClientBundleJs() {
       "}",
       "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-donegate-dock-wrap],",
       "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-card],",
-      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-dock] > * {",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-composer-dock] > *,",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-slot='conversation.composer'] > :not([data-chain-overlay-fallback]):not([data-question-key]):not([data-plan-review-key]):not([data-approval-key]) {",
+      "  pointer-events: auto !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-slot='conversation.composer'] > :not([data-chain-overlay-fallback]) {",
+      "  position: relative !important;",
+      "  z-index: 6 !important;",
+      "}",
+      "/* 主对话发来选择框/计划评审/权限审批接管时：外层全宽居中框透传两侧画布拖拽，内层卡片 100% 恢复点击与最高层级 */",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-slot='conversation.composer'] [data-question-key],",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-slot='conversation.composer'] [data-plan-review-key],",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-slot='conversation.composer'] [data-approval-key] {",
+      "  position: relative !important;",
+      "  z-index: 6 !important;",
+      "  pointer-events: none !important;",
+      "}",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-question-key] > *,",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-plan-review-key] > *,",
+      "[data-conversation-scroll]:has([data-donegate-overlay]) > [data-composer-seat] [data-approval-key] > * {",
       "  pointer-events: auto !important;",
       "}",
       "/* 卡包抽卡叠压层次：抽屉卡在 z-index:1，下方原生输入框在 z-index:4，上圆角自然压住抽屉底边零缝隙 */",
@@ -106,7 +124,11 @@ export function renderDshClientBundleJs() {
       "[data-donegate-chat-scroll]::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-scrollbar-hover-l2, rgba(128, 128, 128, 0.44)); }",
       "[data-donegate-resize-bar]:hover [data-donegate-resize-pill] { opacity: 0.72 !important; width: 42px !important; }"
     ].join("\n");
+`;
+}
 
+function buildClientDockStoreSource() {
+  return String.raw`
     function readLocalPref(key, fallbackVal) {
       try {
         if (typeof window !== "undefined" && window.localStorage) {
@@ -224,8 +246,11 @@ export function renderDshClientBundleJs() {
       if (props && props.sessionId) return String(props.sessionId);
       return "default";
     }
+`;
+}
 
-__PART_CHAT_EXTRACT__
+function buildClientCanvasViewSource() {
+  return String.raw`
     function DoneGateCanvasView(props) {
       var sessionId = resolveSessionId(props);
       var inputActions = props.inputActions;
@@ -293,8 +318,11 @@ __PART_CHAT_EXTRACT__
         style: { width: "100%", height: "100%", border: "0", display: "block", background: "transparent" }
       }));
     }
+`;
+}
 
-__PART_DOCK_VIEW__
+function buildClientSlotsPluginSource() {
+  return String.raw`
     function DoneGateQuickSwitch(props) {
       var sessionId = resolveSessionId(props);
       var t = props.t || function (k) { return zh[k] || k; };
@@ -406,10 +434,26 @@ __PART_DOCK_VIEW__
         });
       }
     };
-  }
-});
-`.replace("__DSH_BUNDLE_ID__", JSON.stringify(DSH_BUNDLE_NAME));
-  return shell
-    .replace("__PART_CHAT_EXTRACT__", () => partExtract)
-    .replace("__PART_DOCK_VIEW__", () => partDock);
+`;
+}
+
+export function renderDshClientBundleJs() {
+  const body = [
+    buildClientHeaderSource(),
+    buildHostOverlayCssSource(),
+    buildClientDockStoreSource(),
+    buildDshClientChatExtractSource(),
+    buildClientCanvasViewSource(),
+    buildDshClientDockViewSource(),
+    buildClientSlotsPluginSource()
+  ].join('\n');
+  return [
+    'window.__ModuleLoader__.load({',
+    `  id: ${JSON.stringify(DSH_BUNDLE_NAME)},`,
+    '  factory(require) {',
+    body,
+    '  }',
+    '});',
+    ''
+  ].join('\n');
 }

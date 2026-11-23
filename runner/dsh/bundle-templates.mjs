@@ -53,7 +53,7 @@ export function renderDshBundlePackageJson() {
 
 export function renderDshBundleCordisPatch(projectRoot) {
   const safeRoot = normalizeSlashes(projectRoot);
-  return `# DoneGate V4 (完结门) DSH Web Bundle 编排补丁（遵循 dsh-doc 规范，自动适配 Windows pwsh-sandbox 与 Linux/macOS bash-sandbox）
+  return `# DoneGate V4 (完结门) DSH Web Bundle 编排补丁（遵循 dsh-doc 规范，自动适配 Windows tool-pwsh 与 Linux/macOS tool-bash 宿主沙箱）
 - insert:
     - id: dsh-donegate
       name: '${DSH_BUNDLE_NAME}'
@@ -90,6 +90,8 @@ export function renderDshBundleCordisPatch(projectRoot) {
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
           - id: delegation
             name: cordis:group
             group: true
@@ -128,34 +130,18 @@ export function renderDshBundleCordisPatch(projectRoot) {
               maxBytes: 65536
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'
-          - id: shell
-            name: cordis:group
-            group: true
-            isolate:
-              shell: true
-            config:
-              - id: bash-sandbox
-                name: '@deepseek-ai/dsh-bash-sandbox'
-                disabled: !!js process.platform === 'win32'
-                config:
-                  timeoutMs: 10000
-                  maxTimeoutMs: 60000
-              - id: pwsh-sandbox
-                name: '@deepseek-ai/dsh-pwsh-sandbox'
-                disabled: !!js process.platform !== 'win32'
-                config:
-                  timeoutMs: 10000
-                  maxTimeoutMs: 60000
-              - id: tool-bash
-                name: '@deepseek-ai/dsh-tool-bash'
-                disabled: !!js process.platform === 'win32'
-              - id: tool-pwsh
-                name: '@deepseek-ai/dsh-tool-pwsh'
-                disabled: !!js process.platform !== 'win32'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: skill-filesystem

@@ -52,7 +52,8 @@ export function buildDshBundleDirectory(projectRoot = REPO_ROOT, outDir = null) 
 
 export function mergeCordisPatchText(existingText, projectRoot) {
   const clean = normalizeLf(existingText || '');
-  const stripped = stripCordisPatchText(clean).trimEnd();
+  const strippedRaw = stripCordisPatchText(clean).trim();
+  const stripped = (strippedRaw === '[]' || !strippedRaw) ? '' : strippedRaw;
   const block = [PATCH_BEGIN, renderDshBundleCordisPatch(projectRoot).trim(), PATCH_END].join('\n');
   return stripped ? `${stripped}\n\n${block}\n` : `${block}\n`;
 }
@@ -61,10 +62,10 @@ export function stripCordisPatchText(existingText) {
   const clean = normalizeLf(existingText || '');
   const start = clean.indexOf(PATCH_BEGIN);
   const end = clean.indexOf(PATCH_END);
-  if (start < 0 || end < start) return clean;
+  if (start < 0 || end < start) return clean.trim() ? clean : '[]\n';
   const before = clean.slice(0, start).trimEnd();
   const after = clean.slice(end + PATCH_END.length).trimStart();
-  if (!before) return after ? `${after}\n` : '';
+  if (!before) return after ? `${after}\n` : '[]\n';
   return after ? `${before}\n${after}` : `${before}\n`;
 }
 
@@ -132,7 +133,7 @@ export function installDshWebBundle(opts = {}) {
     writeFileSync(patchPath, mergeCordisPatchText(prevPatch, projectRoot), 'utf8');
   } else if (existsSync(patchPath)) {
     const curPatch = readFileSync(patchPath, 'utf8');
-    if (curPatch.includes(PATCH_BEGIN)) writeFileSync(patchPath, stripCordisPatchText(curPatch), 'utf8');
+    if (curPatch.includes(PATCH_BEGIN) || !curPatch.trim()) writeFileSync(patchPath, stripCordisPatchText(curPatch), 'utf8');
   }
 
   return {
