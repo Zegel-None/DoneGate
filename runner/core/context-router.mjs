@@ -1,11 +1,27 @@
-// L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算）
+// L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算与共享治理资产声明）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, normalize } from 'node:path';
+import { basename, dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { buildNodeInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
 import { DEFAULT_SUBAGENT_BUDGET } from './project-loader.mjs';
 import { collectCodeFilesForCoverage } from './graph-edges.mjs';
+
+export const SHARED_GOVERNANCE_GLOBS = [
+  'workflows/',
+  'AGENTS.md',
+  'HANDOFF.md',
+  'README.md',
+  'CONSTRAINTS.md',
+  'INTENT.md',
+  'VERSION',
+  'thresholds.json',
+  'donegate/',
+  'donegate-forge/',
+  'donegate-judge/',
+  'bricks/',
+  'docs/'
+];
 
 const normalizeScopePrefix = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '');
 
@@ -15,6 +31,46 @@ export function fileBelongsToScopes(relFile, scopes = []) {
     const ns = normalizeScopePrefix(s);
     return ns ? (ns.endsWith('/') ? rf.startsWith(ns) : (rf === ns || rf.startsWith(ns + '/'))) : false;
   });
+}
+
+export function isSharedGovernanceFile(relFile) {
+  return fileBelongsToScopes(relFile, SHARED_GOVERNANCE_GLOBS);
+}
+
+export function inspectCrossCardFocusPatterns(target, rawPatterns, graph) {
+  const warnings = [];
+  const crossCardRoutes = [];
+  if (!target || !Array.isArray(rawPatterns) || rawPatterns.length === 0) return { warnings, crossCardRoutes };
+  const targetFiles = new Set([...(target.stub?.scopeFiles || []), ...(target.stub?.relatedTestFiles || [])]);
+  const matchesNodeFile = (pat, files) => {
+    const cleanDir = pat.replace(/\/+$/, '');
+    return [...files].find((f) => f === pat || (cleanDir && f.startsWith(`${cleanDir}/`)) || f.endsWith(`/${pat}`) || basename(f) === pat || basename(f, extname(f)) === pat);
+  };
+
+  for (const rawPat of rawPatterns) {
+    const pat = normalizeScopePrefix(rawPat);
+    if (!pat || pat.startsWith('@')) continue;
+    if (fileBelongsToScopes(pat, target.scope || []) || matchesNodeFile(pat, targetFiles)) continue;
+
+    let ownerNodeId = null;
+    let matchedPath = pat;
+    for (const node of graph?.nodes || []) {
+      if (node.id === target.id) continue;
+      if (fileBelongsToScopes(pat, node.scope || [])) { ownerNodeId = node.id; break; }
+      const nodeFiles = new Set([...(node.stub?.scopeFiles || []), ...(node.stub?.relatedTestFiles || [])]);
+      const hit = matchesNodeFile(pat, nodeFiles);
+      if (hit) { ownerNodeId = node.id; matchedPath = hit; break; }
+    }
+    if (ownerNodeId) {
+      const cmd = `node runner/donegate.mjs slice ${ownerNodeId} --focus ${matchedPath}`;
+      warnings.push(`焦点路径 \`${pat}\` 不属于 \`${target.id}\` 的 scope[]，实际归属节点为 \`${ownerNodeId}\`；请改跑：\`${cmd}\``);
+      crossCardRoutes.push({ pattern: pat, ownerNodeId, sharedGovernance: false, command: cmd });
+    } else if (isSharedGovernanceFile(pat)) {
+      warnings.push(`焦点路径 \`${pat}\` 不属于 \`${target.id}\` 的 scope[]，属于根级共享治理文件（无单一业务卡归属；微门禁验收请加 \`--allow-cross-scope\`）`);
+      crossCardRoutes.push({ pattern: pat, ownerNodeId: null, sharedGovernance: true, command: null });
+    }
+  }
+  return { warnings, crossCardRoutes };
 }
 
 export function resolveSubagentBudgetProfile(thresholds, opts = {}) {
@@ -189,7 +245,9 @@ export function writeProjectRouter(projectRoot, opts = {}) {
     writeFileSync(join(stubsDir, `${n.id}.stub.d.ts`), n.stub.stubText, 'utf8');
     writeFileSync(join(stubsDir, `${n.id}.stub.json`), JSON.stringify({
       nodeId: n.id, facadeMode: n.stub.facadeMode, facadeFiles: n.stub.facadeFiles, stubHash: n.stub.stubHash,
-      effectiveLines: n.stub.effectiveLines, sourceTokens: n.stub.sourceTokens, stubTokens: n.stub.stubTokens, exportedSymbols: n.stub.exportedSymbols
+      effectiveLines: n.stub.effectiveLines, physicalLines: n.stub.physicalLines,
+      sourceTokens: n.stub.sourceTokens, stubTokens: n.stub.stubTokens,
+      exportedSymbols: n.stub.exportedSymbols, httpRoutes: n.stub.httpRoutes || []
     }, null, 2), 'utf8');
   }
 
@@ -226,7 +284,11 @@ export function writeProjectRouter(projectRoot, opts = {}) {
     '',
     `## 子代理五段式预算配额（${budget.totalSessionBudgetTokens.toLocaleString()} Tokens 总盘）`,
     `- **L0 全局路由区**：上限 ${budget.routerBudgetTokens.toLocaleString()}t | **0-Hop 本卡源码+单测区**：上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | **1-Hop 邻域契约存根区**：上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t`,
-    `- **按需局部展开池**：预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | **多轮推理与测试迭代留白**：预留 ${budget.multiTurnReserveTokens.toLocaleString()}t | **交回总控结构化回执**：上限 ${budget.receiptBudgetTokens}t`
+    `- **按需局部展开池**：预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | **多轮推理与测试迭代留白**：预留 ${budget.multiTurnReserveTokens.toLocaleString()}t | **交回总控结构化回执**：上限 ${budget.receiptBudgetTokens}t`,
+    '',
+    '## 共享治理与跨切面文件说明',
+    `- **公共治理路径 (SHARED_GOVERNANCE_GLOBS)**：${SHARED_GOVERNANCE_GLOBS.map((g) => `\`${g}\``).join(', ')}`,
+    '- **跨切面变更规约**：上述工作流模板、全局说明、技能手册与公共砖块不属于单一契约卡 `scope[]`；跨切面联调执行单卡微门禁时须显式传入 `check-node <nodeId> --allow-cross-scope`，并在 `.receipt.json` 留存 `crossScopeFiles[]` 审计记录。'
   );
 
   const routerTokens = Math.ceil((md.join('\n') + '\n').length / 4);
@@ -239,11 +301,13 @@ export function writeProjectRouter(projectRoot, opts = {}) {
   writeFileSync(join(routerDir, 'ROUTER.md'), markdown, 'utf8');
   const routerPayload = {
     schema: 'donegate-router/v1', generatedAt: new Date().toISOString(), budgetProfile: budget,
+    sharedGovernanceGlobs: SHARED_GOVERNANCE_GLOBS,
     topoOrder: graph.topoOrder, totalSourceTokens, totalStubTokens, routerTokens: Math.ceil(markdown.length / 4),
     savingsPct, redImports: graph.redImports, facadeViolations: graph.facadeViolations,
     nodes: graph.nodes.map((n) => ({
       id: n.id, title: n.title, why: n.why, scope: n.scope, dependsOnIds: n.dependsOnIds, dependedByIds: n.dependedByIds,
       facadeMode: n.stub.facadeMode, facadeFiles: n.stub.facadeFiles, effectiveLines: n.stub.effectiveLines,
+      physicalLines: n.stub.physicalLines,
       sourceTokens: n.stub.sourceTokens, stubTokens: n.stub.stubTokens, stubHash: n.stub.stubHash, stubPath: `.donegate/stubs/${n.id}.stub.d.ts`
     }))
   };

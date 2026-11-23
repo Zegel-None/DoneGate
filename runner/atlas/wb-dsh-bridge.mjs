@@ -1,4 +1,4 @@
-// DSH 原生引用胶囊编码、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥（零外网依赖，<= 272 行）
+// DSH 原生引用胶囊编码（含 uiOwner / sliceCmd 直达路由）、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥
 const WB_DSH_BRIDGE_SCRIPT = `
 const DSH_URL_PARAMS = (() => {
   try { return new URLSearchParams(window.location.search || ''); } catch (err) { void err; return new URLSearchParams(); }
@@ -27,14 +27,29 @@ function clipLabelText(str, maxLen) {
 function resolveNodeScopeMeta(node) {
   if (!node) return { contracts: [], scopes: [], firstFile: 'runner/donegate.mjs' };
   const folders = typeof resolveNodeFolders === 'function' ? resolveNodeFolders(node) : [];
-  const scopes = [...new Set(folders.map((f) => f.dir).filter(Boolean))].slice(0, 4);
+  const rawScopes = [
+    ...(Array.isArray(node.scopePaths) ? node.scopePaths : []),
+    ...folders.map((f) => f.dir)
+  ].filter(Boolean);
+  const dedupScopes = [...new Set(rawScopes)].slice(0, 4);
   const modPath = (node.entryPath) || (Array.isArray(node.modules) && node.modules[0] && node.modules[0].path) || '';
   const folderFile = (folders[0] && folders[0].file && !String(folders[0].file).includes('anti-slop')) ? folders[0].file : '';
   const firstFile = modPath || folderFile || (node.tplId === 'tpl-anti-slop' || node.id === 'n-guard' ? 'skill/check-commit-hygiene.mjs' : 'runner/donegate.mjs');
-  const contracts = Array.isArray(node.contracts) && node.contracts.length
-    ? node.contracts
-    : (node.contractId ? [node.contractId] : ['verdict-core']);
+  const contracts = (Array.isArray(node.contractIds) && node.contractIds.length)
+    ? node.contractIds
+    : ((Array.isArray(node.contracts) && node.contracts.length)
+        ? node.contracts
+        : (node.primaryContractId ? [node.primaryContractId] : (node.contractId ? [node.contractId] : ['verdict-core'])));
+  const scopes = dedupScopes.length ? dedupScopes : contracts;
   return { contracts, scopes, firstFile };
+}
+
+function fallbackUiOwnerByKind(kind) {
+  if (kind === 'card' || kind === 'multi' || kind === 'group') return 'runner/atlas/wb-render-cards.mjs';
+  if (kind === 'wire') return 'runner/atlas/wb-render-wires.mjs';
+  if (kind === 'ui') return 'runner/atlas/wb-uiboard.mjs';
+  if (kind === 'workflow' || kind === 'project') return 'runner/atlas/wb-layout-tidy.mjs';
+  return 'runner/atlas/ui-shell.mjs';
 }
 
 function buildDshQuoteTarget(rawTarget) {
@@ -56,13 +71,21 @@ function buildDshQuoteTarget(rawTarget) {
   const uri = \`dg://\${state.page}/\${rawTarget.kind}/\${encodeURIComponent(String(rawTarget.id))}\`;
   const contracts = (rawTarget.contracts || []).join(',') || '-';
   const scopes = (rawTarget.scopes || []).join(',') || '-';
+  const resolvedOwner = rawTarget.uiOwner
+    || ((typeof window !== 'undefined' && typeof window.resolveUiOwner === 'function')
+        ? window.resolveUiOwner(rawTarget.el || null, rawTarget)
+        : fallbackUiOwnerByKind(rawTarget.kind));
+  const uiOwner = String(resolvedOwner || fallbackUiOwnerByKind(rawTarget.kind)).replace(/\\\\/g, '/');
+  const sliceCmd = rawTarget.sliceCmd || (uiOwner.startsWith('runner/dsh/')
+    ? \`node runner/donegate.mjs slice dsh-orchestrator --focus \${uiOwner}\`
+    : \`node runner/donegate.mjs slice atlas-workbench --focus \${uiOwner}\`);
   const summary = {
     label: chipLabel,
     title: uri,
-    detail: scopes !== '-' ? \`契约范围: \${scopes}\` : \`\${state.page === 'workshop' ? '工作流画布' : (state.page === 'uiboard' ? 'UI看板' : '项目看板')}\`,
+    detail: scopes !== '-' ? \`契约范围: \${scopes} · UI归属: \${uiOwner}\` : \`UI归属: \${uiOwner}\`,
     body: rawTarget.desc || \`\${kindCn}「\${rawTarget.title}」\`
   };
-  const text = \`[DG-TARGET uri=\${uri} | kind=\${rawTarget.kind} | id=\${rawTarget.id} | label=\${shortName} | contracts=\${contracts} | scopes=\${scopes}]\`;
+  const text = \`[DG-TARGET uri=\${uri} | kind=\${rawTarget.kind} | id=\${rawTarget.id} | label=\${shortName} | contracts=\${contracts} | scopes=\${scopes} | uiOwner=\${uiOwner} | sliceCmd=\${JSON.stringify(sliceCmd)}]\`;
   return {
     key: \`\${rawTarget.kind}:\${rawTarget.id}\`,
     kind: rawTarget.kind,
@@ -72,6 +95,8 @@ function buildDshQuoteTarget(rawTarget) {
     isBlank: Boolean(rawTarget.isBlank),
     controlRef: rawTarget.controlRef || null,
     textKey: rawTarget.textKey || null,
+    uiOwner,
+    sliceCmd,
     summary,
     text
   };
@@ -81,25 +106,31 @@ function collectCurrentSelectionAsQuote() {
   const sel = getSelectionInfo();
   if (sel.kind === 'single' && sel.node) {
     const meta = resolveNodeScopeMeta(sel.node);
+    const cardDom = typeof document !== 'undefined' ? document.getElementById('card-' + sel.node.id) : null;
     return buildDshQuoteTarget({
       kind: 'card', id: sel.node.id, title: sel.node.title, isBlank: Boolean(sel.node.isBlank),
       contracts: meta.contracts, scopes: meta.scopes, firstFile: meta.firstFile,
+      el: cardDom, uiOwner: 'runner/atlas/wb-render-cards.mjs',
       desc: sel.node.tip || sel.node.sub || '画布业务/工作流节点'
     });
   }
   if (sel.kind === 'multi' && sel.nodes && sel.nodes.length) {
     const names = sel.nodes.slice(0, 3).map((n) => n.title).join('、');
     const meta = resolveNodeScopeMeta(sel.nodes[0]);
+    const cardDom = typeof document !== 'undefined' ? document.getElementById('card-' + sel.nodes[0].id) : null;
     return buildDshQuoteTarget({
       kind: 'multi', id: sel.nodes.map((n) => n.id).join('+'),
       title: \`\${sel.nodes.length}张卡片(\${names})\`,
       contracts: meta.contracts, scopes: meta.scopes, firstFile: meta.firstFile,
+      el: cardDom, uiOwner: 'runner/atlas/wb-render-cards.mjs',
       desc: \`批量选中 \${sel.nodes.length} 张卡片\`
     });
   }
   if (sel.kind === 'group' && sel.group) {
+    const grpDom = typeof document !== 'undefined' ? document.getElementById('group-' + sel.group.id) : null;
     return buildDshQuoteTarget({
       kind: 'group', id: sel.group.id, title: sel.group.title,
+      el: grpDom, uiOwner: 'runner/atlas/wb-render-cards.mjs',
       desc: \`包含 \${(sel.group.memberIds || []).length} 个内部节点的组合框\`
     });
   }
@@ -109,12 +140,17 @@ function collectCurrentSelectionAsQuote() {
       : sel.link.id;
     return buildDshQuoteTarget({
       kind: 'wire', id: sel.link.id, title: label,
+      uiOwner: 'runner/atlas/wb-render-wires.mjs',
       desc: sel.link.maxLoops ? \`循环回跳上限 \${sel.link.maxLoops} 次\` : '上下游信号与契约数据连线'
     });
   }
   if (state.selectedTextItem) {
+    const txtDom = (typeof document !== 'undefined' && document.querySelector)
+      ? document.querySelector('[data-sel-text="' + state.selectedTextItem.key + '"]')
+      : null;
     return buildDshQuoteTarget({
       kind: 'text', id: state.selectedTextItem.key, title: state.selectedTextItem.text,
+      el: txtDom,
       textKey: state.selectedTextItem.key, desc: \`界面可编辑文本 (\${state.selectedTextItem.key})\`
     });
   }

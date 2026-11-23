@@ -1,5 +1,5 @@
-// 执行隔离声明、门 4 双探针、白名单环境、输出上限与三条禁令（02-规格.md §四）
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// 执行隔离声明、门 4 双探针、白名单环境、可执行 TMPDIR 探针与三条禁令（02-规格.md §四）
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -14,7 +14,7 @@ const ENV_WHITELIST = [
   'PATH', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
   'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'SystemDrive', 'WINDIR',
   'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)',
-  'LANG', 'LC_ALL', 'TEMP', 'TMP', 'PATHEXT', 'ComSpec',
+  'LANG', 'LC_ALL', 'TMPDIR', 'TEMP', 'TMP', 'PATHEXT', 'ComSpec',
   'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE'
 ];
 
@@ -30,13 +30,88 @@ export function ensureRunnerConfig(projectRoot) {
   return { ...DEFAULT_RUNNER_CONFIG, ...r.value, path: p };
 }
 
-export function buildSanitizedEnv(baseEnv = process.env) {
+function isWritableDirectory(dirPath) {
+  if (typeof dirPath !== 'string' || !dirPath.trim()) return false;
+  const abs = resolve(dirPath);
+  try {
+    if (!existsSync(abs) || !statSync(abs).isDirectory()) return false;
+    const probe = join(abs, `.dg-wprobe-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    writeFileSync(probe, 'ok', 'utf8');
+    unlinkSync(probe);
+    return true;
+  } catch (err) {
+    void err;
+    return false;
+  }
+}
+
+export function probeExecutableTmpDir(dirPath) {
+  if (typeof dirPath !== 'string' || !dirPath.trim()) return false;
+  const abs = resolve(dirPath);
+  try {
+    if (!existsSync(abs) || !statSync(abs).isDirectory()) return false;
+  } catch (err) {
+    void err;
+    return false;
+  }
+  const isWin = process.platform === 'win32';
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const probeFile = join(abs, isWin ? `.dg-xprobe-${suffix}.cmd` : `.dg-xprobe-${suffix}.sh`);
+  try {
+    if (isWin) {
+      writeFileSync(probeFile, '@echo off\r\nexit /b 0\r\n', 'utf8');
+    } else {
+      writeFileSync(probeFile, '#!/bin/sh\nexit 0\n', { encoding: 'utf8', mode: 0o700 });
+      chmodSync(probeFile, 0o700);
+    }
+    const r = isWin
+      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', probeFile], { windowsHide: true, stdio: 'ignore', timeout: 3000 })
+      : spawnSync(probeFile, [], { stdio: 'ignore', timeout: 3000 });
+    if (r.error) return false;
+    return r.status === 0;
+  } catch (err) {
+    void err;
+    return false;
+  } finally {
+    try { if (existsSync(probeFile)) unlinkSync(probeFile); } catch (err) { void err; }
+  }
+}
+
+export function buildSanitizedEnv(baseEnv = process.env, extra = {}, opts = {}) {
+  const src = baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env;
   const env = {};
   for (const k of ENV_WHITELIST) {
-    if (baseEnv[k] !== undefined) env[k] = baseEnv[k];
+    if (src[k] !== undefined && k !== 'TMPDIR' && k !== 'TMP' && k !== 'TEMP') {
+      env[k] = String(src[k]);
+    }
   }
-  if (env.PATH === undefined && (baseEnv.Path !== undefined || baseEnv.path !== undefined)) {
-    env.PATH = baseEnv.Path ?? baseEnv.path;
+  if (env.PATH === undefined && (src.Path !== undefined || src.path !== undefined)) {
+    env.PATH = String(src.Path ?? src.path);
+  }
+  for (const tk of ['TMPDIR', 'TMP', 'TEMP']) {
+    if (typeof src[tk] === 'string' && src[tk].trim() && isWritableDirectory(src[tk])) {
+      env[tk] = src[tk];
+    }
+  }
+  const hasExplicitTmpOverride = Boolean(extra && typeof extra === 'object' && extra.TMPDIR !== undefined);
+  if (!hasExplicitTmpOverride) {
+    const winFallbackCandidate = process.platform === 'win32' ? (env.TMPDIR || env.TEMP || env.TMP) : env.TMPDIR;
+    if (winFallbackCandidate && probeExecutableTmpDir(winFallbackCandidate)) {
+      env.TMPDIR = winFallbackCandidate;
+    } else {
+      const cwdRoot = opts && typeof opts.cwd === 'string' && opts.cwd.trim() ? resolve(opts.cwd) : process.cwd();
+      const fallbackTmp = join(cwdRoot, '.donegate', 'tmp');
+      mkdirSync(fallbackTmp, { recursive: true });
+      env.TMPDIR = fallbackTmp;
+      if (!env.TMP || !probeExecutableTmpDir(env.TMP)) env.TMP = fallbackTmp;
+      if (!env.TEMP || !probeExecutableTmpDir(env.TEMP)) env.TEMP = fallbackTmp;
+    }
+  }
+  if (extra && typeof extra === 'object') {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v === undefined) delete env[k];
+      else env[k] = String(v);
+    }
   }
   return env;
 }
@@ -69,7 +144,7 @@ export function runIsolationProbes(projectRoot) {
   let readSucceeded = false;
   try {
     if (existsSync(outRootFile)) { readFileSync(outRootFile, 'utf8'); readSucceeded = true; }
-  } catch { readSucceeded = false; }
+  } catch (err) { void err; readSucceeded = false; }
 
   // 探针 2：越界连（连外网探测：用极短超时的本地无害检测或不可路由地址避免卡死；只有声明 network 隔离才阻断）
   let netSucceeded = false;

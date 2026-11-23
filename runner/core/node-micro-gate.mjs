@@ -9,20 +9,70 @@ import { diffAgainstFrozenStub, freezeNodeStubBaseline } from './hermetic-capsul
 import { loadThresholds } from './gates.mjs';
 import { buildSanitizedEnv, checkCommandBans } from './isolation.mjs';
 
-function listGitTouchedFiles(projectRoot) {
-  const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
-  if (inside.status !== 0 || (inside.stdout || '').trim() !== 'true') return { isGit: false, files: [] };
-  const st = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], { encoding: 'utf8' });
-  if (st.status !== 0) return { isGit: true, files: [] };
-  const files = [];
-  for (const rawLine of (st.stdout || '').split(/\r?\n/)) {
-    if (rawLine.length < 4) continue;
-    let rel = rawLine.slice(3).trim();
-    if (rel.includes(' -> ')) rel = rel.split(' -> ').pop().trim();
-    rel = rel.replace(/^"(.*)"$/, '$1').replace(/\\/g, '/');
-    if (rel) files.push(rel);
+const isNonMetaFile = (f) => Boolean(f && !f.startsWith('.donegate/') && f !== 'node_modules' && !f.startsWith('node_modules/'));
+
+function normalizeGitRelPath(raw) {
+  let rel = String(raw || '').trim();
+  if (rel.includes(' -> ')) rel = rel.split(' -> ').pop().trim();
+  return rel.replace(/^"(.*)"$/, '$1').replace(/\\/g, '/');
+}
+
+function resolveBranchMergeBase(projectRoot, headSha, explicitBase) {
+  if (explicitBase) {
+    const mb = spawnSync('git', ['-C', projectRoot, 'merge-base', 'HEAD', explicitBase], { encoding: 'utf8' });
+    if (mb.status === 0 && mb.stdout.trim()) return mb.stdout.trim();
+    const rv = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--verify', `${explicitBase}^{commit}`], { encoding: 'utf8' });
+    return (rv.status === 0 && rv.stdout.trim()) ? rv.stdout.trim() : null;
   }
-  return { isGit: true, files };
+  const candidates = ['main', 'origin/main', 'master', 'origin/master'];
+  let fallbackSha = null;
+  for (const cand of candidates) {
+    const verify = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--verify', `${cand}^{commit}`], { encoding: 'utf8' });
+    if (verify.status !== 0) continue;
+    const mb = spawnSync('git', ['-C', projectRoot, 'merge-base', 'HEAD', cand], { encoding: 'utf8' });
+    if (mb.status !== 0 || !mb.stdout.trim()) continue;
+    const sha = mb.stdout.trim();
+    if (!fallbackSha) fallbackSha = sha;
+    if (sha !== headSha) return sha;
+  }
+  return fallbackSha;
+}
+
+export function collectGitNodeChanges(projectRoot, explicitBase) {
+  const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  if (inside.status !== 0 || (inside.stdout || '').trim() !== 'true') {
+    return { isGit: false, baseRef: null, rawDirtyFiles: [], uncommittedFiles: [], committedFiles: [], touchedFiles: [] };
+  }
+  const rawDirtyFiles = [];
+  const st = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], { encoding: 'utf8' });
+  if (st.status === 0) {
+    for (const rawLine of (st.stdout || '').split(/\r?\n/)) {
+      if (rawLine.length < 4) continue;
+      const rel = normalizeGitRelPath(rawLine.slice(3));
+      if (rel) rawDirtyFiles.push(rel);
+    }
+  }
+  const uncommittedFiles = [...new Set(rawDirtyFiles.filter(isNonMetaFile))].sort();
+
+  let baseRef = null;
+  const committedSet = new Set();
+  const headRes = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' });
+  if (headRes.status === 0 && headRes.stdout.trim()) {
+    const headSha = headRes.stdout.trim();
+    baseRef = resolveBranchMergeBase(projectRoot, headSha, explicitBase);
+    if (baseRef && baseRef !== headSha) {
+      const df = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--name-only', `${baseRef}..HEAD`], { encoding: 'utf8' });
+      if (df.status === 0) {
+        for (const line of (df.stdout || '').split(/\r?\n/)) {
+          const rel = normalizeGitRelPath(line);
+          if (isNonMetaFile(rel)) committedSet.add(rel);
+        }
+      }
+    }
+  }
+  const committedFiles = [...committedSet].sort();
+  const touchedFiles = [...new Set([...committedFiles, ...uncommittedFiles])].sort();
+  return { isGit: true, baseRef, rawDirtyFiles, uncommittedFiles, committedFiles, touchedFiles };
 }
 
 function buildCompactPassReceiptJson(receipt) {
@@ -38,6 +88,8 @@ function buildCompactPassReceiptJson(receipt) {
     ...(omitted > 0 ? { omittedObligations: omitted } : {}),
     stubHash: receipt.stubHash,
     stubChanged: receipt.stubChanged,
+    touchedCount: (receipt.touchedFiles || []).length,
+    ...(receipt.crossScopeAllowed ? { crossScopeAllowed: true } : {}),
     sessionBudgetTokens: receipt.sessionBudgetTokens,
     receiptBudgetTokens: receipt.receiptBudgetTokens,
     durationMs: receipt.durationMs
@@ -50,61 +102,20 @@ function buildCompactPassReceiptJson(receipt) {
   return out;
 }
 
-export function cmdCheckNode(projectRoot, opts = {}) {
-  const t0 = Date.now();
-  const id = opts.id;
-  const abortWith = (exitCode, reason) => {
-    if (!opts.receipt) return { exitCode, stderr: reason };
-    const receipt = {
-      schema: 'donegate-node-receipt/v1',
-      nodeId: id || null,
-      verdict: exitCode === 2 ? 'ERROR' : 'UNKNOWN',
-      exitCode,
-      fails: [reason],
-      durationMs: Date.now() - t0
-    };
-    if (id && (existsSync(join(projectRoot, '.donegate')) || existsSync(join(projectRoot, 'contracts')))) {
-      const capDir = join(projectRoot, '.donegate', 'capsules');
-      mkdirSync(capDir, { recursive: true });
-      writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
-    }
-    return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
-  };
-
-  if (!id) return abortWith(3, '缺少目标节点标识（用法：donegate check-node <nodeId>）');
-  const cPath = join(projectRoot, 'contracts', id, 'contract.json');
-  const cRes = readJsonStrict(cPath);
-  if (!cRes.ok) return abortWith(cRes.error === 'parse' ? 2 : 3, `读取节点契约失败：${cPath}`);
-  const contract = cRes.value;
-
-  const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
-  const cmdObs = (opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs).filter((o) => o.kind === 'command');
-  for (const o of cmdObs) {
-    const banHits = checkCommandBans(o.command);
-    if (banHits.length > 0) return abortWith(2, `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}`);
-  }
-
-  const thresholds = loadThresholds(projectRoot);
-  const budget = resolveSubagentBudgetProfile(thresholds, opts);
-  const currentStub = buildNodeInterfaceStub(projectRoot, contract);
+function evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts) {
   const fails = [];
-
-  // 微门禁 1：写入范围围栏（防越权修改其他节点源码）
-  const gitState = listGitTouchedFiles(projectRoot);
-  if (gitState.isGit && !opts.allowDirty && gitState.files.length > 0) {
-    return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
-  }
-  const touchedNonMeta = gitState.files.filter((f) => !f.startsWith('.donegate/') && f !== 'node_modules' && !f.startsWith('node_modules/'));
+  const crossScopeAllowed = Boolean(opts.allowCrossScope);
+  let crossScopeFiles = [];
   if (gitState.isGit && !opts.skipScopeCheck) {
-    const outOfScope = touchedNonMeta.filter((f) => {
+    crossScopeFiles = gitState.touchedFiles.filter((f) => {
       if (f.startsWith(`contracts/${id}/`)) return false;
       if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$/i.test(f)) return false;
       return !fileBelongsToScopes(f, contract.scope || []);
     });
-    if (outOfScope.length > 0) fails.push(`越界修改非本卡 scope 文件：${outOfScope.join(', ')}`);
+    if (crossScopeFiles.length > 0 && !crossScopeAllowed) {
+      fails.push(`越界修改非本卡 scope 文件：${crossScopeFiles.join(', ')}`);
+    }
   }
-
-  // 微门禁 2：冻结接口存根兼容性（防私改对外签名破坏上下游）
   let stubDiff = diffAgainstFrozenStub(projectRoot, id, currentStub);
   if (opts.allowStubChange && (!stubDiff.hasFrozenBaseline || stubDiff.stubChanged || stubDiff.breakingChanges.length > 0)) {
     freezeNodeStubBaseline(projectRoot, id, currentStub);
@@ -112,8 +123,6 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   } else if (stubDiff.breakingChanges.length > 0) {
     fails.push(...stubDiff.breakingChanges);
   }
-
-  // 微门禁 3：跨节点红线未声明依赖与门面出口私引拦截
   const graph = discoverHermeticGraph(projectRoot);
   if (graph.ok) {
     for (const r of graph.redImports.filter((x) => x.fromNode === id)) {
@@ -123,13 +132,17 @@ export function cmdCheckNode(projectRoot, opts = {}) {
       fails.push(`越过门面私引邻居内部实现：${v.fromFile} -> ${v.toFile}（只准引 ${v.expectedFacades.join('/')}）`);
     }
   }
-
-  // 微门禁 4：单文件有效代码硬顶检查
   if (currentStub.maxFileEffectiveLines > thresholds.maxEffectiveFileLines) {
     fails.push(`单文件有效代码超硬顶：${currentStub.maxFile} (${currentStub.maxFileEffectiveLines} > ${thresholds.maxEffectiveFileLines})`);
   }
+  return { fails, stubDiff, crossScopeAllowed, crossScopeFiles };
+}
 
-  const sanitizedEnv = buildSanitizedEnv();
+function executeNodeObligations(projectRoot, id, cmdObs, thresholds, fails) {
+  const sanitizedEnv = buildSanitizedEnv(process.env, {
+    DONEGATE_MICRO_GATE: '1',
+    DONEGATE_MICRO_NODE: id
+  }, { cwd: projectRoot });
   let passed = 0, unknown = 0;
   const passedObligations = [];
   for (const o of cmdObs) {
@@ -153,40 +166,20 @@ export function cmdCheckNode(projectRoot, opts = {}) {
       passedObligations.push(o.id);
     }
   }
+  return { passed, unknown, passedObligations };
+}
 
-  const exitCode = fails.length > 0 ? (unknown > 0 && fails.length === unknown ? 3 : 1) : 0;
+function persistMicroGateReceipt(projectRoot, id, currentStub, receipt) {
   const stubsDir = join(projectRoot, '.donegate', 'stubs');
   mkdirSync(stubsDir, { recursive: true });
   writeFileSync(join(stubsDir, `${id}.stub.d.ts`), currentStub.stubText, 'utf8');
-
-  const receipt = {
-    schema: 'donegate-node-receipt/v1',
-    nodeId: id,
-    title: contract.title || id,
-    verdict: exitCode === 0 ? 'PASS' : (exitCode === 1 ? 'FAIL' : 'UNKNOWN'),
-    exitCode,
-    passed,
-    total: cmdObs.length,
-    passedObligations,
-    facadeMode: currentStub.facadeMode,
-    exportedSymbolCount: currentStub.exportedSymbols.length,
-    stubHash: currentStub.stubHash,
-    stubChanged: Boolean(stubDiff.stubChanged),
-    addedExports: stubDiff.addedExports || [],
-    effectiveLines: currentStub.effectiveLines,
-    touchedFiles: touchedNonMeta,
-    sessionBudgetTokens: budget.totalSessionBudgetTokens,
-    receiptBudgetTokens: budget.receiptBudgetTokens,
-    durationMs: Date.now() - t0,
-    ...(fails.length > 0 ? { fails } : {})
-  };
 
   const capDir = join(projectRoot, '.donegate', 'capsules');
   mkdirSync(capDir, { recursive: true });
   const rcptPath = join(capDir, `${id}.receipt.json`);
   const prevRes = existsSync(rcptPath) ? readJsonStrict(rcptPath) : { ok: false };
   const prevStreak = (prevRes.ok && prevRes.value && prevRes.value.exitCode !== 0) ? Number(prevRes.value.retryStreak || 1) : 0;
-  receipt.retryStreak = exitCode === 0 ? 0 : prevStreak + 1;
+  receipt.retryStreak = receipt.exitCode === 0 ? 0 : prevStreak + 1;
   writeFileSync(rcptPath, JSON.stringify(receipt, null, 2), 'utf8');
 
   const rsiDir = join(projectRoot, '.donegate', 'rsi-candidates');
@@ -195,28 +188,78 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     mkdirSync(rsiDir, { recursive: true });
     writeFileSync(rsiFile, JSON.stringify({
       schema: 'donegate-rsi-friction/v1', nodeId: id, retryStreak: receipt.retryStreak,
-      exitCode, fails: receipt.fails || [], touchedFiles: touchedNonMeta, recordedAt: new Date().toISOString()
+      exitCode: receipt.exitCode, fails: receipt.fails || [], touchedFiles: receipt.touchedFiles, recordedAt: new Date().toISOString()
     }, null, 2), 'utf8');
-  } else if (exitCode === 0 && prevStreak >= 2 && existsSync(rsiFile)) {
+  } else if (receipt.exitCode === 0 && prevStreak >= 2 && existsSync(rsiFile)) {
     const oldRsi = readJsonStrict(rsiFile);
     if (oldRsi.ok && oldRsi.value) {
       writeFileSync(rsiFile, JSON.stringify({ ...oldRsi.value, resolvedAfterRetries: prevStreak, resolvedAt: new Date().toISOString() }, null, 2), 'utf8');
     }
   }
+}
 
-  if (opts.receipt) {
-    if (exitCode === 0) {
-      return { exitCode: 0, receipt, stdout: buildCompactPassReceiptJson(receipt), stderr: '' };
+export function cmdCheckNode(projectRoot, opts = {}) {
+  const t0 = Date.now();
+  const id = opts.id;
+  const abortWith = (exitCode, reason) => {
+    if (!opts.receipt) return { exitCode, stderr: reason };
+    const receipt = { schema: 'donegate-node-receipt/v1', nodeId: id || null, verdict: exitCode === 2 ? 'ERROR' : 'UNKNOWN', exitCode, fails: [reason], durationMs: Date.now() - t0 };
+    if (id && (existsSync(join(projectRoot, '.donegate')) || existsSync(join(projectRoot, 'contracts')))) {
+      const capDir = join(projectRoot, '.donegate', 'capsules');
+      mkdirSync(capDir, { recursive: true });
+      writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
     }
     return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
+  };
+
+  if (!id) return abortWith(3, '缺少目标节点标识（用法：donegate check-node <nodeId>）');
+  const cPath = join(projectRoot, 'contracts', id, 'contract.json');
+  const cRes = readJsonStrict(cPath);
+  if (!cRes.ok) return abortWith(cRes.error === 'parse' ? 2 : 3, `读取节点契约失败：${cPath}`);
+  const contract = cRes.value;
+
+  const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
+  const cmdObs = (opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs).filter((o) => o.kind === 'command');
+  for (const o of cmdObs) {
+    const banHits = checkCommandBans(o.command);
+    if (banHits.length > 0) return abortWith(2, `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}`);
   }
-  if (opts.json) {
-    return { exitCode, receipt, stdout: JSON.stringify(receipt), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
+
+  const gitState = collectGitNodeChanges(projectRoot, opts.base);
+  if (gitState.isGit && !opts.allowDirty && gitState.rawDirtyFiles.length > 0) {
+    return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
   }
+
+  const thresholds = loadThresholds(projectRoot);
+  const budget = resolveSubagentBudgetProfile(thresholds, opts);
+  const currentStub = buildNodeInterfaceStub(projectRoot, contract);
+  const { fails, stubDiff, crossScopeAllowed, crossScopeFiles } = evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts);
+  const { passed, unknown, passedObligations } = executeNodeObligations(projectRoot, id, cmdObs, thresholds, fails);
+  const exitCode = fails.length > 0 ? (unknown > 0 && fails.length === unknown ? 3 : 1) : 0;
+
+  const receipt = {
+    schema: 'donegate-node-receipt/v1', nodeId: id, title: contract.title || id,
+    verdict: exitCode === 0 ? 'PASS' : (exitCode === 1 ? 'FAIL' : 'UNKNOWN'),
+    exitCode, passed, total: cmdObs.length, passedObligations,
+    facadeMode: currentStub.facadeMode, exportedSymbolCount: currentStub.exportedSymbols.length,
+    stubHash: currentStub.stubHash, stubChanged: Boolean(stubDiff.stubChanged), addedExports: stubDiff.addedExports || [],
+    effectiveLines: currentStub.effectiveLines, baseRef: gitState.baseRef,
+    touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles,
+    crossScopeAllowed, crossScopeFiles,
+    sessionBudgetTokens: budget.totalSessionBudgetTokens, receiptBudgetTokens: budget.receiptBudgetTokens,
+    durationMs: Date.now() - t0, ...(fails.length > 0 ? { fails } : {})
+  };
+  persistMicroGateReceipt(projectRoot, id, currentStub, receipt);
+
+  const deltaFields = { exitCode, receipt, baseRef: gitState.baseRef, touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles };
+  if (opts.receipt) {
+    const outText = exitCode === 0 ? buildCompactPassReceiptJson(receipt) : `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`;
+    return { ...deltaFields, stdout: outText, stderr: '' };
+  }
+  if (opts.json) return { ...deltaFields, stdout: JSON.stringify(receipt), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
   const summaryLines = [
     `[check-node:${id}] verdict=${receipt.verdict} passed=${passed}/${cmdObs.length} exports=${receipt.exportedSymbolCount} stubHash=${receipt.stubHash} lines=${receipt.effectiveLines} (${receipt.durationMs}ms)`,
-    ...(fails.map((f) => `  ✗ ${f}`)),
-    `RECEIPT: ${JSON.stringify(receipt)}`
+    ...(fails.map((f) => `  ✗ ${f}`)), `RECEIPT: ${JSON.stringify(receipt)}`
   ];
-  return { exitCode, receipt, stdout: summaryLines.join('\n'), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
+  return { ...deltaFields, stdout: summaryLines.join('\n'), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
 }

@@ -1,18 +1,33 @@
-// DSH 主对话快照 (ChatSnapshot.legacy / partial) 实时消息提取、引用标签清洗与代码块排版子模块
+// DSH 主对话快照 (ChatSnapshot.legacy / partial) 实时消息提取、引用标签清洗与 uiOwner 切片路由提示子模块
 export function buildDshClientChatExtractSource() {
   return String.raw`
     function parseUserQuoteTags(rawText) {
       var quotes = [];
+      var sliceHints = [];
       var cleaned = String(rawText || "").replace(/\[DG-TARGET\s+([^\]]+)\]/g, function (_m, body) {
-        var lblM = String(body).match(/label=([^|\]]+)/);
+        var lblM = String(body).match(/(?:label|name)=([^|\]]+)/);
         var kindM = String(body).match(/kind=([^|\]]+)/);
-        var label = lblM ? lblM[1].trim() : "引用目标";
+        var uiM = String(body).match(/uiOwner=([^|\]]+)/);
+        var cmdM = String(body).match(/sliceCmd=([^|\]]+)/);
+        var label = lblM ? lblM[1].trim().replace(/^"|"$/g, "") : "引用目标";
         var kind = kindM ? kindM[1].trim() : "card";
-        var prefix = kind === "wire" ? "[连线]" : (kind === "ui" ? "[UI]" : "[节点]");
-        quotes.push(prefix + " " + label);
+        var uiOwner = uiM ? uiM[1].trim().replace(/^"|"$/g, "") : "";
+        var sliceCmd = cmdM ? cmdM[1].trim().replace(/^"|"$/g, "") : "";
+        var prefix = (kind === "wire" || kind === "link") ? "[连线]" : (kind === "ui" ? "[UI]" : ((kind === "button" || kind === "control") ? "[按钮]" : "[节点]"));
+        quotes.push(prefix + " " + label + (uiOwner && uiOwner !== "-" ? " @" + uiOwner.split("/").pop() : ""));
+        if (sliceCmd && sliceCmd !== "-") {
+          sliceHints.push(sliceCmd);
+        } else if (uiOwner && uiOwner.indexOf("runner/atlas/") === 0) {
+          sliceHints.push("node runner/donegate.mjs slice atlas-workbench --focus " + uiOwner);
+        } else if (uiOwner && uiOwner.indexOf("runner/dsh/") === 0) {
+          sliceHints.push("node runner/donegate.mjs slice dsh-orchestrator --focus " + uiOwner);
+        }
         return "";
       }).trim();
-      return { quotes: quotes, text: cleaned };
+      var routingHint = sliceHints.length
+        ? ("收到含 DG-TARGET 的消息时，若改界面交互/样式优先直接运行胶囊给出的 sliceCmd（" + sliceHints.join(" ; ") + "），零手动 grep 直达目标 UI 模块")
+        : "";
+      return { quotes: quotes, sliceHints: sliceHints, routingHint: routingHint, text: cleaned };
     }
 
     function extractContentBlocksText(blocks) {
@@ -76,7 +91,9 @@ export function buildDshClientChatExtractSource() {
                 id: String(nd.messageId || ("u-" + nd.seq + "-" + i)),
                 role: "user",
                 text: parsedU.text,
-                quotes: allQuotes
+                quotes: allQuotes,
+                sliceHints: parsedU.sliceHints,
+                routingHint: parsedU.routingHint
               });
             }
           } else if (nd.kind === "assistant") {
@@ -118,7 +135,7 @@ export function buildDshClientChatExtractSource() {
           if (d.kind === "user" || d.kind === "steering") {
             var uTxt = extractContentBlocksText(d.content);
             var pu = parseUserQuoteTags(uTxt);
-            if (pu.text || pu.quotes.length) list.push({ id: String(vNode.key || kIdx), role: "user", text: pu.text, quotes: pu.quotes });
+            if (pu.text || pu.quotes.length) list.push({ id: String(vNode.key || kIdx), role: "user", text: pu.text, quotes: pu.quotes, sliceHints: pu.sliceHints, routingHint: pu.routingHint });
           } else if (d.kind === "assistant" || Array.isArray(d.blocks)) {
             var pa = parseAssistantBlocks(d.blocks);
             if (pa.text || pa.tools.length) list.push({ id: String(vNode.key || kIdx), role: "assistant", text: pa.text, reasoning: pa.reasoning, tools: pa.tools });

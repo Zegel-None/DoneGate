@@ -14,7 +14,7 @@ import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyAppl
 const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
-  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'skip-scope-check', 'receipt', 'node'
+  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node'
 ]);
 
 const HELP_TEXT = [
@@ -36,8 +36,8 @@ const HELP_TEXT = [
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
   '密封契约切片与单卡微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
-  '· slice [nodeId] [--focus <f1,f2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
-  '· check-node <nodeId> [--criterion <oid>] [--allow-dirty] [--allow-stub-change] [--receipt] [--json]'
+  '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
+  '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]'
 ].join('\n');
 
 function parseCliArgs(argv) {
@@ -50,8 +50,10 @@ function parseCliArgs(argv) {
       const k = a.slice(2);
       if (BOOLEAN_FLAGS.has(k)) { flags[k] = true; continue; }
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('--')) { flags[k] = (k === 'focus' && flags[k]) ? `${flags[k]},${next}` : next; i++; }
-      else flags[k] = true;
+      if (next !== undefined && !next.startsWith('--')) {
+        flags[k] = ((k === 'focus' || k === 'lexical') && flags[k]) ? `${flags[k]},${next}` : next;
+        i++;
+      } else flags[k] = true;
     } else pos.push(a);
   }
   return { flags, pos };
@@ -84,6 +86,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
     return cmdSlice(root, {
       id: pos[1],
       focus: flags.focus,
+      lexical: flags.lexical,
       routerOnly: Boolean(flags['router-only']),
       freezeStub: Boolean(flags['freeze-stub']),
       contextWindow: flags['context-window'],
@@ -97,8 +100,10 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
     return cmdCheckNode(root, {
       id: pos[1],
       criterion: flags.criterion,
+      base: typeof flags.base === 'string' ? flags.base : undefined,
       allowDirty: Boolean(flags['allow-dirty']),
       allowStubChange: Boolean(flags['allow-stub-change']),
+      allowCrossScope: Boolean(flags['allow-cross-scope']),
       skipScopeCheck: Boolean(flags['skip-scope-check']),
       contextWindow: flags['context-window'],
       utilization: flags.utilization,

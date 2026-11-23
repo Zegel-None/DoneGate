@@ -1,12 +1,39 @@
-// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 桶文件门面与显式入口混合识别）
+// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 桶文件门面重导出解引用与 HTTP 路由契约提取）
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { sha256 } from '../../skill/hash.mjs';
+import { enrichBarrelFacadeExports, extractHttpRouteContracts } from './barrel-stub-enrich.mjs';
 
 const CODE_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
 const SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
 const FACADE_BASENAMES = new Set(['index.mjs', 'index.js', 'index.ts', 'index.tsx', 'contract.mjs', 'contract.js', 'contract.ts']);
+const REGEX_PREV_KW = new Set(['return', 'case', 'throw', 'typeof', 'void', 'delete', 'in', 'of', 'await', 'yield']);
+
+function canStartRegexLiteral(src, slashIdx) {
+  let p = slashIdx - 1;
+  while (p >= 0 && /\s/.test(src[p])) p--;
+  if (p < 0 || '(,=:[!&|?{};~^%+-*<>'.includes(src[p])) return true;
+  if (/[A-Za-z_$]/.test(src[p])) {
+    const kwEnd = p + 1;
+    while (p >= 0 && /[A-Za-z0-9_$]/.test(src[p])) p--;
+    return REGEX_PREV_KW.has(src.slice(p + 1, kwEnd));
+  }
+  return false;
+}
+
+function scanRegexLiteralEnd(src, slashIdx) {
+  let inCharClass = false;
+  for (let i = slashIdx + 1; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '\n' || ch === '\r') return -1;
+    if (ch === '\\') { i++; continue; }
+    if (ch === '[') inCharClass = true;
+    else if (ch === ']') inCharClass = false;
+    else if (ch === '/' && !inCharClass) return i + 1;
+  }
+  return -1;
+}
 
 export function maskCommentsAndStrings(src, ext = '.mjs') {
   const out = src.split('');
@@ -34,6 +61,9 @@ export function maskCommentsAndStrings(src, ext = '.mjs') {
       while (i < n && src.slice(i, i + 3) !== c3) { if (src[i] === '\\') i++; i++; }
       i = Math.min(n, i + 3);
       blank(s, i);
+    } else if (!isPy && c === '/' && canStartRegexLiteral(src, i)) {
+      const regEnd = scanRegexLiteralEnd(src, i);
+      if (regEnd > i + 1) { blank(i + 1, regEnd - 1); i = regEnd; } else i++;
     } else if (c === '"' || c === "'" || (!isPy && c === '`')) {
       const s = i;
       i++;
@@ -182,10 +212,11 @@ function extractPyOrGoExports(source, ext) {
 export function extractFileInterfaceStub(source, relPath = '') {
   const ext = extname(relPath).toLowerCase() || '.mjs';
   const masked = maskCommentsAndStrings(source, ext);
-  let effectiveLines = 0;
+  let effectiveLines = 0, physicalLines = 0;
+  for (const line of source.split(/\r?\n/)) if (line.trim()) physicalLines++;
   for (const line of masked.split(/\r?\n/)) if (line.trim()) effectiveLines++;
   const exports = (ext === '.py' || ext === '.go') ? extractPyOrGoExports(source, ext) : extractJsTsExports(source);
-  return { relPath, effectiveLines, sourceChars: source.length, exports };
+  return { relPath, effectiveLines, physicalLines, sourceChars: source.length, exports };
 }
 
 export function resolveNodeScopeFiles(projectRoot, scopes = []) {
@@ -230,28 +261,44 @@ export function resolveNodeScopeFiles(projectRoot, scopes = []) {
 
 export function buildNodeInterfaceStub(projectRoot, node) {
   const { scopeFiles, relatedTestFiles, facadeMode, facadeFiles } = resolveNodeScopeFiles(projectRoot, node.scope || []);
-  let sourceChars = 0, effectiveLines = 0, maxFileEffectiveLines = 0, maxFile = null;
-  const fileMetrics = new Map();
+  let sourceChars = 0, effectiveLines = 0, physicalLines = 0, maxFileEffectiveLines = 0, maxFile = null;
+  const fileMetrics = new Map(), rawByFile = new Map(), scopeSet = new Set(scopeFiles);
   for (const rel of scopeFiles) {
     let raw = '';
     try { raw = readFileSync(join(projectRoot, rel), 'utf8'); } catch (err) { void err; continue; }
+    rawByFile.set(rel, raw);
     const parsed = extractFileInterfaceStub(raw, rel);
     sourceChars += parsed.sourceChars;
     effectiveLines += parsed.effectiveLines;
+    physicalLines += parsed.physicalLines;
     if (parsed.effectiveLines > maxFileEffectiveLines) { maxFileEffectiveLines = parsed.effectiveLines; maxFile = rel; }
     fileMetrics.set(rel, parsed);
   }
+  const barrelEnriched = facadeMode === 'barrel'
+    ? enrichBarrelFacadeExports(facadeFiles, rawByFile, fileMetrics, scopeSet, maskCommentsAndStrings, projectRoot)
+    : null;
+  const httpRoutes = extractHttpRouteContracts(rawByFile);
+
   const exportedSymbols = [], hashLines = [], richLines = [];
   for (const entryRel of facadeFiles) {
-    const parsed = fileMetrics.get(entryRel);
-    if (!parsed || parsed.exports.length === 0) continue;
+    const entryPack = barrelEnriched ? barrelEnriched.get(entryRel) : fileMetrics.get(entryRel);
+    if (!entryPack || entryPack.exports.length === 0) continue;
     hashLines.push(`// [entry: ${entryRel}]`);
     richLines.push(`// [entry: ${entryRel}]`);
-    for (const ex of parsed.exports) {
+    for (const td of entryPack.typedefs || []) if (!entryPack.exports.some((e) => e.doc === td)) richLines.push(td);
+    for (const ex of entryPack.exports) {
       exportedSymbols.push({ file: entryRel, symbol: ex.symbol, signature: ex.signature });
       hashLines.push(ex.signature);
       if (ex.doc) richLines.push(ex.doc);
       richLines.push(ex.signature);
+    }
+  }
+  if (httpRoutes.length > 0) {
+    richLines.push('// === HTTP Route Contracts ===');
+    for (const rt of httpRoutes) {
+      const routeLine = `// ${rt.method} ${rt.path} [${rt.file}]`;
+      hashLines.push(routeLine);
+      richLines.push(routeLine);
     }
   }
   const stubHash = sha256(hashLines.join('\n') || `empty:${node.id}`);
@@ -259,8 +306,8 @@ export function buildNodeInterfaceStub(projectRoot, node) {
   const stubText = richLines.length > 0 ? `${header}\n${richLines.join('\n')}\n` : `${header}\n// (no public code exports)\n`;
   return {
     nodeId: node.id, facadeMode, facadeFiles, scopeFiles, relatedTestFiles,
-    effectiveLines, maxFileEffectiveLines, maxFile, sourceChars,
+    effectiveLines, physicalLines, maxFileEffectiveLines, maxFile, sourceChars,
     sourceTokens: Math.ceil(sourceChars / 4), stubTokens: Math.ceil(stubText.length / 4),
-    stubHash, exportedSymbols, stubText
+    stubHash, exportedSymbols, httpRoutes, stubText
   };
 }

@@ -64,7 +64,7 @@ export function renderDshBundleCordisPatch(projectRoot) {
       config:
         id: dsh-donegate-router
         name: 完结门 · Super Agent 主调度
-        description: "承接画布蓝色引用胶囊与全局工程指令，指派 Worker 子代理挂载工作流执行并以零废话微卡回传。【非工程问答直通退让】若消息不含 [DG-TARGET] 蓝色引用胶囊且属于查天气、日常闲聊等非软件工程请求，立即按普通助手简明作答，严禁运行 donegate 命令、严禁生成画布节点或门禁微卡。"
+        description: "承接画布蓝色引用胶囊与全局工程指令，指派 Worker 子代理挂载工作流执行并以零废话微卡回传。【UI直达路由】收到含 [DG-TARGET] 的消息时，若改界面交互/样式优先直接运行胶囊给出的 sliceCmd（即 node runner/donegate.mjs slice atlas-workbench --focus <uiOwner>），零手动 grep 直达目标 UI 模块。【非工程问答直通退让】若消息不含 [DG-TARGET] 蓝色引用胶囊且属于查天气、日常闲聊等非软件工程请求，立即按普通助手简明作答，严禁运行 donegate 命令、严禁生成画布节点或门禁微卡。"
         order: 85
         plugins:
           - id: compaction
@@ -113,7 +113,7 @@ export function renderDshBundleCordisPatch(projectRoot) {
       config:
         id: dsh-donegate-worker
         name: 完结门 · 工作流施工工兵
-        description: 由 Super Agent 派工调用，在授权契约 scope 内修改代码并接受完结门 0/1/2/3 确定性门禁验真。
+        description: "由 Super Agent 派工调用，在授权契约 scope 内修改代码并接受完结门 0/1/2/3 确定性门禁验真。收到含 [DG-TARGET] 的消息时，若改界面交互/样式优先直接运行胶囊给出的 sliceCmd（即 node runner/donegate.mjs slice atlas-workbench --focus <uiOwner>），零手动 grep 直达目标 UI 模块。"
         order: 86
         plugins:
           - id: compaction

@@ -37,6 +37,7 @@ function copyAtlasAiPrompt(encodedPrompt) {
 function renderAtlasOverviewModal() {
   const bodyEl = document.getElementById('atlas-ov-body');
   if (!bodyEl || typeof ATLAS !== 'object' || !ATLAS) return;
+  bodyEl.setAttribute('data-ui-owner', 'runner/atlas/ui-views.mjs');
   const p = ATLAS.project || {};
   const titleEl = document.getElementById('atlas-ov-title');
   const pctEl = document.getElementById('atlas-ov-pct');
@@ -54,7 +55,7 @@ function renderAtlasOverviewModal() {
 
   if (activeAtlasOvTab === 'mindmap') {
     if (!mods.length) {
-      bodyEl.innerHTML = '<div class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">当前目录尚未扫描到源码模块。</div>';
+      bodyEl.innerHTML = '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">当前目录尚未扫描到源码模块。</div>';
       return;
     }
     bodyEl.innerHTML = mods.map((m) => {
@@ -62,7 +63,7 @@ function renderAtlasOverviewModal() {
         ? 'background: var(--ok-bg); color: var(--ok);'
         : (m.tone === 'bad' ? 'background: var(--err-bg); color: var(--err);' : 'background: var(--warn-bg); color: var(--warn);');
       const encPrompt = encodeURIComponent(m.aiPrompt || ('请帮我为 ' + m.path + ' 补充契约验收保护'));
-      return '<div class="p-3 rounded-xl border flex flex-col gap-1.5" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
+      return '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-3 rounded-xl border flex flex-col gap-1.5" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
         '<div class="flex items-center justify-between gap-2 flex-wrap">' +
           '<div class="flex items-center gap-2">' +
             '<span class="font-semibold text-[13px]">' + esc(m.humanTitle || m.path) + '</span>' +
@@ -84,13 +85,13 @@ function renderAtlasOverviewModal() {
 
   if (activeAtlasOvTab === 'arch') {
     if (!edges.length) {
-      bodyEl.innerHTML = '<div class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">暂未检出跨模块调用或跨语言 HTTP 桥接连线。</div>';
+      bodyEl.innerHTML = '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">暂未检出跨模块调用或跨语言 HTTP 桥接连线。</div>';
       return;
     }
     bodyEl.innerHTML = edges.slice(0, 60).map((e) => {
       const badge = e.health === 'bridge' ? '跨语言 HTTP 桥接' : (e.health === 'red' ? '越界未声明依赖' : '正常调用');
       const col = e.health === 'red' ? 'var(--err)' : 'var(--primary)';
-      return '<div class="p-2.5 rounded-xl border flex items-center justify-between gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
+      return '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-2.5 rounded-xl border flex items-center justify-between gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
         '<div><b>' + esc(e.fromTitle) + '</b> → <b>' + esc(e.toTitle) + '</b><div class="font-mono text-[11px] mt-0.5" style="color: var(--text-muted);">' + esc(e.detail || e.kind) + '</div></div>' +
         '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold" style="color:' + col + ';">' + badge + '</span>' +
       '</div>';
@@ -100,7 +101,7 @@ function renderAtlasOverviewModal() {
 
   if (activeAtlasOvTab === 'branches') {
     if (!branches.length) {
-      bodyEl.innerHTML = '<div class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">当前工作区暂无多支线记录。</div>';
+      bodyEl.innerHTML = '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-4 rounded-xl text-center" style="background: var(--surface-soft); color: var(--text-muted);">当前工作区暂无多支线记录。</div>';
       return;
     }
     bodyEl.innerHTML = branches.map((b) => {
@@ -109,7 +110,7 @@ function renderAtlasOverviewModal() {
           esc(b.collidesWith.map((x) => x.branch + ' (' + (x.files || []).join(', ') + ')').join('；')) + ' 同时改动同一文件</div>'
         : '';
       const encPrompt = encodeURIComponent(b.aiPrompt || ('请检查分支 ' + b.name + ' 的合并冲突与验收状态'));
-      return '<div class="p-3 rounded-xl border flex flex-col gap-1" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
+      return '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-3 rounded-xl border flex flex-col gap-1" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
         '<div class="flex items-center justify-between gap-2">' +
           '<span class="font-mono font-bold text-[12.5px]">' + esc(b.name) + (b.isDefault ? '（主线）' : '') + '</span>' +
           (!b.isDefault ? '<button type="button" class="ghost-btn text-[11px]" onclick="copyAtlasAiPrompt(\'' + encPrompt + '\')">复制这句话发给 AI 处理</button>' : '') +
@@ -122,19 +123,19 @@ function renderAtlasOverviewModal() {
   }
 
   const led = ATLAS.ledger || {};
-  const summaryTop = '<div class="p-3 rounded-xl border flex items-center justify-between flex-wrap gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
+  const summaryTop = '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-3 rounded-xl border flex items-center justify-between flex-wrap gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
     '<span>总判据 <b>' + Number(led.N || 0) + '</b> 项：通过 <b>' + Number(led.A || 0) + '</b> · 未通过 <b>' + Number(led.C || 0) + '</b> · 未验证 <b>' + Number(led.D || 0) + '</b></span>' +
     '<span class="font-mono text-[11px]" style="color: var(--text-muted);">受契约保护模块 ' + Number(p.governedCount || 0) + '/' + Number(p.moduleCount || 0) + '</span>' +
   '</div>';
   const contractCards = contracts.map((c) => (
-    '<div class="p-2.5 rounded-xl border flex items-center justify-between gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
+    '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-2.5 rounded-xl border flex items-center justify-between gap-2" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
       '<div><b>' + esc(c.title || c.id) + '</b> <span class="font-mono text-[11px]" style="color: var(--text-muted);">(' + esc(c.id) + ')</span></div>' +
       '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold" style="background: var(--primary-soft); color: var(--primary-text);">' +
         esc(c.state || '未验证') + ' · ' + Number(c.passTrusted || 0) + '/' + Number(c.passTotal || 0) +
       '</span>' +
     '</div>'
   )).join('');
-  bodyEl.innerHTML = summaryTop + (contractCards || '<div class="p-3 text-center" style="color: var(--text-muted);">暂未建立契约验收项。</div>');
+  bodyEl.innerHTML = summaryTop + (contractCards || '<div data-ui-owner="runner/atlas/ui-views.mjs" class="p-3 text-center" style="color: var(--text-muted);">暂未建立契约验收项。</div>');
 }
 `;
 }

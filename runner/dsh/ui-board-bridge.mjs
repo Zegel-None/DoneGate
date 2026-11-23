@@ -1,4 +1,4 @@
-// 注入被预览应用 <iframe> 的零依赖通信桥：全窗口原生交互放行 + 纯 Alt+单击 (e.altKey) 源码定位拾取桥（防双发胶囊）
+// 注入被预览应用 <iframe> 的零依赖通信桥：全窗口原生交互放行 + 纯 Alt+单击 (e.altKey) 源码与 uiOwner 定位拾取桥（防双发胶囊）
 
 function buildUiBridgeDomHelpersSource() {
   return `  var hoverBox = null;
@@ -57,6 +57,35 @@ function buildUiBridgeDomHelpersSource() {
       cur = cur.parentElement;
     }
     return { file: window.location.pathname === '/' ? '.donegate/ui-prototype/index.html' : window.location.pathname.replace(/^\\/+/, ''), line: 1, col: 1, component: (el && el.tagName ? el.tagName.toLowerCase() : 'div') };
+  }
+
+  function resolveUiOwner(el, meta) {
+    if (el && typeof el.closest === 'function') {
+      var owned = el.closest('[data-ui-owner]');
+      var directOwner = owned && owned.getAttribute ? owned.getAttribute('data-ui-owner') : null;
+      if (directOwner) return String(directOwner).replace(/\\\\/g, '/');
+    }
+    var cur = el;
+    while (cur && cur !== document.body) {
+      var attrOwner = cur.getAttribute ? cur.getAttribute('data-ui-owner') : null;
+      if (attrOwner) return String(attrOwner).replace(/\\\\/g, '/');
+      cur = cur.parentElement;
+    }
+    var srcFile = meta && meta.file ? String(meta.file).replace(/\\\\/g, '/') : '';
+    if (srcFile.indexOf('runner/atlas/') === 0 || srcFile.indexOf('runner/dsh/') === 0) {
+      return srcFile;
+    }
+    var act = el && el.getAttribute ? (el.getAttribute('data-uib-act') || el.getAttribute('data-dg-action') || el.getAttribute('data-action') || '') : '';
+    var ctrl = el && el.getAttribute ? (el.getAttribute('data-ctrl-id') || '') : '';
+    if (act.indexOf('jit-') === 0 || ctrl.indexOf('jit:') === 0) return 'runner/atlas/wb-jit-workflow.mjs';
+    return 'runner/atlas/wb-uiboard.mjs';
+  }
+
+  function deriveBridgeSliceCmd(uiOwner) {
+    var clean = String(uiOwner || '').replace(/\\\\/g, '/');
+    if (clean.indexOf('runner/dsh/') === 0) return 'node runner/donegate.mjs slice dsh-orchestrator --focus ' + clean;
+    if (clean.indexOf('runner/atlas/') === 0) return 'node runner/donegate.mjs slice atlas-workbench --focus ' + clean;
+    return null;
   }
 
   function buildCssPath(el) {
@@ -132,6 +161,8 @@ function buildUiBridgeEventListenersSource() {
     if (hoverBox) hoverBox.style.display = 'none';
     placeBox(selectBox, pick, true);
     var src = resolveElementSource(pick);
+    var uiOwner = resolveUiOwner(pick, src);
+    var sliceCmd = deriveBridgeSliceCmd(uiOwner);
     var label = String(pick.innerText || pick.value || (pick.getAttribute && (pick.getAttribute('placeholder') || pick.getAttribute('aria-label'))) || pick.tagName).replace(/\\s+/g, ' ').trim().slice(0, 28);
     postUp('dg-ui:element-selected', {
       tag: pick.tagName.toLowerCase(),
@@ -139,6 +170,8 @@ function buildUiBridgeEventListenersSource() {
       sourceFile: src.file,
       sourceLine: src.line,
       component: src.component,
+      uiOwner: uiOwner,
+      sliceCmd: sliceCmd,
       selector: buildCssPath(pick),
       actionId: (pick.getAttribute && pick.getAttribute('data-dg-action')) || null,
       wiringState: (pick.getAttribute && pick.getAttribute('data-dg-wiring')) || null,

@@ -11,8 +11,8 @@ import {
   resolveDshProfileDir, toSafeFileUrl
 } from './dsh/win-paths.mjs';
 import {
-  buildElementQuotePayload, buildMicroVerdictCard,
-  parseQuotedTargetsFromMessage, verifySubagentNodeReceipt
+  buildElementQuotePayload, buildMicroVerdictCard, deriveSliceCmdFromUiOwner,
+  formatQuoteCapsule, parseQuoteCapsule, parseQuotedTargetsFromMessage, verifySubagentNodeReceipt
 } from './dsh/quote-protocol.mjs';
 import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
@@ -52,21 +52,64 @@ async function verifyWinPathsAndCmdScript(check) {
 }
 
 async function verifyQuoteAndReceiptProtocol(check) {
-  await check('2. DSH 原生蓝色引用胶囊多元素累加（卡片 + 连线 + 按钮）与两行验真微卡协议', async () => {
-    const q1 = buildElementQuotePayload({ kind: 'node', id: 'n-ui', label: 'UI 组件层', contractIds: ['verdict-core'], scopePaths: ['runner/atlas'] });
+  await check('2. DSH 原生蓝色引用胶囊（含 uiOwner / sliceCmd 全链路直达与旧格式向后兼容）及两行验真微卡协议', async () => {
+    const q1 = buildElementQuotePayload({
+      kind: 'node', id: 'n-ui', label: 'UI 组件层',
+      contractIds: ['verdict-core'], scopePaths: ['runner/core/'],
+      uiOwner: 'runner\\atlas\\wb-render-cards.mjs'
+    });
     const q2 = buildElementQuotePayload({ kind: 'link', id: 'lk-loop-1', label: '门禁失败回跳线' });
-    const q3 = buildElementQuotePayload({ kind: 'control', id: 'tb:bypass', label: '跳过' });
+    const q3 = buildElementQuotePayload({ kind: 'control', id: 'tb:bypass', label: '跳过', uiOwner: 'runner/atlas/ui-shell.mjs' });
     assert.equal(q1.summary.label, '[节点]');
     assert.equal(q2.summary.label, '[连线]');
     assert.equal(q3.summary.label, '[按钮]');
     assert.equal(q3.summary.body, '跳过');
+    assert.equal(q1.uiOwner, 'runner/atlas/wb-render-cards.mjs');
+    assert.equal(q1.sliceCmd, 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-render-cards.mjs');
+    assert.equal(q2.uiOwner, null, '不含 uiOwner 的元素必须保持 null 向后兼容');
+    assert.equal(q2.sliceCmd, null);
+    assert.ok(!q2.text.includes('uiOwner='), '不含 uiOwner 时不强塞多余字段');
+
+    const dshCap = formatQuoteCapsule({
+      kind: 'ui', id: 'bridge-el-1', label: '保存按钮',
+      scopes: ['apps/web/Form.tsx'], uiOwner: 'runner/dsh/ui-board-bridge.mjs'
+    });
+    const parsedDshCap = parseQuoteCapsule(dshCap);
+    assert.equal(parsedDshCap.uiOwner, 'runner/dsh/ui-board-bridge.mjs');
+    assert.equal(parsedDshCap.sliceCmd, 'node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/ui-board-bridge.mjs');
+    assert.equal(deriveSliceCmdFromUiOwner('runner/atlas/wb-uiboard.mjs'), 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-uiboard.mjs');
+    assert.equal(deriveSliceCmdFromUiOwner('runner/dsh/quote-protocol.mjs'), 'node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/quote-protocol.mjs');
+    assert.equal(deriveSliceCmdFromUiOwner('../evil.mjs'), null);
+
+    // 验证旧格式胶囊 100% 向后兼容与无显式 sliceCmd 时自动按 uiOwner 补推
+    const legacyCap = '[DG-TARGET uri=dg://sandbox/card/host-dom-core | kind=card | id=host-dom-core | label=判定核 | contracts=verdict-core | scopes=runner/core/]';
+    const parsedLegacy = parseQuoteCapsule(legacyCap);
+    assert.equal(parsedLegacy.kind, 'card');
+    assert.equal(parsedLegacy.id, 'host-dom-core');
+    assert.equal(parsedLegacy.name, '判定核');
+    assert.deepEqual(parsedLegacy.contracts, ['verdict-core']);
+    assert.deepEqual(parsedLegacy.scopes, ['runner/core/']);
+    assert.equal(parsedLegacy.uiOwner, null);
+    assert.equal(parsedLegacy.sliceCmd, null);
+    assert.equal(parseQuoteCapsule('纯普通闲聊无胶囊文本'), null);
+
+    const uiOnlyCap = '[DG-TARGET uri=dg://workshop/button/id%3Abtn-theme | kind=button | id=id:btn-theme | label=暗黑 | contracts=- | scopes=- | uiOwner=runner/atlas/ui-shell.mjs]';
+    const parsedUiOnly = parseQuoteCapsule(uiOnlyCap);
+    assert.deepEqual(parsedUiOnly.contracts, []);
+    assert.deepEqual(parsedUiOnly.scopes, []);
+    assert.equal(parsedUiOnly.uiOwner, 'runner/atlas/ui-shell.mjs');
+    assert.equal(parsedUiOnly.sliceCmd, 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/ui-shell.mjs');
 
     const prompt = `${q1.text}\n${q2.text}\n${q3.text}\n请把跳过按钮改成琥珀色并检查这条回跳线的门禁上限`;
     const targets = parseQuotedTargetsFromMessage(prompt);
     assert.equal(targets.length, 3);
     assert.equal(targets[0].kind, 'node');
+    assert.equal(targets[0].uiOwner, 'runner/atlas/wb-render-cards.mjs');
+    assert.equal(targets[0].sliceCmd, 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-render-cards.mjs');
     assert.equal(targets[1].kind, 'link');
+    assert.equal(targets[1].uiOwner, null);
     assert.equal(targets[2].kind, 'control');
+    assert.equal(targets[2].uiOwner, 'runner/atlas/ui-shell.mjs');
 
     const card = buildMicroVerdictCard({
       ticketId: 'tkt-01', targetUri: q1.uri, exitCode: 0,
@@ -143,6 +186,7 @@ async function verifyDshDocBundleSpec(check) {
       assert.equal((patchYml.match(/compaction:\s*true/g) || []).length, 2, 'router 与 worker 两个预设均须挂载 isolate.compaction 压缩隔离组');
       assert.equal((patchYml.match(/@deepseek-ai\/dsh-compaction-basic/g) || []).length, 2, '压缩隔离组内须默认挂载官方 dsh-compaction-basic');
       assert.ok(patchYml.includes('[DG-TARGET]') && patchYml.includes('非工程问答直通退让'), '主调度预设描述须包含非工程问答直通退让规则');
+      assert.ok(patchYml.includes('slice atlas-workbench --focus <uiOwner>') && patchYml.includes('sliceCmd'), 'Router 与 Worker 预设须包含 sliceCmd 直达 UI 模块指引');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -242,6 +286,7 @@ async function verifyClientSandboxAndRunner(check) {
       assert.ok(clientCode.includes('--dsw-specific-input-major') && clientCode.includes('--dsw-radius-xl'), '必须复用 DSH 官方输入框表面与圆角令牌');
       assert.ok(!clientCode.includes('切回对话页') && !clientCode.includes('对话与回执'), '必须彻底移除多余的对话与回执顶栏及切回对话页按钮');
       assert.ok(clientCode.includes('dg_dsh_agent_name') && clientCode.includes('dg_dsh_dock_pinned') && clientCode.includes('dg_dsh_dock_height'), '必须持久化自定义 Agent 名字、右上角固定状态与手动拖拽高度');
+      assert.ok(clientCode.includes('sliceHints') && clientCode.includes('slice atlas-workbench --focus'), '客户端引用提取须支持解析 uiOwner 与推导 sliceCmd');
 
       let draftedText = '';
       let submittedCount = 0;

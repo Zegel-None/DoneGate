@@ -1,4 +1,4 @@
-// DSH 原生 Quote 引用胶囊协议与零废话验真微卡编解码器（对齐 QuoteSummary 与完结门 INV-01，<= 200 行）
+// DSH 原生 Quote 引用胶囊协议（含 uiOwner / sliceCmd 全链路直达路由）与零废话验真微卡编解码器
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -7,53 +7,194 @@ import { normalizeLf, normalizeSlashes } from './win-paths.mjs';
 
 const KIND_LABELS = {
   node: '节点',
+  card: '卡片',
+  multi: '多选',
   group: '组合框',
   link: '连线',
+  wire: '连线',
   text: '文本',
   control: '按钮',
+  button: '按钮',
+  ui: 'UI元素',
+  workflow: '工作流',
+  project: '项目',
   module: '模块'
 };
+
+function unquoteCapsuleVal(rawVal) {
+  const trimmed = String(rawVal ?? '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try { return String(JSON.parse(trimmed)); } catch (err) { void err; }
+  }
+  return trimmed.replace(/^"|"$/g, '');
+}
+
+function normalizeListField(rawList, normalizeItem = (x) => x) {
+  const arr = Array.isArray(rawList)
+    ? rawList
+    : (typeof rawList === 'string' ? rawList.split(',') : []);
+  return arr
+    .map((item) => normalizeItem(String(item || '').trim()))
+    .filter((item) => Boolean(item) && item !== '-')
+    .slice(0, 4);
+}
 
 export function normalizeTargetKind(kind) {
   const k = String(kind || 'node').trim().toLowerCase();
   return Object.prototype.hasOwnProperty.call(KIND_LABELS, k) ? k : 'node';
 }
 
-export function buildElementQuotePayload(elem = {}) {
-  const kind = normalizeTargetKind(elem.kind);
-  const id = String(elem.id || 'unknown').trim().replace(/[\r\n|]/g, '_');
-  const name = String(elem.label || elem.title || id).trim().slice(0, 48);
-  const board = elem.board === 'flow' ? '工作流' : '项目看板';
-  const packOrRepo = String(elem.contextName || board).trim().slice(0, 40);
-  const scopes = Array.isArray(elem.scopePaths)
-    ? elem.scopePaths.map((p) => normalizeSlashes(p)).filter(Boolean).slice(0, 4)
-    : [];
-  const contracts = Array.isArray(elem.contractIds)
-    ? elem.contractIds.map((c) => String(c).trim()).filter(Boolean).slice(0, 4)
-    : [];
-  const extraMeta = String(elem.extra || '').trim().slice(0, 80);
+export function normalizeUiOwner(rawUiOwner) {
+  const clean = normalizeSlashes(String(rawUiOwner ?? '').trim())
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/^\/+/, '');
+  if (!clean || clean === '-' || clean.includes('..') || /[\r\n|[\]]/.test(clean)) {
+    return null;
+  }
+  return clean;
+}
 
-  const dgUri = `dg://${kind}/${id}`;
+export function deriveSliceCmdFromUiOwner(rawUiOwner) {
+  const uiOwner = normalizeUiOwner(rawUiOwner);
+  if (!uiOwner) return null;
+  if (uiOwner === 'runner/atlas' || uiOwner.startsWith('runner/atlas/')) {
+    return `node runner/donegate.mjs slice atlas-workbench --focus ${uiOwner}`;
+  }
+  if (uiOwner === 'runner/dsh' || uiOwner.startsWith('runner/dsh/')) {
+    return `node runner/donegate.mjs slice dsh-orchestrator --focus ${uiOwner}`;
+  }
+  return null;
+}
+
+export function formatQuoteCapsule(elem = {}) {
+  const kind = normalizeTargetKind(elem.kind);
+  const id = String(elem.id || 'unknown').trim().replace(/[\r\n|[\]]/g, '_');
+  const name = String(elem.name ?? elem.label ?? elem.title ?? id).trim().slice(0, 48);
+  const board = elem.board === 'flow' ? 'flow' : 'kanban';
+  const contracts = normalizeListField(elem.contracts ?? elem.contractIds);
+  const scopes = normalizeListField(elem.scopes ?? elem.scopePaths, (p) => normalizeSlashes(p));
+  const uiOwner = normalizeUiOwner(elem.uiOwner);
+  const explicitSliceCmd = String(elem.sliceCmd ?? '').trim().replace(/[\r\n|[\]]/g, ' ');
+  const sliceCmd = (explicitSliceCmd && explicitSliceCmd !== '-')
+    ? explicitSliceCmd
+    : deriveSliceCmdFromUiOwner(uiOwner);
+  const extraMeta = String(elem.note ?? elem.extra ?? '').trim().slice(0, 80);
+  const dgUri = String(elem.uri || `dg://${kind}/${id}`).trim();
+
   const metaParts = [
     `uri=${dgUri}`,
     `kind=${kind}`,
-    `board=${elem.board === 'flow' ? 'flow' : 'kanban'}`,
+    `board=${board}`,
     `name=${JSON.stringify(name)}`
   ];
   if (contracts.length > 0) metaParts.push(`contracts=${contracts.join(',')}`);
   if (scopes.length > 0) metaParts.push(`scopes=${scopes.join(',')}`);
+  if (uiOwner) metaParts.push(`uiOwner=${uiOwner}`);
+  if (sliceCmd) metaParts.push(`sliceCmd=${JSON.stringify(sliceCmd)}`);
   if (extraMeta) metaParts.push(`note=${JSON.stringify(extraMeta)}`);
 
-  const hiddenModelText = `[DG-TARGET ${metaParts.join(' | ')}]`;
+  return `[DG-TARGET ${metaParts.join(' | ')}]`;
+}
+
+export function parseQuoteCapsule(rawCapsule) {
+  const clean = normalizeLf(String(rawCapsule ?? ''));
+  const m = clean.match(/\[DG-TARGET\s+([^\]]+)\]/);
+  if (!m) return null;
+
+  const segs = m[1].split('|').map((s) => s.trim());
+  const item = {
+    uri: null,
+    kind: 'node',
+    id: null,
+    board: 'kanban',
+    name: '',
+    label: '',
+    contracts: [],
+    scopes: [],
+    uiOwner: null,
+    sliceCmd: null,
+    note: ''
+  };
+  let hasExplicitId = false;
+
+  for (const seg of segs) {
+    const eq = seg.indexOf('=');
+    if (eq <= 0) continue;
+    const k = seg.slice(0, eq).trim();
+    const v = seg.slice(eq + 1).trim();
+    if (k === 'uri') item.uri = unquoteCapsuleVal(v);
+    else if (k === 'kind') item.kind = normalizeTargetKind(unquoteCapsuleVal(v));
+    else if (k === 'id') {
+      const parsedId = unquoteCapsuleVal(v);
+      if (parsedId) { item.id = parsedId; hasExplicitId = true; }
+    } else if (k === 'board') item.board = unquoteCapsuleVal(v) === 'flow' ? 'flow' : 'kanban';
+    else if (k === 'name') {
+      item.name = unquoteCapsuleVal(v);
+      if (!item.label) item.label = item.name;
+    } else if (k === 'label') {
+      item.label = unquoteCapsuleVal(v);
+      if (!item.name) item.name = item.label;
+    } else if (k === 'contracts') item.contracts = normalizeListField(unquoteCapsuleVal(v));
+    else if (k === 'scopes') item.scopes = normalizeListField(unquoteCapsuleVal(v), (p) => normalizeSlashes(p));
+    else if (k === 'uiOwner') item.uiOwner = normalizeUiOwner(unquoteCapsuleVal(v));
+    else if (k === 'sliceCmd') {
+      const cmd = unquoteCapsuleVal(v);
+      item.sliceCmd = (cmd && cmd !== '-') ? cmd : null;
+    } else if (k === 'note') item.note = unquoteCapsuleVal(v);
+  }
+
+  if (!item.uri && item.id) item.uri = `dg://${item.kind}/${item.id}`;
+  if (!item.uri || !item.uri.startsWith('dg://')) return null;
+
+  if (!hasExplicitId) {
+    const parts = item.uri.slice(5).split('/');
+    item.id = decodeURIComponent(parts.slice(1).join('/')) || item.id;
+  }
+  if (!item.sliceCmd && item.uiOwner) {
+    item.sliceCmd = deriveSliceCmdFromUiOwner(item.uiOwner);
+  }
+  return item;
+}
+
+export function buildElementQuotePayload(elem = {}) {
+  const kind = normalizeTargetKind(elem.kind);
+  const id = String(elem.id || 'unknown').trim().replace(/[\r\n|[\]]/g, '_');
+  const name = String(elem.label || elem.title || elem.name || id).trim().slice(0, 48);
+  const board = elem.board === 'flow' ? '工作流' : '项目看板';
+  const packOrRepo = String(elem.contextName || board).trim().slice(0, 40);
+  const scopes = normalizeListField(elem.scopePaths ?? elem.scopes, (p) => normalizeSlashes(p));
+  const contracts = normalizeListField(elem.contractIds ?? elem.contracts);
+  const uiOwner = normalizeUiOwner(elem.uiOwner);
+  const sliceCmd = (elem.sliceCmd && String(elem.sliceCmd).trim() !== '-')
+    ? String(elem.sliceCmd).trim()
+    : deriveSliceCmdFromUiOwner(uiOwner);
+  const dgUri = `dg://${kind}/${id}`;
+  const hiddenModelText = formatQuoteCapsule({
+    uri: dgUri,
+    kind,
+    id,
+    board: elem.board === 'flow' ? 'flow' : 'kanban',
+    name,
+    contracts,
+    scopes,
+    uiOwner,
+    sliceCmd,
+    note: elem.extra ?? elem.note
+  });
+
   const kindBadge = `[${KIND_LABELS[kind]}]`;
   const detailLines = [`坐标：${dgUri}`];
   if (contracts.length > 0) detailLines.push(`契约：${contracts.join('、')}`);
   if (scopes.length > 0) detailLines.push(`目录：${scopes.join(', ')}`);
+  if (uiOwner) detailLines.push(`UI归属：${uiOwner}`);
 
   return {
     uri: dgUri,
     kind,
     id,
+    uiOwner,
+    sliceCmd,
     text: hiddenModelText,
     summary: {
       label: kindBadge,
@@ -68,30 +209,12 @@ export function parseQuotedTargetsFromMessage(rawMessage) {
   const clean = normalizeLf(rawMessage);
   const targets = [];
   const seen = new Set();
-  const re = /\[DG-TARGET\s+([^\]]+)\]/g;
+  const re = /\[DG-TARGET\s+[^\]]+\]/g;
   for (const m of clean.matchAll(re)) {
-    const segs = m[1].split('|').map((s) => s.trim());
-    const item = { uri: null, kind: 'node', id: null, board: 'kanban', name: '', contracts: [], scopes: [] };
-    for (const seg of segs) {
-      const eq = seg.indexOf('=');
-      if (eq <= 0) continue;
-      const k = seg.slice(0, eq).trim();
-      const v = seg.slice(eq + 1).trim();
-      if (k === 'uri') item.uri = v;
-      else if (k === 'kind') item.kind = normalizeTargetKind(v);
-      else if (k === 'board') item.board = v === 'flow' ? 'flow' : 'kanban';
-      else if (k === 'name') {
-        try { item.name = JSON.parse(v); } catch (err) { void err; item.name = v.replace(/^"|"$/g, ''); }
-      } else if (k === 'contracts') item.contracts = v.split(',').map((x) => x.trim()).filter(Boolean);
-      else if (k === 'scopes') item.scopes = v.split(',').map((x) => x.trim()).filter(Boolean);
-    }
-    if (item.uri && item.uri.startsWith('dg://')) {
-      const parts = item.uri.slice(5).split('/');
-      item.id = parts.slice(1).join('/') || item.id;
-      if (!seen.has(item.uri)) {
-        seen.add(item.uri);
-        targets.push(item);
-      }
+    const item = parseQuoteCapsule(m[0]);
+    if (item && item.uri && !seen.has(item.uri)) {
+      seen.add(item.uri);
+      targets.push(item);
     }
   }
   return targets;

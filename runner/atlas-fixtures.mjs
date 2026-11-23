@@ -1,15 +1,18 @@
-import { runAllDshChecks } from './dsh-fixtures.mjs';
-// 全栈项目活体全景工作台（工作流 + 项目看板 + 无界画布 + 100步撤销重做 + 全元素点选 + 实时服务）端到端自检夹具
+// 全栈项目活体全景工作台（工作流 + 项目看板 + 无界画布 + uiOwner 全链路路由 + 单卡微门禁解耦）端到端自检夹具
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { createChecks } from '../skill/assert.mjs';
 import { dispatchCommand } from './donegate.mjs';
-import { buildProjectAtlas } from './atlas/assemble-atlas.mjs';
-import { startAtlasHttpServer } from './atlas/serve-atlas.mjs';
+import { ATLAS_SUBPACKS, buildProjectAtlas, startAtlasHttpServer, WB_CONCAT_MANIFEST } from './atlas/index.mjs';
+import { buildWbDshBridge } from './atlas/wb-dsh-bridge.mjs';
+import { buildWbDshShell } from './atlas/wb-dsh-shell.mjs';
+import { buildWbUiBoardScript } from './atlas/wb-uiboard.mjs';
+import { parseQuoteCapsule } from './dsh/contract.mjs';
 import { exportDashboardHtml } from './core/index.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -212,6 +215,151 @@ try {
   c.check('左栏快捷导航顺序为「项目 → 工作流 → 节点」',
     railAssetsIdx > 0 && railWfIdx > railAssetsIdx && railNodesIdx > railWfIdx);
 
+  // 3b. 核验五大功能子包 ATLAS_SUBPACKS、WB_CONCAT_MANIFEST 顺序同步与全区域 data-ui-owner / DG-TARGET 拾取闭环
+  const subpackKeys = Object.keys(ATLAS_SUBPACKS);
+  const allSubpackFiles = subpackKeys.flatMap((k) => ATLAS_SUBPACKS[k]);
+  const diskAtlasFiles = readdirSync(join(REPO, 'runner/atlas'))
+    .filter((f) => f.endsWith('.mjs'))
+    .map((f) => `runner/atlas/${f}`)
+    .sort();
+  const renderHtmlSrc = readFileSync(join(REPO, 'runner/atlas/render-html.mjs'), 'utf8');
+  const manifestPaths = WB_CONCAT_MANIFEST.map((x) => x.path);
+  let lastImportPos = -1;
+  const manifestOrderMatchesRender = manifestPaths.every((relPath) => {
+    const baseFile = `./${relPath.slice('runner/atlas/'.length)}`;
+    const pos = renderHtmlSrc.indexOf(baseFile);
+    const ok = pos > lastImportPos && ATLAS_SUBPACKS[WB_CONCAT_MANIFEST.find((m) => m.path === relPath).subpack]?.includes(relPath);
+    lastImportPos = pos;
+    return ok;
+  });
+  c.check('ATLAS_SUBPACKS 五大功能子包零遗漏覆盖全部模块，且 WB_CONCAT_MANIFEST 与 render-html.mjs 拼装顺序一致',
+    JSON.stringify(subpackKeys) === JSON.stringify(['@scanner', '@canvas', '@uiboard', '@workflow', '@dsh-dock']) &&
+    JSON.stringify([...allSubpackFiles].sort()) === JSON.stringify(diskAtlasFiles) &&
+    new Set(allSubpackFiles).size === allSubpackFiles.length &&
+    WB_CONCAT_MANIFEST.length === 24 &&
+    manifestOrderMatchesRender);
+
+  const requiredOwnerSnippets = [
+    '<header data-ui-owner="runner/atlas/ui-shell.mjs"',
+    'id="left-icon-rail" data-ui-owner="runner/atlas/ui-shell.mjs"',
+    'id="left-drawer" data-ui-owner="runner/atlas/wb-layout-tidy.mjs"',
+    'id="cards-layer" data-ui-owner="runner/atlas/wb-render-cards.mjs"',
+    'data-ui-owner="runner/atlas/wb-render-cards.mjs"',
+    'id="uiboard-stage" data-ui-owner="runner/atlas/wb-uiboard.mjs"',
+    'class="dg-jit-modal" data-ui-owner="runner/atlas/wb-jit-workflow.mjs"',
+    'id="ctx-root-menu" data-ui-owner="runner/atlas/wb-menus-viewport.mjs"',
+    'id="atlas-overview-modal" data-ui-owner="runner/atlas/ui-views.mjs"',
+    'id="dsh-input-dock" data-ui-owner="runner/atlas/wb-dsh-shell.mjs"'
+  ];
+  c.check('工作台 HTML 顶栏、左栏、画布节点卡、UI 看板、JIT 弹窗、菜单、子视图与抽屉均含精准 data-ui-owner 标注',
+    requiredOwnerSnippets.every((s) => html.includes(s)));
+
+  // 在隔离 VM 中实跑 wb-dsh-bridge + wb-uiboard + wb-dsh-shell 拾取器，验证点击外壳/左栏/节点卡/弹窗/UI看板均注入准确 uiOwner 与 sliceCmd
+  {
+    const docListeners = {};
+    const winListeners = {};
+    const makeDomEl = (opts = {}) => {
+      const attrs = opts.attrs || {};
+      const el = {
+        id: opts.id || '',
+        tagName: opts.tag || 'DIV',
+        textContent: opts.text || '',
+        className: '',
+        style: {},
+        parentElement: opts.parent || null,
+        classList: { add() {}, remove() {}, toggle() {} },
+        setAttribute(k, v) { attrs[k] = String(v); },
+        getAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; },
+        hasAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k); },
+        appendChild() {},
+        focus() {},
+        addEventListener() {},
+        querySelectorAll: () => [],
+        closest(sel) {
+          let cur = el;
+          while (cur) {
+            if (sel === '[data-ui-owner]' && cur.getAttribute('data-ui-owner')) return cur;
+            if (sel === 'button, select' && (cur.tagName === 'BUTTON' || cur.tagName === 'SELECT')) return cur;
+            if (sel === '[data-switch-pack]' && cur.getAttribute('data-switch-pack')) return cur;
+            if (sel === '[data-card-id]' && cur.getAttribute('data-card-id')) return cur;
+            cur = cur.parentElement;
+          }
+          return null;
+        }
+      };
+      return el;
+    };
+    const bodyEl = makeDomEl({ tag: 'BODY' });
+    const vmWin = {
+      location: { search: '', protocol: 'file:' },
+      innerWidth: 1280,
+      addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); }
+    };
+    const vmDoc = {
+      body: bodyEl,
+      documentElement: makeDomEl({ tag: 'HTML' }),
+      getElementById: () => null,
+      querySelector: () => null,
+      createElement: (t) => makeDomEl({ tag: String(t).toUpperCase() }),
+      addEventListener(ev, fn) { (docListeners[ev] = docListeners[ev] || []).push(fn); }
+    };
+    const vmCtx = vm.createContext({
+      window: vmWin, location: vmWin.location, document: vmDoc, URLSearchParams, Map, Set, Date, Math, Object, String, Number, Array, Boolean, JSON,
+      encodeURIComponent, decodeURIComponent, setTimeout: () => 0, clearTimeout() {}, requestAnimationFrame() {},
+      esc: (s) => String(s ?? ''), showToast() {}, renderAll() {}, renderLeftDrawer() {}, fitCanvas() {},
+      closeCascadingMenus() {}, applyThemeClasses() {}, applyAllControlStyleOverrides() {},
+      state: { page: 'sandbox', activePackId: 'pack-web', viewingRepoId: 'host-workspace', selectedNodeIds: new Set(), controlStyleOverrides: {}, panX: 0, panY: 0, scale: 1 },
+      WORKFLOW_PACKS: { 'pack-web': { id: 'pack-web', name: '现代前端工作流', nodes: [] } },
+      REPO_SANDBOXES: { 'host-workspace': { id: 'host-workspace', name: '商城主仓', isHost: true, nodes: [webNode] } },
+      ATLAS: atlas,
+      getActiveNodesList: () => [webNode],
+      getActiveGroupsList: () => [],
+      getSelectionInfo: () => ({ kind: 'single', node: webNode }),
+      resolveNodeFolders: (nd) => (nd.scopePaths || []).map((d) => ({ dir: d, file: d, note: '' }))
+    });
+    Object.assign(vmCtx, vmWin); vmCtx.window = vmCtx;
+    vm.runInContext([buildWbDshBridge(), buildWbUiBoardScript(), buildWbDshShell(), 'window.__dshRuntime = dshRuntime;'].join('\n'), vmCtx);
+
+    const fireAltDown = (target) => {
+      const ev = { target, altKey: true, button: 0, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} };
+      for (const fn of (docListeners.pointerdown || [])) fn(ev);
+    };
+    const headerDom = makeDomEl({ tag: 'HEADER', attrs: { 'data-ui-owner': 'runner/atlas/ui-shell.mjs' }, parent: bodyEl });
+    const headerBtn = makeDomEl({ tag: 'BUTTON', id: 'btn-autopilot', text: '挂机长跑', parent: headerDom });
+    const drawerDom = makeDomEl({ tag: 'ASIDE', id: 'left-drawer', attrs: { 'data-ui-owner': 'runner/atlas/wb-layout-tidy.mjs' }, parent: bodyEl });
+    const wfRowEl = makeDomEl({ tag: 'DIV', text: '现代前端工作流', attrs: { 'data-switch-pack': 'pack-web' }, parent: drawerDom });
+    const cardDom = makeDomEl({ tag: 'ARTICLE', attrs: { 'data-card-id': webNode.id, 'data-ui-owner': 'runner/atlas/wb-render-cards.mjs' }, parent: bodyEl });
+    const jitBtn = makeDomEl({ tag: 'BUTTON', text: '+ gitleaks', attrs: { 'data-jit-add-tpl': 'tpl-adp-gitleaks' }, parent: bodyEl });
+
+    fireAltDown(headerBtn);
+    fireAltDown(wfRowEl);
+    fireAltDown(cardDom);
+    fireAltDown(jitBtn);
+    for (const fn of (winListeners.message || [])) {
+      await fn({
+        data: {
+          source: 'dg-ui-bridge',
+          type: 'dg-ui:element-selected',
+          payload: { tag: 'button', label: '立即付款', sourceFile: 'apps/web/PayBtn.tsx', sourceLine: 19, actionId: 'act-pay', uiOwner: 'runner/atlas/wb-uiboard.mjs' }
+        }
+      });
+    }
+
+    const parsedQuotes = vmCtx.__dshRuntime.quotes.map((q) => parseQuoteCapsule(q.text));
+    c.check('wb-dsh-shell 与 ui-board-bridge 拾取全区域元素 100% 注入 uiOwner/sliceCmd，且画布契约节点卡同时保留业务域 scopes',
+      parsedQuotes.length === 5 &&
+      parsedQuotes[0]?.uiOwner === 'runner/atlas/ui-shell.mjs' &&
+      parsedQuotes[0]?.sliceCmd === 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/ui-shell.mjs' &&
+      parsedQuotes[1]?.uiOwner === 'runner/atlas/wb-layout-tidy.mjs' &&
+      parsedQuotes[2]?.uiOwner === 'runner/atlas/wb-render-cards.mjs' &&
+      parsedQuotes[2]?.contracts.includes('shop-main') &&
+      parsedQuotes[2]?.scopes.includes('apps/web/') &&
+      parsedQuotes[3]?.uiOwner === 'runner/atlas/wb-jit-workflow.mjs' &&
+      parsedQuotes[4]?.uiOwner === 'runner/atlas/wb-uiboard.mjs' &&
+      parsedQuotes[4]?.scopes.includes('apps/web/PayBtn.tsx') &&
+      parsedQuotes[4]?.sliceCmd === 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-uiboard.mjs');
+  }
+
   // 4. 真测后台实时服务：刷新重扫 + 负坐标落盘 + 目录解析 + 工作流依赖巡检与隔离补齐路由
   const srvInfo = await startAtlasHttpServer(proj, { port: 0, idleExitSec: 30 });
   try {
@@ -337,7 +485,7 @@ try {
       c.check('UI 看板三阶段闭环：同源代理注入桥（防 SSRF）、多套美学锁 MASTER.md、JSON 拖拽加块、Agent 自测与假动作转真后端全通',
         Boolean(
           uibSt.ok && (uibSt.uiboard.allProposals || uibSt.uiboard.proposals).length >= 3 &&
-          bridgeTxt.includes('dg-ui:element-selected') && bridgeTxt.includes('dg-ui:apply-tokens') && !bridgeTxt.includes('dg-ui:set-mode') &&
+          bridgeTxt.includes('dg-ui:element-selected') && bridgeTxt.includes('resolveUiOwner') && bridgeTxt.includes('dg-ui:apply-tokens') && !bridgeTxt.includes('dg-ui:set-mode') &&
           proxyHtml.includes('PayBtn.tsx:19:5') && proxyHtml.includes('/donegate/api/uiboard/bridge.js') &&
           ssrfResp.status === 400 &&
           lockRes.ok && existsSync(join(proj, 'design-system/MASTER.md')) &&
@@ -377,7 +525,17 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
-await runAllDshChecks();
-c.check('DSH Web 创造模式插件包、Windows 路径与插槽 VM 自检全过', true);
+let ranCrossCardDshSuite = false;
+if (process.env.DONEGATE_MICRO_GATE !== '1') {
+  const { runAllDshChecks } = await import('./dsh-fixtures.mjs');
+  await runAllDshChecks();
+  ranCrossCardDshSuite = true;
+}
+c.check(
+  process.env.DONEGATE_MICRO_GATE === '1'
+    ? '单卡微门禁模式 (DONEGATE_MICRO_GATE=1) 已解耦跳过跨卡 runAllDshChecks()'
+    : 'DSH Web 创造模式插件包、Windows 路径与插槽 VM 自检全过',
+  ranCrossCardDshSuite === (process.env.DONEGATE_MICRO_GATE !== '1')
+);
 c.summary('Project Atlas 全栈工作台端到端自检');
 process.exit(c.bad > 0 ? 1 : 0);

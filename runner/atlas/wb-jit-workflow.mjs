@@ -115,7 +115,7 @@ window.renderSandboxWorkflowBadgeHtml = function renderSandboxWorkflowBadgeHtml(
   const rightPart = (!ro && isForked)
     ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有工作流一键另存为预置工作流">💾 存工作流</button>')
     : '<span class="text-[10px] shrink-0" style="color:var(--text-muted);" data-tip="底座护栏只增不减锁已生效">🔒底座</span>';
-  return '<div class="dg-sb-wf-bar" data-stop-drag="1">'
+  return '<div class="dg-sb-wf-bar" data-ui-owner="runner/atlas/wb-jit-workflow.mjs" data-stop-drag="1">'
     + '<button type="button" class="dg-sb-wf-pill ' + (isForked ? 'is-forked' : '') + '" data-jit-open="' + esc(node.id) + '" data-stop-drag="1" data-tip="' + esc(tip) + '">'
     + '<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:' + dotColor + ';"></span>'
     + '<span class="truncate">' + esc(label) + '</span>'
@@ -387,6 +387,7 @@ function renderJitWorkflowModal() {
     rootEl = document.createElement('div');
     rootEl.id = 'dg-jit-modal-root';
     rootEl.className = 'dg-jit-backdrop';
+    rootEl.setAttribute('data-ui-owner', 'runner/atlas/wb-jit-workflow.mjs');
     document.body.appendChild(rootEl);
   }
   const wf = window.resolveClientComponentWorkflow(node);
@@ -438,7 +439,7 @@ function renderJitWorkflowModal() {
     ? ('<button type="button" class="dg-jit-btn" data-jit-jump-workshop="' + esc(wf.baseMacroId) + '">去「工作流」页查看 ↗</button>')
     : '';
 
-  rootEl.innerHTML = '<div class="dg-jit-modal" data-stop-drag="1">'
+  rootEl.innerHTML = '<div class="dg-jit-modal" data-ui-owner="runner/atlas/wb-jit-workflow.mjs" data-stop-drag="1">'
     + '<div class="flex items-start justify-between gap-3">'
     + '<div>'
     + '<div class="text-sm font-semibold">节点工作流装配与即时派生 · 「' + esc(node.title) + '」</div>'

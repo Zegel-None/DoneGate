@@ -1,4 +1,84 @@
 // DSH 全屏沉浸式外壳装配、Alt+单击拾取监听、卡包抽卡式零缝隙主对话复刻抽屉与实时明暗主题同步（零外网依赖）
+const WB_UI_OWNER_RESOLVER_SCRIPT = String.raw`
+const DG_UI_ACTION_OWNER_MAP = {
+  "export-workflow-json": "runner/atlas/ui-shell.mjs",
+  "import-workflow-json": "runner/atlas/ui-shell.mjs",
+  "approve-autopilot-gate": "runner/atlas/ui-shell.mjs",
+  "close-import-project-modal": "runner/atlas/ui-shell.mjs",
+  "confirm-import-project": "runner/atlas/ui-shell.mjs",
+  "toggle-wf-grp": "runner/atlas/wb-layout-tidy.mjs",
+  "toggle-node-cat": "runner/atlas/wb-layout-tidy.mjs",
+  "provision-pack-deps": "runner/atlas/wb-layout-tidy.mjs",
+  "focus-wf-group": "runner/atlas/wb-layout-tidy.mjs",
+  "create-host-project": "runner/atlas/wb-layout-tidy.mjs",
+  "open-import-project-modal": "runner/atlas/wb-layout-tidy.mjs",
+  "toggle-proj-import-dd": "runner/atlas/wb-layout-tidy.mjs",
+  "import-repo-as-node": "runner/atlas/wb-layout-tidy.mjs",
+  "enter-subgraph": "runner/atlas/wb-render-cards.mjs",
+  "toggle-gh-star": "runner/atlas/wb-render-cards.mjs",
+  "inspect-version": "runner/atlas/wb-render-cards.mjs",
+  "provision-node-dep": "runner/atlas/wb-render-cards.mjs",
+  "preview-node-obs": "runner/atlas/wb-render-cards.mjs",
+  "toggle-slot": "runner/atlas/wb-render-cards.mjs",
+  "restore-card-height": "runner/atlas/wb-render-cards.mjs",
+  "drill-subrepo": "runner/atlas/wb-render-cards.mjs",
+  "toggle-sb-expand": "runner/atlas/wb-render-cards.mjs",
+  "group-to-subgraph": "runner/atlas/wb-render-cards.mjs",
+  "start-edit-group-title": "runner/atlas/wb-render-cards.mjs",
+  "loop-dec": "runner/atlas/wb-render-wires.mjs",
+  "loop-inc": "runner/atlas/wb-render-wires.mjs",
+  "select-link": "runner/atlas/wb-render-wires.mjs"
+};
+const DG_UI_CTRL_OWNER_MAP = {
+  "id:btn-undo": "runner/atlas/wb-history.mjs",
+  "id:btn-redo": "runner/atlas/wb-history.mjs",
+  "id:btn-auto-tidy": "runner/atlas/wb-layout-tidy.mjs",
+  "id:btn-tidy-mode-cycle": "runner/atlas/wb-layout-tidy.mjs",
+  "id:btn-atlas-overview": "runner/atlas/ui-views.mjs",
+  "id:btn-zoom-in": "runner/atlas/wb-menus-viewport.mjs",
+  "id:btn-zoom-out": "runner/atlas/wb-menus-viewport.mjs",
+  "id:btn-zoom-pct": "runner/atlas/wb-menus-viewport.mjs",
+  "id:btn-fit": "runner/atlas/wb-menus-viewport.mjs",
+  "uib-theme-select": "runner/atlas/wb-uiboard.mjs"
+};
+function resolveUiOwner(el, meta) {
+  if (el && typeof el.closest === "function") {
+    const owned = el.closest("[data-ui-owner]");
+    const direct = owned && owned.getAttribute ? owned.getAttribute("data-ui-owner") : "";
+    if (direct) return String(direct).replace(/\\/g, "/");
+  }
+  let cur = el;
+  while (cur && (typeof document === "undefined" || cur !== document.body)) {
+    const attr = cur.getAttribute ? cur.getAttribute("data-ui-owner") : "";
+    if (attr) return String(attr).replace(/\\/g, "/");
+    cur = cur.parentElement;
+  }
+  const getAttr = (k) => (el && el.getAttribute ? (el.getAttribute(k) || "") : "");
+  if (getAttr("data-uib-act") || getAttr("data-uib-vp") || (meta && meta.kind === "ui")) return "runner/atlas/wb-uiboard.mjs";
+  if (getAttr("data-jit-open") || getAttr("data-jit-add-tpl") || getAttr("data-jit-rm-tpl") || getAttr("data-jit-promote-btn") || getAttr("data-jit-approve-floor") || getAttr("data-jit-quick-promote")) return "runner/atlas/wb-jit-workflow.mjs";
+  const ctrlId = (meta && meta.controlRef) || getAttr("data-ctrl-id") || (el && el.id ? ("id:" + el.id) : "");
+  if (ctrlId && DG_UI_CTRL_OWNER_MAP[ctrlId]) return DG_UI_CTRL_OWNER_MAP[ctrlId];
+  if (ctrlId.startsWith("star:") || ctrlId.startsWith("tb:")) return "runner/atlas/wb-render-cards.mjs";
+  const act = getAttr("data-action");
+  if (act && DG_UI_ACTION_OWNER_MAP[act]) return DG_UI_ACTION_OWNER_MAP[act];
+  if (el && typeof el.closest === "function") {
+    if (el.closest("#uiboard-stage")) return "runner/atlas/wb-uiboard.mjs";
+    if (el.closest("#dg-jit-modal-root, .dg-jit-modal, .dg-sb-wf-bar")) return "runner/atlas/wb-jit-workflow.mjs";
+    if (el.closest("#atlas-overview-modal")) return "runner/atlas/ui-views.mjs";
+    if (el.closest(".node-card, .group-frame, .selection-toolbox")) return "runner/atlas/wb-render-cards.mjs";
+    if (el.closest("#ctx-root-menu, #ctx-sub-menu, #folder-modal, #drilldown-bar")) return "runner/atlas/wb-menus-viewport.mjs";
+    if (el.closest("#left-drawer")) return "runner/atlas/wb-layout-tidy.mjs";
+    if (el.closest("#right-sidebar")) return "runner/atlas/wb-subagent.mjs";
+    if (el.closest("#dsh-composer-shell, #dsh-input-dock, #dsh-right-preview")) return "runner/atlas/wb-dsh-shell.mjs";
+  }
+  const kind = meta && meta.kind;
+  if (kind === "card" || kind === "multi" || kind === "group") return "runner/atlas/wb-render-cards.mjs";
+  if (kind === "wire") return "runner/atlas/wb-render-wires.mjs";
+  if (kind === "workflow" || kind === "project") return "runner/atlas/wb-layout-tidy.mjs";
+  return "runner/atlas/ui-shell.mjs";
+}
+if (typeof window !== "undefined") window.resolveUiOwner = resolveUiOwner;
+`;
 const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
     document.body.classList.add(IS_DSH_EMBED ? 'is-dsh-embed' : 'has-dsh-dock');
     state.rightOpen = false;
@@ -21,21 +101,24 @@ const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
     if (world && !document.getElementById('dsh-anchors-layer')) {
       const ancLayer = document.createElement('div');
       ancLayer.id = 'dsh-anchors-layer';
+      ancLayer.setAttribute('data-ui-owner', 'runner/atlas/wb-dsh-bridge.mjs');
       world.appendChild(ancLayer);
     }
     const mainRow = document.getElementById('canvas-stage') ? document.getElementById('canvas-stage').parentElement : null;
     if (!IS_DSH_EMBED && mainRow && !document.getElementById('dsh-right-preview')) {
       const rp = document.createElement('aside');
       rp.id = 'dsh-right-preview';
+      rp.setAttribute('data-ui-owner', 'runner/atlas/wb-dsh-shell.mjs');
       rp.className = 'selectable-text';
       mainRow.appendChild(rp);
     }
     if (!IS_DSH_EMBED && !document.getElementById('dsh-composer-shell')) {
       const shell = document.createElement('footer');
       shell.id = 'dsh-composer-shell';
+      shell.setAttribute('data-ui-owner', 'runner/atlas/wb-dsh-shell.mjs');
       shell.innerHTML = [
-        '<div id="dsh-input-dock"></div>',
-        '<div id="dsh-standalone-card">',
+        '<div id="dsh-input-dock" data-ui-owner="runner/atlas/wb-dsh-shell.mjs"></div>',
+        '<div id="dsh-standalone-card" data-ui-owner="runner/atlas/wb-dsh-shell.mjs">',
         '  <div id="dsh-quote-row" class="flex flex-wrap items-center gap-1.5"></div>',
         '  <div class="flex items-center gap-2.5">',
         '    <input id="dsh-sim-input" type="text" placeholder="发消息或创建任务，/ 调用指令，@ 文件或对话" class="flex-1 min-w-0 bg-transparent text-[13.5px] outline-none" style="color:var(--text-main);">',
@@ -298,36 +381,36 @@ const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
         if (btn && !btn.hasAttribute('data-dsh-quote')) {
           const lbl = (btn.textContent || '').replace(/\s+/g, ' ').trim() || (btn.getAttribute('aria-label') || '').trim() || (btn.getAttribute('data-tip') || '').split(/[：·(]/)[0].trim() || '控件';
           const ckey = btn.getAttribute('data-ctrl-id') || (btn.id ? ('id:' + btn.id) : ('tb:' + (btn.getAttribute('data-tb-act') || lbl)));
-          q = buildDshQuoteTarget({ kind: 'button', id: ckey, title: lbl, controlRef: ckey, desc: '界面控件「' + lbl + '」' });
+          q = buildDshQuoteTarget({ kind: 'button', id: ckey, title: lbl, controlRef: ckey, el: btn, uiOwner: resolveUiOwner(btn, { kind: 'button', controlRef: ckey }), desc: '界面控件「' + lbl + '」' });
         } else if (wfRow) {
           const pid = wfRow.getAttribute('data-switch-pack');
           const pk = WORKFLOW_PACKS[pid];
           const safeId = String(pid || 'default').replace(/[^a-zA-Z0-9._-]/g, '_');
           const wfTitle = (pk && pk.name) || (wfRow.textContent || '').replace(/\s+/g, ' ').trim() || pid;
-          q = buildDshQuoteTarget({ kind: 'workflow', id: pid, title: wfTitle, scopes: ['workflows/.deps/' + safeId + '/'], desc: '工作流「' + wfTitle + '」' });
+          q = buildDshQuoteTarget({ kind: 'workflow', id: pid, title: wfTitle, scopes: ['workflows/.deps/' + safeId + '/'], el: wfRow, uiOwner: resolveUiOwner(wfRow, { kind: 'workflow' }), desc: '工作流「' + wfTitle + '」' });
         } else if (repoRow) {
           const rid = repoRow.getAttribute('data-view-repo');
           const rp = REPO_SANDBOXES[rid];
           const rpTitle = (rp && rp.name) || (repoRow.textContent || '').replace(/\s+/g, ' ').trim() || rid;
           const rpScopes = (rp && rp.targetDir) ? [rp.targetDir] : ((rp && rp.isHost) ? ['./'] : ['../' + rid + '/']);
-          q = buildDshQuoteTarget({ kind: 'project', id: rid, title: rpTitle, scopes: rpScopes, desc: '项目看板「' + rpTitle + '」' });
+          q = buildDshQuoteTarget({ kind: 'project', id: rid, title: rpTitle, scopes: rpScopes, el: repoRow, uiOwner: resolveUiOwner(repoRow, { kind: 'project' }), desc: '项目看板「' + rpTitle + '」' });
         } else if (loopPill || wireEl) {
           const lid = loopPill ? loopPill.getAttribute('data-loop-link') : (wireEl.getAttribute('data-link-id') || wireEl.getAttribute('data-sb-link'));
-          q = buildDshQuoteTarget({ kind: 'wire', id: lid, title: '连线 ' + lid, desc: '画布上下游连线' });
+          q = buildDshQuoteTarget({ kind: 'wire', id: lid, title: '连线 ' + lid, el: loopPill || wireEl, uiOwner: resolveUiOwner(loopPill || wireEl, { kind: 'wire' }), desc: '画布上下游连线' });
         } else if (cardEl) {
           const nid = cardEl.getAttribute('data-card-id');
           const nd = getActiveNodesList().find((n) => n.id === nid);
           if (nd) {
             const meta = resolveNodeScopeMeta(nd);
-            q = buildDshQuoteTarget({ kind: 'card', id: nd.id, title: nd.title, isBlank: Boolean(nd.isBlank), contracts: meta.contracts, scopes: meta.scopes, firstFile: meta.firstFile });
+            q = buildDshQuoteTarget({ kind: 'card', id: nd.id, title: nd.title, isBlank: Boolean(nd.isBlank), contracts: meta.contracts, scopes: meta.scopes, firstFile: meta.firstFile, el: cardEl, uiOwner: resolveUiOwner(cardEl, { kind: 'card' }) });
           }
         } else if (grpEl) {
           const gid = grpEl.getAttribute('data-drag-group') || grpEl.getAttribute('data-group-id');
           const g = getActiveGroupsList().find((x) => x.id === gid);
-          if (g) q = buildDshQuoteTarget({ kind: 'group', id: g.id, title: g.title });
+          if (g) q = buildDshQuoteTarget({ kind: 'group', id: g.id, title: g.title, el: grpEl, uiOwner: resolveUiOwner(grpEl, { kind: 'group' }) });
         } else if (txt) {
           const k = txt.getAttribute('data-sel-text');
-          q = buildDshQuoteTarget({ kind: 'text', id: k, title: (txt.textContent || '').trim(), textKey: k });
+          q = buildDshQuoteTarget({ kind: 'text', id: k, title: (txt.textContent || '').trim(), textKey: k, el: txt, uiOwner: resolveUiOwner(txt, { kind: 'text' }) });
         }
         if (q) {
           dshRuntime._suppressAltClickUntil = Date.now() + 800;
@@ -360,13 +443,13 @@ const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
         const mode = dctx.getAttribute('data-dsh-ctx');
         if (mode === 'quote-card') {
           const nd = getActiveNodesList().find((n) => n.id === dctx.getAttribute('data-node'));
-          if (nd) { const m = resolveNodeScopeMeta(nd); emitDshQuote(buildDshQuoteTarget({ kind: 'card', id: nd.id, title: nd.title, isBlank: Boolean(nd.isBlank), contracts: m.contracts, scopes: m.scopes, firstFile: m.firstFile })); }
+          if (nd) { const m = resolveNodeScopeMeta(nd); const cDom = document.getElementById('card-' + nd.id); emitDshQuote(buildDshQuoteTarget({ kind: 'card', id: nd.id, title: nd.title, isBlank: Boolean(nd.isBlank), contracts: m.contracts, scopes: m.scopes, firstFile: m.firstFile, el: cDom, uiOwner: resolveUiOwner(cDom, { kind: 'card' }) })); }
         } else if (mode === 'preview-card') {
           const nd = getActiveNodesList().find((n) => n.id === dctx.getAttribute('data-node'));
           if (nd) { const m = resolveNodeScopeMeta(nd); openRightFilePreview(m.firstFile, nd.title); }
         } else if (mode === 'quote-wire') {
           const lid = dctx.getAttribute('data-link');
-          emitDshQuote(buildDshQuoteTarget({ kind: 'wire', id: lid, title: '连线 ' + lid }));
+          emitDshQuote(buildDshQuoteTarget({ kind: 'wire', id: lid, title: '连线 ' + lid, uiOwner: 'runner/atlas/wb-render-wires.mjs' }));
         }
         closeCascadingMenus();
         return;
@@ -444,5 +527,5 @@ const WB_DSH_SHELL_FN = function initDoneGateDshIntegration() {
 };
 
 export function buildWbDshShell() {
-  return `(${WB_DSH_SHELL_FN.toString()})();`;
+  return [WB_UI_OWNER_RESOLVER_SCRIPT, `(${WB_DSH_SHELL_FN.toString()})();`].join('\n');
 }

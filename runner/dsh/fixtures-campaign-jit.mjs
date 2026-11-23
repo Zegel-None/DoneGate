@@ -290,6 +290,8 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   assert.equal(selMsgs.length, 1, '一次 Alt+单击必须且只能发送 1 次选中胶囊');
   assert.equal(selMsgs[0].payload.sourceFile, 'src/App.tsx');
   assert.equal(selMsgs[0].payload.sourceLine, 42);
+  assert.equal(selMsgs[0].payload.uiOwner, 'runner/atlas/wb-uiboard.mjs');
+  assert.equal(selMsgs[0].payload.sliceCmd, 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-uiboard.mjs');
 
   // 3) GitHub Star 204/401 本地仿真与外部陈旧项目导入路由
   const mockGh = http.createServer((req, res) => {

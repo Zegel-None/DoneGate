@@ -125,7 +125,7 @@ function renderUiBoardStageDom(forceReloadIframe) {
   const existingIframe = document.getElementById('uiboard-iframe');
   if (!existingIframe) {
     stageEl.innerHTML = [
-      '<div class="px-3 py-2 border-b flex items-center justify-between gap-2 flex-wrap shrink-0" style="background: var(--surface); border-color: var(--border-subtle);">',
+      '<div data-ui-owner="runner/atlas/wb-uiboard.mjs" class="px-3 py-2 border-b flex items-center justify-between gap-2 flex-wrap shrink-0" style="background: var(--surface); border-color: var(--border-subtle);">',
       '  <div class="flex items-center gap-2 flex-wrap">',
       '    <div class="seg-bar" role="group" aria-label="UI舞台源窗口切换">',
       '      <button type="button" id="uib-src-proto" class="seg-btn is-active" data-uib-act="use-prototype" data-tip="内置原型窗口（原生交互 + Alt+单击拾取）">内置原型</button>',
@@ -148,7 +148,7 @@ function renderUiBoardStageDom(forceReloadIframe) {
       '  </div>',
       '</div>',
       '<div class="flex-1 min-h-0 overflow-auto p-3 flex justify-center items-stretch" style="flex:1 1 0%;min-height:0;background:var(--bg-app);">',
-      '  <div id="uiboard-frame-wrap" class="h-full rounded-xl border overflow-hidden transition-all" style="display:flex;flex-direction:column;width:' + vpWidth + ';height:100%;min-height:0;background:var(--bg-app);border-color:var(--border-strong);box-shadow:var(--shadow-md);">',
+      '  <div id="uiboard-frame-wrap" data-ui-owner="runner/atlas/wb-uiboard.mjs" class="h-full rounded-xl border overflow-hidden transition-all" style="display:flex;flex-direction:column;width:' + vpWidth + ';height:100%;min-height:0;background:var(--bg-app);border-color:var(--border-strong);box-shadow:var(--shadow-md);">',
       '    <iframe id="uiboard-iframe" title="DoneGate UI Board Live Stage" class="w-full h-full border-0" style="flex:1 1 0%;width:100%;height:100%;border:0;display:block;"></iframe>',
       '  </div>',
       '</div>'
@@ -220,7 +220,7 @@ function renderUiBoardDrawer(headEl, bodyEl, footEl) {
   }).join('');
 
   bodyEl.innerHTML = [
-    '<div class="flex flex-col gap-1.5">',
+    '<div data-ui-owner="runner/atlas/wb-uiboard.mjs" class="flex flex-col gap-1.5">',
     '  <div class="flex items-center justify-between px-1"><span class="text-[11px] font-semibold" style="color:var(--text-secondary);">1. 美学方案实时选型</span><button type="button" data-uib-act="lock-theme" class="text-[10.5px] font-semibold hover:underline" style="color:var(--primary);">🔒 锁定当前方案</button></div>',
     '  <select id="uib-theme-select" data-ctrl-id="uib-theme-select" aria-label="美学方案分组选型" class="w-full px-2 py-1.5 rounded-lg border text-xs outline-none" style="background:var(--surface-soft);border-color:var(--border-strong);color:var(--text-main);">' + optgroupsHtml + '</select>',
     '  <div class="p-2 rounded-xl border flex flex-col gap-1" style="background:var(--surface-soft);border-color:var(--border-subtle);">',
@@ -228,14 +228,14 @@ function renderUiBoardDrawer(headEl, bodyEl, footEl) {
     '    <div class="text-[10.5px] leading-snug" style="color:var(--text-muted);">' + esc((curProp && curProp.summary) || '') + '</div>',
     '  </div>',
     '</div>',
-    '<div class="flex flex-col gap-1 pt-2 border-t" style="border-color:var(--border-subtle);">',
+    '<div data-ui-owner="runner/atlas/wb-uiboard.mjs" class="flex flex-col gap-1 pt-2 border-t" style="border-color:var(--border-subtle);">',
     '  <div class="flex items-center justify-between px-1"><span class="text-[11px] font-semibold" style="color:var(--text-secondary);">2. 假动作转真后端 (' + mockPending + ' 待接)</span>' +
       (mockPending > 0 ? '<button type="button" data-uib-act="wire-all" class="text-[10.5px] font-semibold hover:underline" style="color:var(--primary);">全部接通</button>' : '') + '</div>',
     wiringHtml,
     '</div>'
   ].join('\\n');
 
-  footEl.innerHTML = '<button type="button" data-uib-act="provision-ui-deps" class="ghost-btn w-full justify-center text-[11px]" data-tip="按需派发编队子代理将 measuredco/puck、lovinsp、react-grab、agent-browser 安装至 workflows/.deps/uiboard/">📦 按需补齐 UI 增强套件</button>';
+  footEl.innerHTML = '<button type="button" data-ui-owner="runner/atlas/wb-uiboard.mjs" data-uib-act="provision-ui-deps" class="ghost-btn w-full justify-center text-[11px]" data-tip="按需派发编队子代理将 measuredco/puck、lovinsp、react-grab、agent-browser 安装至 workflows/.deps/uiboard/">📦 按需补齐 UI 增强套件</button>';
 }
 
 window.addEventListener('message', async (ev) => {
@@ -255,6 +255,8 @@ window.addEventListener('message', async (ev) => {
         title: (p.label || p.tag || 'UI元素') + ' (' + srcFile.split('/').pop() + ':' + srcLine + ')',
         firstFile: srcFile,
         scopes: [srcFile],
+        uiOwner: p.uiOwner || 'runner/atlas/wb-uiboard.mjs',
+        sliceCmd: p.sliceCmd || null,
         desc: 'UI元素 <' + (p.tag || 'div') + '>「' + (p.label || '') + '」位于 ' + srcFile + ':' + srcLine + (p.wiringState === 'mock' ? '（前端 Mock 待接真后端）' : '')
       });
       emitDshQuote(q);
