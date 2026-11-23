@@ -59,8 +59,12 @@ const compactWs = (t) => t.replace(/\s+/g, ' ').replace(/\s*([(),:;])\s*/g, '$1 
 function extractLeadingJsDoc(source, matchStart, matchStr) {
   const kwPos = matchStr.search(/\bexport\b/);
   const declIndex = matchStart + (kwPos >= 0 ? kwPos : 0);
-  const m = source.slice(Math.max(0, declIndex - 1200), declIndex).match(/(\/\*\*[\s\S]*?\*\/)\s*$/);
-  return m ? m[1].trim() : '';
+  const win = source.slice(Math.max(0, declIndex - 1600), declIndex);
+  const endComment = win.search(/\*\/\s*$/);
+  if (endComment < 0) return '';
+  const lastOpen = win.lastIndexOf('/**', endComment);
+  if (lastOpen < 0 || win.slice(lastOpen + 3, endComment).includes('*/')) return '';
+  return win.slice(lastOpen, endComment + 2).trim();
 }
 
 function extractJsClassMethods(rawBlock, maskedBlock) {

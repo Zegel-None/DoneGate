@@ -67,6 +67,11 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       expect(stub1.stubHash).toBe(stub2.stubHash);
       expect(stub1.stubText).toContain('创建订单并返回聚合总额');
       expect(stub1.stubText).not.toContain('SECRET_SQL');
+      const multiJsDoc = '/** 第一函数文档 */\nexport const f1 = (a) => { const leakBody = 12345; return a + leakBody; };\n/** 第二函数文档 */\nexport const f2 = (b) => b * 2;\n';
+      const multiParsed = extractFileInterfaceStub(multiJsDoc, 'src/multi.mjs');
+      expect(multiParsed.exports.length).toBe(2);
+      expect(multiParsed.exports[1].doc).toBe('/** 第二函数文档 */');
+      expect(multiParsed.exports[1].doc).not.toContain('leakBody');
 
       const pyStub = extractFileInterfaceStub(
         '# def fake_comment(): pass\ndef _private_helper(x):\n    return x\nasync def fetch_invoice(order_id: str) -> dict:\n    return {"id": order_id}\n',
@@ -247,6 +252,14 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       const redEdgeRun = dispatchCommand(['check-node', 'order-node', '--allow-dirty'], dir);
       expect(redEdgeRun.exitCode).toBe(1);
       expect(redEdgeRun.stderr).toContain('未声明跨卡红线依赖');
+      const rsiPath = join(dir, '.donegate/rsi-candidates/order-node.friction.json');
+      expect(existsSync(rsiPath)).toBe(true);
+      const rsiDoc = JSON.parse(readFileSync(rsiPath, 'utf8'));
+      expect(rsiDoc.retryStreak).toBeGreaterThanOrEqual(2);
+      writeFileSync(join(dir, 'src/order/index.mjs'), 'import { findItem } from "../db/index.mjs";\nexport function loadOrder(id, extraRequiredFlag) { return findItem(id) || extraRequiredFlag; }\n');
+      const recoverRun = dispatchCommand(['check-node', 'order-node', '--allow-dirty', '--receipt'], dir);
+      expect(recoverRun.exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(rsiPath, 'utf8')).resolvedAfterRetries).toBeGreaterThanOrEqual(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -293,6 +306,9 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
       ]));
       // 必跑测试夹具不得被盲目隐藏，正交零耦合兄弟文件（如 ui-board-engine / workflow-jit）自动折叠为 AST 存根
       expect(focusCap.capsule.zeroHopTests.map((t) => t.path)).toContain('runner/dsh-fixtures.mjs');
+      expect(focusCap.capsule.zeroHopTests.map((t) => t.path)).not.toContain('tests/preset-real-tools-e2e.mjs');
+      const gateStubText = readFileSync(join(REPO_ROOT, '.donegate/stubs/gate-tooling.stub.d.ts'), 'utf8');
+      expect(gateStubText).not.toContain('readFileSync(p,');
       expect(focusCap.capsule.siblingStubFiles.map((s) => s.path)).toContain('runner/dsh/ui-board-engine.mjs');
       expect(focusCap.capsule.siblingStubFiles.length).toBeGreaterThan(15);
       expect(focusCap.capsule.capsuleTokens).toBeLessThan(Math.round(fullDsh.capsule.capsuleTokens * 0.55));

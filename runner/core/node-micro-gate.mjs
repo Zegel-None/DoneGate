@@ -94,7 +94,7 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   if (gitState.isGit && !opts.allowDirty && gitState.files.length > 0) {
     return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
   }
-  const touchedNonMeta = gitState.files.filter((f) => !f.startsWith('.donegate/'));
+  const touchedNonMeta = gitState.files.filter((f) => !f.startsWith('.donegate/') && f !== 'node_modules' && !f.startsWith('node_modules/'));
   if (gitState.isGit && !opts.skipScopeCheck) {
     const outOfScope = touchedNonMeta.filter((f) => {
       if (f.startsWith(`contracts/${id}/`)) return false;
@@ -183,7 +183,26 @@ export function cmdCheckNode(projectRoot, opts = {}) {
 
   const capDir = join(projectRoot, '.donegate', 'capsules');
   mkdirSync(capDir, { recursive: true });
-  writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
+  const rcptPath = join(capDir, `${id}.receipt.json`);
+  const prevRes = existsSync(rcptPath) ? readJsonStrict(rcptPath) : { ok: false };
+  const prevStreak = (prevRes.ok && prevRes.value && prevRes.value.exitCode !== 0) ? Number(prevRes.value.retryStreak || 1) : 0;
+  receipt.retryStreak = exitCode === 0 ? 0 : prevStreak + 1;
+  writeFileSync(rcptPath, JSON.stringify(receipt, null, 2), 'utf8');
+
+  const rsiDir = join(projectRoot, '.donegate', 'rsi-candidates');
+  const rsiFile = join(rsiDir, `${id}.friction.json`);
+  if (receipt.retryStreak >= 2) {
+    mkdirSync(rsiDir, { recursive: true });
+    writeFileSync(rsiFile, JSON.stringify({
+      schema: 'donegate-rsi-friction/v1', nodeId: id, retryStreak: receipt.retryStreak,
+      exitCode, fails: receipt.fails || [], touchedFiles: touchedNonMeta, recordedAt: new Date().toISOString()
+    }, null, 2), 'utf8');
+  } else if (exitCode === 0 && prevStreak >= 2 && existsSync(rsiFile)) {
+    const oldRsi = readJsonStrict(rsiFile);
+    if (oldRsi.ok && oldRsi.value) {
+      writeFileSync(rsiFile, JSON.stringify({ ...oldRsi.value, resolvedAfterRetries: prevStreak, resolvedAt: new Date().toISOString() }, null, 2), 'utf8');
+    }
+  }
 
   if (opts.receipt) {
     if (exitCode === 0) {

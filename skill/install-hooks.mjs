@@ -42,6 +42,7 @@ export function buildPreCommitScript(projectRoot, dgRoot = DG_ROOT, pathApi = pa
     'set -e',
     `DG_SKILL="${skillPrefix}"`,
     'node "$DG_SKILL/check-commit-hygiene.mjs" --staged --root .',
+    'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX',
     'if [ -f "skill/check-escapes.mjs" ] && [ -f "escapes.jsonl" ]; then',
     '  node "skill/check-escapes.mjs" --self-check --project .',
     'elif [ -f "INTENT.md" ]; then',
@@ -108,6 +109,21 @@ function runRedSelfTest() {
     spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs']);
     const rPass = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'clean small commit'], { encoding: 'utf8' });
     check('正样本：修掉空壳后的小步干净 git commit 顺畅放行', rPass.status === 0, rPass.stderr);
+
+    writeFileSync(join(tmp, 'escapes.jsonl'), '');
+    mkdirSync(join(tmp, 'skill'), { recursive: true });
+    writeFileSync(join(tmp, 'skill/check-escapes.mjs'), `import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'; import { spawnSync } from 'node:child_process'; const d = mkdtempSync(join(tmpdir(), 'dg-sub-')); writeFileSync(join(d, 'x.txt'), '1'); spawnSync('git', ['-C', d, 'init', '-q']); spawnSync('git', ['-C', d, 'config', 'user.email', 'leak@bad']); spawnSync('git', ['-C', d, 'config', 'user.name', 'Leak']); spawnSync('git', ['-C', d, 'add', '.']); spawnSync('git', ['-C', d, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'sub-init']); rmSync(d, { recursive: true, force: true });\n`);
+    spawnSync('git', ['-C', tmp, 'add', '.']);
+    spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add self-check stub', '--no-verify']);
+    const wtDir = join(tmp, '.donegate', 'wt-hook-check');
+    spawnSync('git', ['-C', tmp, 'worktree', 'add', '-q', '-b', 'wt/hook-check', wtDir, 'HEAD']);
+    writeFileSync(join(wtDir, 'src/a.mjs'), 'export function a() {\n  return 3;\n}\n');
+    spawnSync('git', ['-C', wtDir, 'add', 'src/a.mjs']);
+    const rWt = spawnSync('git', ['-C', wtDir, '-c', 'commit.gpgsign=false', 'commit', '-m', 'worktree clean commit'], { encoding: 'utf8' });
+    const wtMsg = (spawnSync('git', ['-C', wtDir, 'log', '-1', '--format=%s'], { encoding: 'utf8' }).stdout || '').trim();
+    const bareVal = (spawnSync('git', ['-C', tmp, 'config', '--get', 'core.bare'], { encoding: 'utf8' }).stdout || '').trim();
+    const userVal = (spawnSync('git', ['-C', tmp, 'config', '--get', 'user.email'], { encoding: 'utf8' }).stdout || '').trim();
+    check('Git Worktree 提交隔离：钩子剥离 GIT_DIR 后子自检不污染分支 HEAD、core.bare 与 user.email', rWt.status === 0 && wtMsg === 'worktree clean commit' && bareVal !== 'true' && userVal === 'h@local', rWt.stderr);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

@@ -144,7 +144,13 @@ function partitionZeroHopAssets(projectRoot, target, graph, budget, focusPattern
     } else truncatedFiles.push(rel);
   }
 
-  const closureHints = zeroHopFiles.flatMap((f) => [f.path, basename(f.path), basename(f.path, extname(f.path))]);
+  const genericStems = new Set(['index', 'contract', 'main', 'types', 'utils', '_shared']);
+  const closureHints = zeroHopFiles.filter((f) => f.isSeed).flatMap((f) => {
+    const base = basename(f.path), stem = basename(f.path, extname(f.path));
+    const noExt = f.path.slice(0, f.path.length - extname(f.path).length);
+    const parentQual = f.path.split('/').slice(-2).join('/');
+    return genericStems.has(stem) ? [f.path, noExt, parentQual] : [f.path, noExt, base, stem];
+  });
   const obHints = (target.obligations || []).map((o) => String(o.command || ''));
   for (const tf of candidateTests) {
     let content = '';
