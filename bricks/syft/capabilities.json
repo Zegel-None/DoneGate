@@ -17,19 +17,41 @@
     "bin": "syft"
   },
   "card": {
-    "title": "Syft SBOM 清单生成卡",
+    "title": "软件依赖清单盘点",
     "category": "安全与运维",
-    "summary": "扫描构建目录或容器镜像产出 CycloneDX SBOM 物料清单，锁定 SHA-256 供 Grype/OSV/归并卡下游消费",
+    "summary": "自动盘点项目用到的全部第三方开源依赖包与版本号，供下游查漏洞使用",
     "inputs": [
-      { "id": "in_art", "name": "源码或构建制品", "type": "ARTIFACT" }
+      {
+        "id": "in_art",
+        "name": "项目源码或安装包",
+        "type": "ARTIFACT"
+      }
     ],
     "outputs": [
-      { "id": "out_sbom", "name": "CycloneDX SBOM", "type": "ARTIFACT" },
-      { "id": "out_sig", "name": "0-3 落盘状态码", "type": "SIGNAL" }
+      {
+        "id": "out_sbom",
+        "name": "第三方依赖清单",
+        "type": "ARTIFACT"
+      },
+      {
+        "id": "out_sig",
+        "name": "是否盘点完成",
+        "type": "SIGNAL"
+      }
     ],
     "slots": [
-      { "id": "sy_1", "label": "生成 CycloneDX JSON 物料清单", "wired": true, "boundOut": "out_sbom" },
-      { "id": "sy_2", "label": "统计多语言包组件分布", "wired": true, "boundOut": "out_sig" }
+      {
+        "id": "sy_1",
+        "label": "导出完整第三方依赖清单",
+        "wired": true,
+        "boundOut": "out_sbom"
+      },
+      {
+        "id": "sy_2",
+        "label": "统计各语言依赖包数量",
+        "wired": true,
+        "boundOut": "out_sig"
+      }
     ]
   },
   "observables": [
@@ -37,7 +59,9 @@
       "id": "componentCount",
       "from": "componentCount",
       "kind": "artifact",
-      "assertableAs": ["non-empty"],
+      "assertableAs": [
+        "non-empty"
+      ],
       "wired": false,
       "reason": "SBOM 只产生物料清单不做漏洞判定，交由下游覆盖族扫描器消费"
     }

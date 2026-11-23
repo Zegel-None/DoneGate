@@ -206,7 +206,7 @@ try {
     !html.includes('state.provisionedPacks[pk.id] = true') && !html.includes("e.target.id === 'sel-host-sim'"));
 
   c.check('UI 看板 <optgroup> 分组下拉、去手搓模式按钮、.h-full 全高内嵌窗口与 JIT 双窗口对比标绿完备',
-    ['<optgroup', 'uib-theme-select', 'h-full', 'flex:1 1 0%;width:100%;height:100%;border:0;display:block;', "kind: 'ui'", '基准工作流：', '当前生效确定性工作流', 'Agent根据需求微调', 'deriveAutonomousTunedTplIds', 'is-diff-green'].every((k) => html.includes(k)) &&
+    ['<optgroup', 'uib-theme-select', 'h-full', 'flex:1 1 0%;width:100%;height:100%;border:0;display:block;', "kind: 'ui'", '按当前模块自动配好', 'data-jit-preset="auto"', '当前自动执行的检查步骤', 'deriveAutonomousTunedTplIds', 'is-diff-green'].every((k) => html.includes(k)) &&
     ['uib-mode-edit', 'data-uib-act="add-block"', 'data-jit-switch-macro', 'dg-jit-req-input', 'data-jit-run-mutate'].every((k) => !html.includes(k)));
 
   const railAssetsIdx = html.indexOf('data-rail-tab="assets"');
@@ -387,7 +387,7 @@ try {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        customPacks: { 'pack-u-e2e': { id: 'pack-u-e2e', name: '端到端持久化包', group: '客户端与全栈', nodes: [], links: [] } },
+        customPacks: { 'pack-u-e2e': { id: 'pack-u-e2e', name: '端到端持久化工作流', group: '客户端与全栈', nodes: [], links: [] } },
         hostNodeLayouts: { [webNode.id]: { x: -640, y: -1280, w: 310, h: 220, color: 'blue' } },
         textOverrides: { 'chrome:agent-title': '专职验收子代理' }
       })
@@ -395,12 +395,12 @@ try {
     const saveJson = await saveResp.json();
     const rehydrated = buildProjectAtlas(proj);
     const savedWeb = rehydrated.workbench.hostSandbox.nodes.find((n) => n.id === webNode.id);
-    c.check('工作台负向无界拖曳坐标 (-640, -1280)、自定义开发包与文本改名实时落盘且重扫不丢',
+    c.check('工作台负向无界拖曳坐标 (-640, -1280)、自定义工作流与文本改名实时落盘且重扫不丢',
       Boolean(
         saveResp.ok &&
         saveJson.ok &&
         existsSync(join(proj, '.donegate/workbench-state.json')) &&
-        rehydrated.workbench.savedState.customPacks['pack-u-e2e']?.name === '端到端持久化包' &&
+        rehydrated.workbench.savedState.customPacks['pack-u-e2e']?.name === '端到端持久化工作流' &&
         savedWeb?.x === -640 && savedWeb?.y === -1280 && savedWeb?.w === 310 &&
         rehydrated.workbench.savedState.textOverrides['chrome:agent-title'] === '专职验收子代理'
       ));

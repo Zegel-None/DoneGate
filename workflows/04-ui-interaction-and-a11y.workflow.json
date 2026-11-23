@@ -42,14 +42,30 @@
     }
   ],
   "groups": [
-    { "id": "grp-04-plan", "title": "先定交互控件与五态冻结", "x": 28, "y": 42, "w": 628, "h": 318, "color": "amber" },
-    { "id": "grp-04-verify", "title": "去壳组件契约、真浏览器无障碍与性能预算", "x": 684, "y": 42, "w": 1548, "h": 334, "color": "blue" }
+    {
+      "id": "grp-04-plan",
+      "title": "先定交互控件与五态冻结",
+      "x": 28,
+      "y": 42,
+      "w": 628,
+      "h": 318,
+      "color": "amber"
+    },
+    {
+      "id": "grp-04-verify",
+      "title": "去壳组件契约、真浏览器无障碍与性能预算",
+      "x": 684,
+      "y": 42,
+      "w": 1548,
+      "h": 334,
+      "color": "blue"
+    }
   ],
   "nodes": [
     {
       "id": "ui-matrix-plan",
       "tplId": "tpl-adp-ui-interaction-matrix",
-      "title": "交互模式与控件映射决策卡",
+      "title": "界面交互与控件核对",
       "tip": "内置零二进制规划节点：核对下拉/单选/即时开关/可逆撤销 Toast 等 16 条铁律与空/载/错/权/常五态完整性",
       "repoSlug": "",
       "repoUrl": "",
@@ -63,20 +79,44 @@
       "y": 96,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_req", "name": "页面与功能盘点清单", "type": "SPEC" }],
+      "inputs": [
+        {
+          "id": "in_req",
+          "name": "页面功能清单",
+          "type": "SPEC"
+        }
+      ],
       "outputs": [
-        { "id": "out_spec", "name": "控件映射与五态清单", "type": "SPEC" },
-        { "id": "out_prm", "name": "前端子代理交互约束", "type": "PROMPT" }
+        {
+          "id": "out_spec",
+          "name": "控件与状态清单",
+          "type": "SPEC"
+        },
+        {
+          "id": "out_prm",
+          "name": "前端编写要求",
+          "type": "PROMPT"
+        }
       ],
       "slots": [
-        { "id": "uim_1", "label": "16 条控件选型反模式拦截", "wired": true, "boundOut": "out_spec" },
-        { "id": "uim_2", "label": "空/载/错/权/常五态矩阵注入", "wired": true, "boundOut": "out_prm" }
+        {
+          "id": "uim_1",
+          "label": "拦截常见错误控件用法",
+          "wired": true,
+          "boundOut": "out_spec"
+        },
+        {
+          "id": "uim_2",
+          "label": "补齐空载错等五种页面状态",
+          "wired": true,
+          "boundOut": "out_prm"
+        }
       ]
     },
     {
       "id": "ui-design-gate",
       "tplId": "tpl-human-gate",
-      "title": "交互矩阵与审美方向冻结闸门",
+      "title": "界面方案确认闸门",
       "tip": "配合 DoneGate uiboard 三阶段看板确认色彩 Token 与控件方案后再写 JSX，避免整页推翻重做",
       "repoSlug": "",
       "repoUrl": "",
@@ -90,14 +130,33 @@
       "y": 96,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_gate", "name": "交互清单就绪", "type": "SPEC" }],
-      "outputs": [{ "id": "out_go", "name": "批准开始写组件", "type": "FLOW" }],
-      "slots": [{ "id": "hg_1", "label": "业主确认控件形态与五态定义", "wired": true, "boundOut": "out_go" }]
+      "inputs": [
+        {
+          "id": "in_gate",
+          "name": "交互清单就绪",
+          "type": "SPEC"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_go",
+          "name": "批准开始写界面",
+          "type": "FLOW"
+        }
+      ],
+      "slots": [
+        {
+          "id": "hg_1",
+          "label": "业主确认页面风格与交互形态",
+          "wired": true,
+          "boundOut": "out_go"
+        }
+      ]
     },
     {
       "id": "ui-storybook-extract",
       "tplId": "tpl-anti-slop",
-      "title": "Storybook 去壳五态索引提取",
+      "title": "组件五种状态盘点",
       "tip": "遵循 ui-extract 去壳取核纪律：无头导出 storybook-static/index.json 核验每个组件是否补齐五态 Story，外链按钮按需打开重 UI",
       "repoSlug": "storybookjs/storybook",
       "repoUrl": "https://github.com/storybookjs/storybook",
@@ -114,20 +173,44 @@
       "y": 96,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "前端组件源码", "type": "FLOW" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "前端组件源码",
+          "type": "FLOW"
+        }
+      ],
       "outputs": [
-        { "id": "out_art", "name": "五态 Story 索引 JSON", "type": "ARTIFACT" },
-        { "id": "out_txt", "name": "缺失状态清单", "type": "TEXT" }
+        {
+          "id": "out_art",
+          "name": "组件状态盘点表",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_txt",
+          "name": "漏写状态提醒清单",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "sb_1", "label": "无头导出 index.json 验五态", "wired": true, "boundOut": "out_art" },
-        { "id": "sb_2", "label": "外链按需打开 6006 沙箱", "wired": true, "boundOut": "out_txt" }
+        {
+          "id": "sb_1",
+          "label": "自动导出组件状态盘点清单",
+          "wired": true,
+          "boundOut": "out_art"
+        },
+        {
+          "id": "sb_2",
+          "label": "按需打开独立组件预览页",
+          "wired": true,
+          "boundOut": "out_txt"
+        }
       ]
     },
     {
       "id": "ui-biome-knip",
       "tplId": "tpl-biome-knip",
-      "title": "Biome + Knip 语法与死组件清理",
+      "title": "语法与废组件清理",
       "tip": "静态拦截 JSX 钩子误用、未绑定 key 与改版残留的孤儿组件/未声明依赖",
       "repoSlug": "biomejs/biome",
       "repoUrl": "https://github.com/biomejs/biome",
@@ -141,20 +224,44 @@
       "y": 96,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_art", "name": "JS/TSX 源码", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_art",
+          "name": "前端页面源码",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 状态码", "type": "SIGNAL" },
-        { "id": "out_dead", "name": "死代码清单原文", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "语法是否通过",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_dead",
+          "name": "无用废组件清单",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "bk_1", "label": "JSX/TS 语法零错误", "wired": true, "boundOut": "out_sig" },
-        { "id": "bk_2", "label": "孤儿组件与幽灵包清零", "wired": true, "boundOut": "out_dead" }
+        {
+          "id": "bk_1",
+          "label": "页面脚本语法零报错",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "bk_2",
+          "label": "清理无人引用的废组件",
+          "wired": true,
+          "boundOut": "out_dead"
+        }
       ]
     },
     {
       "id": "ui-playwright-axe",
       "tplId": "tpl-adp-playwright",
-      "title": "Playwright + Axe 真浏览器联调",
+      "title": "浏览器点击与无障碍",
       "tip": "真实 Chromium 执行关键用户旅程、键盘 Tab 焦点闭环、WCAG 对比度与控制台零红字验收",
       "repoSlug": "microsoft/playwright",
       "repoUrl": "https://github.com/microsoft/playwright",
@@ -168,20 +275,44 @@
       "y": 96,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "静态通过快照", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "语法通过通知",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 联调码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "Console 与无障碍报告", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "页面联调是否通过",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "页面报错与可读性报告",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "pw_1", "label": "核心旅程与键盘可达通过", "wired": true, "boundOut": "out_sig" },
-        { "id": "pw_2", "label": "Axe 无障碍与红字摘录", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "pw_1",
+          "label": "核心点击流程与键盘操作走通",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "pw_2",
+          "label": "对比度不足与报错红字摘录",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "ui-router",
       "tplId": "tpl-router-rule",
-      "title": "前端联调收敛路由器",
+      "title": "前端联调分流开关",
       "tip": "0 联调与无障碍全绿进入首屏预算探针；1 报错携 DOM/Console 快照回流修复（上限 3 轮）",
       "repoSlug": "",
       "repoUrl": "",
@@ -195,22 +326,55 @@
       "y": 96,
       "w": 256,
       "h": null,
-      "inputs": [{ "id": "in_sig", "name": "0-3 联调信号", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_sig",
+          "name": "页面联调结果",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_0", "name": "0 放行性能预算", "type": "SIGNAL" },
-        { "id": "out_1", "name": "1 回跳修组件", "type": "TEXT" },
-        { "id": "out_3", "name": "2/3 浏览器缺环境", "type": "TEXT" }
+        {
+          "id": "out_0",
+          "name": "通过后测加载速度",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_1",
+          "name": "报错打回修页面",
+          "type": "TEXT"
+        },
+        {
+          "id": "out_3",
+          "name": "缺浏览器提醒安装",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "s_0", "label": "0 号口放行 Lighthouse", "wired": true, "boundOut": "out_0" },
-        { "id": "s_1", "label": "1 号口回流重修 (maxLoops=3)", "wired": true, "boundOut": "out_1" },
-        { "id": "s_3", "label": "2/3 号口提示补齐浏览器", "wired": true, "boundOut": "out_3" }
+        {
+          "id": "s_0",
+          "label": "通过后测首屏打开速度",
+          "wired": true,
+          "boundOut": "out_0"
+        },
+        {
+          "id": "s_1",
+          "label": "页面报错打回修（最多3轮）",
+          "wired": true,
+          "boundOut": "out_1"
+        },
+        {
+          "id": "s_3",
+          "label": "提示一键安装测试浏览器",
+          "wired": true,
+          "boundOut": "out_3"
+        }
       ]
     },
     {
       "id": "ui-lighthouse",
       "tplId": "tpl-anti-slop",
-      "title": "Lighthouse CI 首屏与包体积探针",
+      "title": "首屏加载与体积体检",
       "tip": "单次无头探针核查 LCP / CLS / TBT 与产物体积预算，防止引入巨型依赖拖慢首屏",
       "repoSlug": "GoogleChrome/lighthouse-ci",
       "repoUrl": "https://github.com/GoogleChrome/lighthouse-ci",
@@ -226,24 +390,98 @@
       "y": 96,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "联调过关信号", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "联调通过通知",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_art", "name": "Web Vitals 证据 JSON", "type": "ARTIFACT" },
-        { "id": "out_txt", "name": "超预算资源清单", "type": "TEXT" }
+        {
+          "id": "out_art",
+          "name": "页面测速体检单",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_txt",
+          "name": "拖慢网速文件清单",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "lh_1", "label": "LCP/CLS 核心预算达标", "wired": true, "boundOut": "out_art" },
-        { "id": "lh_2", "label": "超标脚本与图片定位", "wired": true, "boundOut": "out_txt" }
+        {
+          "id": "lh_1",
+          "label": "首屏打开速度与排版不乱跳",
+          "wired": true,
+          "boundOut": "out_art"
+        },
+        {
+          "id": "lh_2",
+          "label": "揪出过大的脚本与图片文件",
+          "wired": true,
+          "boundOut": "out_txt"
+        }
       ]
     }
   ],
   "links": [
-    { "id": "ui-lk-1", "fromNode": "ui-matrix-plan", "fromSlot": "out_spec", "toNode": "ui-design-gate", "toSlot": "in_gate", "type": "SPEC" },
-    { "id": "ui-lk-2", "fromNode": "ui-design-gate", "fromSlot": "out_go", "toNode": "ui-storybook-extract", "toSlot": "in_src", "type": "FLOW" },
-    { "id": "ui-lk-3", "fromNode": "ui-storybook-extract", "fromSlot": "out_art", "toNode": "ui-biome-knip", "toSlot": "in_art", "type": "ARTIFACT" },
-    { "id": "ui-lk-4", "fromNode": "ui-biome-knip", "fromSlot": "out_sig", "toNode": "ui-playwright-axe", "toSlot": "in_src", "type": "SIGNAL" },
-    { "id": "ui-lk-5", "fromNode": "ui-playwright-axe", "fromSlot": "out_sig", "toNode": "ui-router", "toSlot": "in_sig", "type": "SIGNAL" },
-    { "id": "ui-lk-6", "fromNode": "ui-router", "fromSlot": "out_0", "toNode": "ui-lighthouse", "toSlot": "in_src", "type": "SIGNAL" },
-    { "id": "ui-lk-loop", "fromNode": "ui-router", "fromSlot": "out_1", "toNode": "ui-biome-knip", "toSlot": "in_art", "type": "TEXT", "maxLoops": 3 }
+    {
+      "id": "ui-lk-1",
+      "fromNode": "ui-matrix-plan",
+      "fromSlot": "out_spec",
+      "toNode": "ui-design-gate",
+      "toSlot": "in_gate",
+      "type": "SPEC"
+    },
+    {
+      "id": "ui-lk-2",
+      "fromNode": "ui-design-gate",
+      "fromSlot": "out_go",
+      "toNode": "ui-storybook-extract",
+      "toSlot": "in_src",
+      "type": "FLOW"
+    },
+    {
+      "id": "ui-lk-3",
+      "fromNode": "ui-storybook-extract",
+      "fromSlot": "out_art",
+      "toNode": "ui-biome-knip",
+      "toSlot": "in_art",
+      "type": "ARTIFACT"
+    },
+    {
+      "id": "ui-lk-4",
+      "fromNode": "ui-biome-knip",
+      "fromSlot": "out_sig",
+      "toNode": "ui-playwright-axe",
+      "toSlot": "in_src",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "ui-lk-5",
+      "fromNode": "ui-playwright-axe",
+      "fromSlot": "out_sig",
+      "toNode": "ui-router",
+      "toSlot": "in_sig",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "ui-lk-6",
+      "fromNode": "ui-router",
+      "fromSlot": "out_0",
+      "toNode": "ui-lighthouse",
+      "toSlot": "in_src",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "ui-lk-loop",
+      "fromNode": "ui-router",
+      "fromSlot": "out_1",
+      "toNode": "ui-biome-knip",
+      "toSlot": "in_art",
+      "type": "TEXT",
+      "maxLoops": 3
+    }
   ]
 }

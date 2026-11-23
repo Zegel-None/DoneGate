@@ -23,7 +23,13 @@ const WB_JIT_WORKFLOW_SCRIPT = String.raw`
       '.dg-jit-btn { padding: 6px 12px; border-radius: 8px; border: 0.5px solid var(--border-strong); background: var(--surface-soft); color: var(--text-main); font-size: 11.5px; font-weight: 500; cursor: pointer; }',
       '.dg-jit-btn.is-solid { background: var(--primary); color: var(--primary-fg, #ffffff); border-color: transparent; }',
       'body.dark-mode .dg-jit-btn.is-solid { color: #151517; }',
-      '.dg-jit-banner-warn { padding: 10px 12px; border-radius: 12px; border: 0.5px solid var(--warn); background: var(--warn-bg); color: var(--text-main); font-size: 11.5px; display: flex; flex-direction: column; gap: 8px; }'
+      '.dg-jit-banner-warn { padding: 10px 12px; border-radius: 12px; border: 0.5px solid var(--warn); background: var(--warn-bg); color: var(--text-main); font-size: 11.5px; display: flex; flex-direction: column; gap: 8px; }',
+      '.dg-jit-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }',
+      '@media (max-width: 560px) { .dg-jit-presets { grid-template-columns: 1fr; } }',
+      '.dg-jit-preset-card { text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border-subtle); background: var(--surface-soft); color: var(--text-main); cursor: pointer; display: flex; flex-direction: column; gap: 3px; transition: border-color 0.14s ease, background 0.14s ease; }',
+      '.dg-jit-preset-card:hover, .dg-jit-preset-card.is-recommended { border-color: var(--primary); background: var(--primary-soft); }',
+      '.dg-jit-adv { border-top: 0.5px solid var(--border-subtle); padding-top: 10px; font-size: 11.5px; }',
+      '.dg-jit-adv > summary { cursor: pointer; color: var(--text-muted); font-size: 11px; user-select: none; }'
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -57,7 +63,7 @@ function inferClientDefaultMacroForNode(node) {
     nodeTitle: node.title,
     mode: 'macro',
     baseMacroId: pk ? pk.id : macroId,
-    baseMacroName: pk ? pk.name : '核心纯逻辑护栏包',
+    baseMacroName: pk ? pk.name : '核心纯逻辑工作流',
     mandatoryFloorTplIds: ['tpl-anti-slop'],
     tplIds: tplIds.includes('tpl-anti-slop') ? tplIds : ['tpl-anti-slop', ...tplIds],
     addedTplIds: [],
@@ -110,8 +116,8 @@ window.renderSandboxWorkflowBadgeHtml = function renderSandboxWorkflowBadgeHtml(
     : ('工作流：' + (wf.baseMacroName || '基准护栏'));
   const totalCount = (wf.tplIds || []).length;
   const tip = isForked
-    ? ('已按节点需求局部派生（共 ' + totalCount + ' 个节点，底座护栏已锁死）· 点击打开工作流双窗口对比面板')
-    : ((wf.reason || '总控自动选配') + '（共 ' + totalCount + ' 个节点）· 点击查看基准与 Agent 微调工作流');
+    ? ('已按节点需求局部派生（共 ' + totalCount + ' 个节点，底座护栏已锁死）· 点击打开一键工作流配置面板')
+    : ((wf.reason || '总控自动选配') + '（共 ' + totalCount + ' 个节点）· 点击一键切换或自动生成工作流');
   const rightPart = (!ro && isForked)
     ? ('<button type="button" class="dg-sb-wf-mini" data-jit-quick-promote="' + esc(node.id) + '" data-stop-drag="1" data-tip="将此节点实战验证好用的私有工作流一键另存为预置工作流">💾 存工作流</button>')
     : '<span class="text-[10px] shrink-0" style="color:var(--text-muted);" data-tip="底座护栏只增不减锁已生效">🔒底座</span>';
@@ -378,6 +384,38 @@ window.closeJitWorkflowModal = function closeJitWorkflowModal() {
   if (old) old.remove();
 };
 
+window.applyJitQuickPreset = async function applyJitQuickPreset(nodeId, presetKey) {
+  const node = getActiveNodesList().find((n) => n.id === nodeId);
+  if (!node) return null;
+  if (presetKey === 'fullstack') {
+    return window.requestJitMutateNode(nodeId, {
+      requirementText: '界面点击联调与接口密钥联查',
+      addTplIds: ['tpl-biome-knip', 'tpl-playwright', 'tpl-gitleaks'],
+      actorRole: 'super-agent'
+    });
+  }
+  if (presetKey === 'release') {
+    return window.requestJitMutateNode(nodeId, {
+      requirementText: '上线前严格把关与人工确认',
+      addTplIds: ['tpl-gitleaks', 'tpl-human-gate'],
+      actorRole: 'super-agent'
+    });
+  }
+  const assigned = await window.requestJitAssignNode(nodeId);
+  const basePk = (assigned && assigned.baseMacroId && WORKFLOW_PACKS[assigned.baseMacroId]) || Object.values(WORKFLOW_PACKS)[0];
+  const baseIds = basePk && Array.isArray(basePk.nodes) ? basePk.nodes.map((n) => n.tplId).filter((t) => t && t !== 'tpl-blank') : ['tpl-anti-slop'];
+  const tuned = deriveAutonomousTunedTplIds(node, null, baseIds);
+  const extra = tuned.filter((id) => !baseIds.includes(id));
+  if (extra.length > 0) {
+    return window.requestJitMutateNode(nodeId, {
+      requirementText: '按当前模块自动生成检查工作流',
+      addTplIds: extra,
+      actorRole: 'super-agent'
+    });
+  }
+  return assigned;
+};
+
 function renderJitWorkflowModal() {
   let rootEl = document.getElementById('dg-jit-modal-root');
   if (!jitUiState.modalNodeId) { if (rootEl) rootEl.remove(); return; }
@@ -398,32 +436,30 @@ function renderJitWorkflowModal() {
   const baseTplIds = rawBaseTplIds.includes('tpl-anti-slop') ? rawBaseTplIds : ['tpl-anti-slop', ...rawBaseTplIds];
   const baseSet = new Set(baseTplIds);
   const tunedTplIds = deriveAutonomousTunedTplIds(node, wf, baseTplIds);
-  const candidateBricks = Object.values(BLOCK_TEMPLATES).filter((b) => b && !b.isBlank && !tunedTplIds.includes(b.tplId)).slice(0, 8);
+  const activeList = (Array.isArray(wf.tplIds) && wf.tplIds.length && wf.mode === 'jit-forked') ? wf.tplIds : tunedTplIds;
+  const candidateBricks = Object.values(BLOCK_TEMPLATES).filter((b) => b && !b.isBlank && !activeList.includes(b.tplId)).slice(0, 6);
 
-  const baseChainHtml = baseTplIds.map((tplId, idx) => {
-    const tpl = BLOCK_TEMPLATES[tplId] || { title: tplId };
-    const isFloor = floorSet.has(tplId);
-    const arrow = idx > 0 ? '<span class="text-xs opacity-60">→</span>' : '';
-    return arrow + '<span class="dg-jit-chip ' + (isFloor ? 'is-floor' : '') + '"><span>' + (isFloor ? '🔒 ' : '• ') + esc(tpl.title || tplId) + '</span></span>';
-  }).join('');
-
-  const tunedChainHtml = tunedTplIds.map((tplId, idx) => {
+  const previewChainHtml = activeList.map((tplId, idx) => {
     const tpl = BLOCK_TEMPLATES[tplId] || { title: tplId };
     const isFloor = floorSet.has(tplId);
     const isDiff = !baseSet.has(tplId);
     const arrow = idx > 0 ? '<span class="text-xs opacity-60">→</span>' : '';
-    const icon = isDiff ? '⚡' : (isFloor ? '🔒' : '•');
     const cls = (isFloor ? 'is-floor ' : '') + (isDiff ? 'is-diff-green' : '');
-    const rmTitle = isFloor ? '底座护栏默认锁死（点击将触发人工审批保护）' : '移除此微调节点';
-    return arrow + '<span class="dg-jit-chip ' + cls + '"><span>' + icon + ' ' + esc(tpl.title || tplId) + '</span><button type="button" class="opacity-65 hover:opacity-100 px-1 text-[11px]" data-jit-rm-tpl="' + esc(tplId) + '" title="' + rmTitle + '">×</button></span>';
+    return arrow + '<span class="dg-jit-chip ' + cls + '"><span>' + (isDiff ? '✨ ' : (isFloor ? '🛡️ ' : '')) + esc(tpl.title || tplId) + '</span></span>';
+  }).join('');
+
+  const editChainHtml = activeList.map((tplId) => {
+    const tpl = BLOCK_TEMPLATES[tplId] || { title: tplId };
+    const isFloor = floorSet.has(tplId);
+    return '<span class="dg-jit-chip ' + (isFloor ? 'is-floor' : '') + '"><span>' + esc(tpl.title || tplId) + '</span><button type="button" class="opacity-65 hover:opacity-100 px-1 text-[11px]" data-jit-rm-tpl="' + esc(tplId) + '" title="' + (isFloor ? '基础护栏需人工确认才可移除' : '移除此步骤') + '">×</button></span>';
   }).join('');
 
   const approvalHtml = jitUiState.pendingApproval
     ? ('<div class="dg-jit-banner-warn">'
-      + '<div><b>🔒 底座护栏「只增不减」安全拦截</b>：' + esc(jitUiState.lastError) + '</div>'
+      + '<div><b>🔒 基础防错护栏保护</b>：' + esc(jitUiState.lastError) + '</div>'
       + '<div class="flex items-center gap-2">'
-      + '<button type="button" class="dg-jit-btn is-solid" data-jit-approve-floor="1">人工确认批准摘除（' + esc((jitUiState.pendingApproval.blockedTitles || []).join('、')) + '）</button>'
-      + '<button type="button" class="dg-jit-btn" data-jit-cancel-floor="1">保持底座锁死</button>'
+      + '<button type="button" class="dg-jit-btn is-solid" data-jit-approve-floor="1">确认移除（' + esc((jitUiState.pendingApproval.blockedTitles || []).join('、')) + '）</button>'
+      + '<button type="button" class="dg-jit-btn" data-jit-cancel-floor="1">保留护栏</button>'
       + '</div></div>')
     : '';
 
@@ -436,44 +472,36 @@ function renderJitWorkflowModal() {
   ).join('');
 
   const jumpBtnHtml = (wf.baseMacroId && WORKFLOW_PACKS[wf.baseMacroId])
-    ? ('<button type="button" class="dg-jit-btn" data-jit-jump-workshop="' + esc(wf.baseMacroId) + '">去「工作流」页查看 ↗</button>')
+    ? ('<button type="button" class="dg-jit-btn" data-jit-jump-workshop="' + esc(wf.baseMacroId) + '">在画布查看完整流程图 ↗</button>')
     : '';
 
   rootEl.innerHTML = '<div class="dg-jit-modal" data-ui-owner="runner/atlas/wb-jit-workflow.mjs" data-stop-drag="1">'
     + '<div class="flex items-start justify-between gap-3">'
     + '<div>'
-    + '<div class="text-sm font-semibold">节点工作流装配与即时派生 · 「' + esc(node.title) + '」</div>'
-    + '<div class="text-[11px] mt-0.5" style="color: var(--text-muted);">🛡️ 权限隔离：总控 (Super Agent) 自主选配微调 · 执行端 (Worker) 只读过关 · 底座护栏只增不减</div>'
+    + '<div class="text-sm font-semibold">⚡ 为「' + esc(node.title) + '」配好检查工作流</div>'
+    + '<div class="text-[11.5px] mt-0.5" style="color: var(--text-muted);">点一下常用场景即可自动配好检查步骤，不用手动调复杂参数</div>'
     + '</div>'
     + '<button type="button" class="dg-jit-btn" data-jit-close="1">关闭</button>'
     + '</div>'
-    + '<div class="flex flex-wrap items-center justify-between gap-2 text-xs">'
-    + '<div class="flex items-center gap-2">'
-    + '<span style="color: var(--text-secondary);">基准工作流：</span>'
-    + '<select id="dg-jit-macro-select" class="dg-jit-input" style="width: auto; padding: 4px 8px;">' + macroOptions + '</select>'
-    + '</div>'
-    + '<span class="text-[11px]" style="color: var(--text-muted);">' + (wf.mode === 'jit-forked' ? '当前状态：节点私有派生工作流（不污染预置工作流）' : '当前状态：选中下拉即刻切换基准工作流') + '</span>'
+    + '<div class="dg-jit-presets">'
+    + '<button type="button" class="dg-jit-preset-card is-recommended" data-jit-preset="auto"><span class="text-xs font-semibold">✨ 按当前模块自动配好</span><span class="text-[11px]" style="color: var(--text-muted);">识别模块内容自动挑选最省心的检查组合</span></button>'
+    + '<button type="button" class="dg-jit-preset-card" data-jit-preset="fullstack"><span class="text-xs font-semibold">🖥️ 界面与接口联查</span><span class="text-[11px]" style="color: var(--text-muted);">检查页面能不能点通、有没有漏写密码</span></button>'
+    + '<button type="button" class="dg-jit-preset-card" data-jit-preset="release"><span class="text-xs font-semibold">🛡️ 上线前严格把关</span><span class="text-[11px]" style="color: var(--text-muted);">安全排查 + 关键操作前停下来等你确认</span></button>'
     + '</div>'
     + '<div>'
-    + '<div class="text-[11px] mb-1.5 font-medium" style="color: var(--text-secondary);">当前生效确定性工作流（共 ' + baseTplIds.length + ' 个节点）：</div>'
-    + '<div class="dg-jit-chain">' + baseChainHtml + '</div>'
-    + '</div>'
-    + '<div>'
-    + '<div class="text-[11px] mb-1.5 font-medium flex items-center justify-between" style="color: var(--text-secondary);"><span>Agent根据需求微调（共 ' + tunedTplIds.length + ' 个节点）：</span><span class="text-[10.5px]" style="color: var(--ok);">绿色高亮为相比基准工作流的新增/微调节点</span></div>'
-    + '<div class="dg-jit-chain">' + tunedChainHtml + '</div>'
+    + '<div class="text-[11px] mb-1.5 font-medium flex items-center justify-between" style="color: var(--text-secondary);"><span>当前自动执行的检查步骤（共 ' + activeList.length + ' 步）：</span><span class="text-[10.5px]" style="color: var(--ok);">绿色代表针对本模块自动加上的检查</span></div>'
+    + '<div class="dg-jit-chain">' + previewChainHtml + '</div>'
     + '</div>'
     + approvalHtml
-    + '<div>'
-    + '<div class="text-[11px] mb-1.5" style="color: var(--text-secondary);">或从工具节点池点选追加：</div>'
-    + '<div class="flex flex-wrap gap-1.5">' + addButtons + '</div>'
-    + '</div>'
-    + '<div class="pt-2 border-t flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border-subtle);">'
-    + '<div class="flex items-center gap-2 flex-1 min-w-[220px]">'
-    + '<input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新预置工作流名称..." value="' + esc(node.title + '专属工作流') + '">'
-    + '<button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为预置工作流</button>'
-    + '</div>'
-    + jumpBtnHtml
-    + '</div></div>';
+    + '<details class="dg-jit-adv" ' + (jitUiState.pendingApproval ? 'open' : '') + '>'
+    + '<summary>高级微调（手动换模板 / 增删单步 / 另存为新工作流）</summary>'
+    + '<div class="flex flex-col gap-3 pt-2.5">'
+    + '<div class="flex flex-wrap items-center justify-between gap-2 text-xs"><div class="flex items-center gap-2"><span style="color: var(--text-secondary);">切换基础工作流：</span><select id="dg-jit-macro-select" class="dg-jit-input" style="width: auto; padding: 4px 8px;">' + macroOptions + '</select></div>' + jumpBtnHtml + '</div>'
+    + '<div class="flex flex-wrap gap-1.5">' + editChainHtml + '</div>'
+    + (addButtons ? ('<div class="flex flex-wrap gap-1.5">' + addButtons + '</div>') : '')
+    + '<div class="flex flex-wrap items-center gap-2"><input id="dg-jit-promote-name" type="text" class="dg-jit-input" style="max-width: 220px;" placeholder="输入新工作流名称..." value="' + esc(node.title + '工作流') + '"><button type="button" class="dg-jit-btn" data-jit-promote-btn="1">💾 另存为新工作流</button></div>'
+    + '</div></details>'
+    + '</div>';
 }
 
 if (typeof document !== 'undefined') {
@@ -507,6 +535,11 @@ if (typeof document !== 'undefined') {
     if (!jitUiState.modalNodeId) return;
     if (e.target.id === 'dg-jit-modal-root' || e.target.closest('[data-jit-close]')) {
       window.closeJitWorkflowModal();
+      return;
+    }
+    const presetBtn = e.target.closest('[data-jit-preset]');
+    if (presetBtn) {
+      window.applyJitQuickPreset(jitUiState.modalNodeId, presetBtn.getAttribute('data-jit-preset'));
       return;
     }
     const addBtn = e.target.closest('[data-jit-add-tpl]');

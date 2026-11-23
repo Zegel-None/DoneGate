@@ -445,7 +445,7 @@ function collectPersistedSnapshot() {
     });
   }
   return {
-    customPacks, importedSandboxes, componentWorkflows: state.componentWorkflows || {}, hostNodeLayouts,
+    hostLayoutVer: 2, customPacks, importedSandboxes, componentWorkflows: state.componentWorkflows || {}, hostNodeLayouts,
     hostGroups: (hostRepo && Array.isArray(hostRepo.groups)) ? hostRepo.groups : [], starredRepos: [...state.starredRepos],
     collapsedWfGroups: state.collapsedWfGroups instanceof Set ? [...state.collapsedWfGroups] : [],
     collapsedNodeCats: state.collapsedNodeCats instanceof Set ? [...state.collapsedNodeCats] : [],

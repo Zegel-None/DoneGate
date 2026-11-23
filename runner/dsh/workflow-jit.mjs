@@ -18,63 +18,63 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'as_1', label: '合规代码快照放行通道', wired: true, boundOut: 'out_art' }]
   },
   'tpl-openspec': {
-    tplId: 'tpl-openspec', category: '筹备与润色', title: 'OpenSpec 规格审校节点',
+    tplId: 'tpl-openspec', category: '筹备与润色', title: '需求规格审校',
     repoSlug: 'Fission-AI/OpenSpec', repoUrl: 'https://github.com/Fission-AI/OpenSpec', pinnedVersion: 'v0.2.4',
     tip: '写码前扫描需求变更与公式/边界规格是否有冲突遗漏',
     inputs: [{ id: 'in_spec', name: '需求草案', type: 'SPEC' }],
-    outputs: [{ id: 'out_rep', name: '评估原文报告', type: 'TEXT' }, { id: 'out_sig', name: '0-3 完整度信号', type: 'SIGNAL' }],
+    outputs: [{ id: 'out_rep', name: '遗漏与冲突报告', type: 'TEXT' }, { id: 'out_sig', name: '规格是否齐全', type: 'SIGNAL' }],
     slots: [{ id: 'os_1', label: '需求冲突与边界报告', wired: true, boundOut: 'out_rep' }]
   },
   'tpl-deai-polish': {
     tplId: 'tpl-deai-polish', category: '筹备与润色', title: '去 AI 味文案润色套件', zeroDep: true,
     tip: '清理套话与机械腔，支持未达标自循环重润色',
     inputs: [{ id: 'in_draft', name: '待润色文本', type: 'TEXT' }],
-    outputs: [{ id: 'out_clean', name: '自然定稿放行', type: 'TEXT' }, { id: 'out_retry', name: '仍有AI味回流口', type: 'TEXT' }],
+    outputs: [{ id: 'out_clean', name: '自然定稿放行', type: 'TEXT' }, { id: 'out_retry', name: '仍有套话重改', type: 'TEXT' }],
     slots: [{ id: 'dp_1', label: '自然定稿放行', wired: true, boundOut: 'out_clean' }]
   },
   'tpl-prompt-gen': {
-    tplId: 'tpl-prompt-gen', category: '筹备与润色', title: '上下文提示词拼装器', zeroDep: true,
+    tplId: 'tpl-prompt-gen', category: '筹备与润色', title: '修改指令拼装', zeroDep: true,
     tip: '将上游报告、公共原语索引与修改边界组装成结构化提示词',
     inputs: [{ id: 'in_txt', name: '报告或规格', type: 'TEXT' }],
-    outputs: [{ id: 'out_prm', name: '结构化提示词', type: 'PROMPT' }],
+    outputs: [{ id: 'out_prm', name: '整理好的指令', type: 'PROMPT' }],
     slots: [{ id: 'pg_1', label: '注入原语防手搓提示词', wired: true, boundOut: 'out_prm' }]
   },
   'tpl-biome-knip': {
-    tplId: 'tpl-biome-knip', category: '代码护栏', title: 'Biome 语法与死代码节点',
+    tplId: 'tpl-biome-knip', category: '代码护栏', title: '语法与死代码检查',
     repoSlug: 'biomejs/biome', repoUrl: 'https://github.com/biomejs/biome', pinnedVersion: 'v1.9.4',
     tip: '静态语法错误检查与无用死代码清理',
-    inputs: [{ id: 'in_art', name: 'JS/TS 源码', type: 'ARTIFACT' }],
-    outputs: [{ id: 'out_sig', name: '0-3 状态码', type: 'SIGNAL' }, { id: 'out_dead', name: '死代码清单原文', type: 'TEXT' }],
-    slots: [{ id: 'bk_1', label: '语法错误 0-3 判定口', wired: true, boundOut: 'out_sig' }]
+    inputs: [{ id: 'in_art', name: '前端与脚本源码', type: 'ARTIFACT' }],
+    outputs: [{ id: 'out_sig', name: '是否通过检查', type: 'SIGNAL' }, { id: 'out_dead', name: '无用死代码清单', type: 'TEXT' }],
+    slots: [{ id: 'bk_1', label: '代码语法零报错检查', wired: true, boundOut: 'out_sig' }]
   },
   'tpl-router-rule': {
-    tplId: 'tpl-router-rule', category: '基础与分支', title: '规则条件分支接口', zeroDep: true,
+    tplId: 'tpl-router-rule', category: '基础与分支', title: '条件分流开关', zeroDep: true,
     tip: '按 0/1/2/3 返回码分流，自动承接外部断网或环境缺失离线桩降级',
-    inputs: [{ id: 'in_sig', name: '状态或指标', type: 'SIGNAL' }],
+    inputs: [{ id: 'in_sig', name: '上游检查结果', type: 'SIGNAL' }],
     outputs: [
-      { id: 'out_0', name: '0 过关放行', type: 'SIGNAL' },
-      { id: 'out_1', name: '1 触发拦截', type: 'TEXT' },
-      { id: 'out_3', name: '2/3 缺环境降级', type: 'TEXT' }
+      { id: 'out_0', name: '检查通过放行', type: 'SIGNAL' },
+      { id: 'out_1', name: '未过打回重修', type: 'TEXT' },
+      { id: 'out_3', name: '缺环境转人工', type: 'TEXT' }
     ],
-    slots: [{ id: 's_0', label: '0 号口放行下游测试', wired: true, boundOut: 'out_0' }, { id: 's_3', label: '2/3 号口切离线桩降级', wired: true, boundOut: 'out_3' }]
+    slots: [{ id: 's_0', label: '检查通过放行下游', wired: true, boundOut: 'out_0' }, { id: 's_3', label: '缺少环境走降级或人工处理', wired: true, boundOut: 'out_3' }]
   },
   'tpl-router-ai': {
-    tplId: 'tpl-router-ai', category: '基础与分支', title: 'AI 语义条件分支接口', zeroDep: true,
+    tplId: 'tpl-router-ai', category: '基础与分支', title: '智能语义分流', zeroDep: true,
     tip: '阅读长文报告或设计草案，按业务成熟度走不同分支',
     inputs: [{ id: 'in_txt', name: '原文或方案', type: 'TEXT' }],
     outputs: [{ id: 'out_ok', name: '齐全可放行', type: 'SPEC' }, { id: 'out_trim', name: '未达标回流', type: 'TEXT' }],
     slots: [{ id: 'ai_ok', label: '达标放行出口', wired: true, boundOut: 'out_ok' }]
   },
   'tpl-playwright': {
-    tplId: 'tpl-playwright', category: '端侧与构建', title: 'Playwright 网页联调节点',
+    tplId: 'tpl-playwright', category: '端侧与构建', title: '网页真机点击联调',
     repoSlug: 'microsoft/playwright', repoUrl: 'https://github.com/microsoft/playwright', pinnedVersion: 'v1.48.0',
     tip: '真实无头浏览器端到端页面点击流与控制台红字捕获',
-    inputs: [{ id: 'in_gate', name: '前置放行信号', type: 'SIGNAL' }],
-    outputs: [{ id: 'out_sig', name: '0-3 联调码', type: 'SIGNAL' }, { id: 'out_err', name: '页面报错摘要', type: 'TEXT' }],
-    slots: [{ id: 'pw_1', label: '关键页面无白屏 0-3 判定口', wired: true, boundOut: 'out_sig' }]
+    inputs: [{ id: 'in_gate', name: '前置放行通知', type: 'SIGNAL' }],
+    outputs: [{ id: 'out_sig', name: '页面是否正常', type: 'SIGNAL' }, { id: 'out_err', name: '页面报错详情', type: 'TEXT' }],
+    slots: [{ id: 'pw_1', label: '关键页面不白屏且按钮可点', wired: true, boundOut: 'out_sig' }]
   },
   'tpl-gradle': {
-    tplId: 'tpl-gradle', category: '端侧与构建', title: 'Gradle 安卓构建器',
+    tplId: 'tpl-gradle', category: '端侧与构建', title: '安卓安装包构建',
     repoSlug: 'gradle/gradle', repoUrl: 'https://github.com/gradle/gradle', pinnedVersion: 'v8.10.2',
     tip: '执行 assembleRelease 产出 APK 安装包供下游真机测试',
     inputs: [{ id: 'in_src', name: '源码快照', type: 'ARTIFACT' }],
@@ -82,20 +82,20 @@ export const CORE_ATOMIC_BRICKS = {
     slots: [{ id: 'gr_1', label: '输出 APK 文件与哈希指纹', wired: true, boundOut: 'out_apk' }]
   },
   'tpl-maestro': {
-    tplId: 'tpl-maestro', category: '端侧与构建', title: 'Maestro 安卓交互节点',
+    tplId: 'tpl-maestro', category: '端侧与构建', title: '安卓界面交互验收',
     repoSlug: 'mobile-dev-inc/Maestro', repoUrl: 'https://github.com/mobile-dev-inc/Maestro', pinnedVersion: 'v1.38.1',
     tip: '驱动安卓模拟器执行核心用户点击流并捕获闪退',
-    inputs: [{ id: 'in_apk', name: '待测 APK', type: 'ARTIFACT' }],
-    outputs: [{ id: 'out_sig', name: '0-3 验收码', type: 'SIGNAL' }],
-    slots: [{ id: 'ms_1', label: '核心页面可点通 0-3 裁决口', wired: true, boundOut: 'out_sig' }]
+    inputs: [{ id: 'in_apk', name: '待测安装包', type: 'ARTIFACT' }],
+    outputs: [{ id: 'out_sig', name: '是否通过验收', type: 'SIGNAL' }],
+    slots: [{ id: 'ms_1', label: '核心页面点击流程能否走通', wired: true, boundOut: 'out_sig' }]
   },
   'tpl-gitleaks': {
-    tplId: 'tpl-gitleaks', category: '安全与运维', title: 'Gitleaks 密钥防泄漏节点',
+    tplId: 'tpl-gitleaks', category: '安全与运维', title: '密钥密码防泄漏',
     repoSlug: 'gitleaks/gitleaks', repoUrl: 'https://github.com/gitleaks/gitleaks', pinnedVersion: 'v8.18.4',
     tip: '拦截误提交的 API 密钥、私钥与数据库口令',
     inputs: [{ id: 'in_repo', name: '代码变更', type: 'ANY' }],
-    outputs: [{ id: 'out_sig', name: '0-3 安全码', type: 'SIGNAL' }, { id: 'out_leak', name: '脱敏命中位置', type: 'TEXT' }],
-    slots: [{ id: 'gl_1', label: '硬编码私钥清零状态口', wired: true, boundOut: 'out_sig' }]
+    outputs: [{ id: 'out_sig', name: '是否零泄漏', type: 'SIGNAL' }, { id: 'out_leak', name: '疑似泄漏位置', type: 'TEXT' }],
+    slots: [{ id: 'gl_1', label: '检查是否误传密码与私钥', wired: true, boundOut: 'out_sig' }]
   },
   'tpl-human-gate': {
     tplId: 'tpl-human-gate', category: '基础与分支', title: '人工审批闸门', isHumanGate: true, zeroDep: true,
@@ -140,13 +140,13 @@ export function listAtomicBrickCatalog(projectRoot) {
     const up = cap.upstream || {};
     const nodeStub = {
       tplId, tool, category: card.category || '代码护栏',
-      title: card.title || `${tool} 适配器节点`,
+      title: card.title || '外部工具检查节点',
       repoSlug: up.repo || '', repoUrl: up.homepage || (up.repo ? `https://github.com/${up.repo}` : ''),
       pinnedVersion: adp.testedToolRange || 'v1.0.0',
       tip: card.summary || `适配器协议确定性适配器节点（${tool}）`,
       inputs: Array.isArray(card.inputs) && card.inputs.length ? card.inputs : [{ id: 'in_src', name: '代码快照', type: 'ARTIFACT' }],
-      outputs: Array.isArray(card.outputs) && card.outputs.length ? card.outputs : [{ id: 'out_sig', name: '0-3 判定码', type: 'SIGNAL' }],
-      slots: [{ id: 'ob_0', label: `${tool} 核心门禁`, wired: true, boundOut: 'out_sig' }]
+      outputs: Array.isArray(card.outputs) && card.outputs.length ? card.outputs : [{ id: 'out_sig', name: '是否通过检查', type: 'SIGNAL' }],
+      slots: [{ id: 'ob_0', label: '自动执行规则检查', wired: true, boundOut: 'out_sig' }]
     };
     const depProbe = inspectWorkflowDeps(root, { id: `probe-${tool}`, nodes: [{ id: 'n1', ...nodeStub }] });
     map.set(tplId, { ...nodeStub, ready: depProbe.ready, missingCount: depProbe.missingCount });
@@ -208,37 +208,37 @@ export function composeBrickChainToPack(brickMap, tplIds, meta = {}) {
 
 const BUILTIN_MACRO_DEFS = [
   {
-    id: 'pack-core-logic', name: '核心纯逻辑护栏包', group: '客户端与全栈',
+    id: 'pack-core-logic', name: '核心纯逻辑工作流', group: '客户端与全栈',
     tplIds: ['tpl-anti-slop', 'tpl-router-rule', 'tpl-prompt-gen'],
     mandatoryTplIds: ['tpl-anti-slop'],
     matchProfile: { domains: ['core', 'tool', 'logic'], exts: ['.mjs', '.js', '.ts', '.py'], keywords: ['计算', '算法', '引擎', '内核', '逻辑', '门禁', '底座', '工具', '脚手架', '转接'] }
   },
   {
-    id: 'pack-web', name: '网页全栈开发包', group: '客户端与全栈',
+    id: 'pack-web', name: '网页全栈工作流', group: '客户端与全栈',
     tplIds: ['tpl-anti-slop', 'tpl-biome-knip', 'tpl-router-rule', 'tpl-playwright'],
     mandatoryTplIds: ['tpl-anti-slop'],
     matchProfile: { domains: ['ui', 'web'], exts: ['.tsx', '.jsx', '.vue', '.css', '.html'], keywords: ['界面', 'ui', '画布', '前端', '页面', '弹窗', '工作台', '按钮', '视图', '看板'] }
   },
   {
-    id: 'pack-api-guard', name: '接口与密钥联防包', group: '安全与运维',
+    id: 'pack-api-guard', name: '接口与密钥工作流', group: '安全与运维',
     tplIds: ['tpl-anti-slop', 'tpl-gitleaks', 'tpl-router-rule'],
     mandatoryTplIds: ['tpl-anti-slop', 'tpl-gitleaks'],
     matchProfile: { domains: ['api', 'security'], exts: ['.ts', '.py', '.mjs'], keywords: ['接口', '路由', '鉴权', '收银', '支付', '账本', '密钥', '网关', '订单', 'token', 'oauth', 'webhook'] }
   },
   {
-    id: 'pack-android', name: '安卓开发包', group: '客户端与全栈',
+    id: 'pack-android', name: '安卓应用工作流', group: '客户端与全栈',
     tplIds: ['tpl-anti-slop', 'tpl-gradle', 'tpl-maestro'],
     mandatoryTplIds: ['tpl-anti-slop'],
     matchProfile: { domains: ['mobile', 'android'], exts: ['.kt', '.java', '.gradle'], keywords: ['安卓', 'android', 'apk', '移动端'] }
   },
   {
-    id: 'pack-polish-loop', name: '去 AI 味循环润色包', group: '内容润色与筹备',
+    id: 'pack-polish-loop', name: '去 AI 味润色工作流', group: '内容润色与筹备',
     tplIds: ['tpl-openspec', 'tpl-deai-polish', 'tpl-prompt-gen'],
     mandatoryTplIds: ['tpl-deai-polish'],
     matchProfile: { domains: ['docs', 'spec'], exts: ['.md'], keywords: ['文档', '文案', '规格', '润色', '契约', '立约', '说明'] }
   },
   {
-    id: 'pack-release', name: '上线安全守护包', group: '发版与线上维护',
+    id: 'pack-release', name: '上线安全工作流', group: '发版与线上维护',
     tplIds: ['tpl-anti-slop', 'tpl-gitleaks', 'tpl-router-ai', 'tpl-human-gate'],
     mandatoryTplIds: ['tpl-anti-slop', 'tpl-gitleaks'],
     matchProfile: { domains: ['release'], exts: ['.cmd', '.yml'], keywords: ['发版', '上线', '灰度', '总装', '分发', '发布'] }

@@ -6,7 +6,7 @@ import { readSavedWorkbenchState } from '../atlas/contract.mjs';
 import { buildMicroVerdictCard, parseQuotedTargetsFromMessage, verifySubagentNodeReceipt } from './quote-protocol.mjs';
 import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplorer, resolveSafeWorkspaceFolders } from './win-paths.mjs';
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
-import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
+import { inspectWorkflowDeps, provisionWorkflowDeps, readSharedRefreshStamp, readWorkflowDepsStatus, refreshWorkflowDepsStamp } from './workflow-deps.mjs';
 import { loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import { loadCampaignCheckpoint } from './campaign-autopilot.mjs';
 import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
@@ -15,6 +15,15 @@ import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
 import { buildJitBootstrapSummary } from './workflow-jit.mjs';
 import { starGitHubRepo } from './github-star.mjs';
 import { importExternalProject, initWorkspaceProject } from './project-ops.mjs';
+
+function syncHubDepsRefreshStamp(root, hub) {
+  const stamp = readSharedRefreshStamp(root);
+  if (stamp.exists && stamp.seq > Number(hub.lastDepsRefreshSeq || 0)) {
+    hub.lastDepsRefreshSeq = stamp.seq;
+    hub.emit({ type: 'workflow_deps_updated', packId: stamp.workflowId || '_shared', refreshStamp: stamp });
+  }
+  return stamp;
+}
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -54,9 +63,10 @@ async function handleSystemAndProjectRoutes(req, res, cleanPath, root, hub, opts
   }
   if (cleanPath === '/atlas/refresh' && req.method === 'POST') {
     const refreshedAt = new Date().toISOString();
+    const depsRefreshStamp = syncHubDepsRefreshStamp(root, hub);
     mkdirSync(join(root, '.donegate'), { recursive: true });
     exportDashboardHtml(root, join(root, '.donegate', 'dashboard.html'));
-    sendJson(res, 200, { ok: true, refreshedAt, atlas: buildDashboardPayload(root) });
+    sendJson(res, 200, { ok: true, refreshedAt, depsRefreshStamp, atlas: buildDashboardPayload(root) });
     return true;
   }
   if (cleanPath === '/github/star' && req.method === 'POST') {
@@ -123,13 +133,14 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opt
     }
 
     if (cleanPath === '/events' && req.method === 'GET') {
+      const depsRefreshStamp = syncHubDepsRefreshStamp(root, hub);
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive'
       });
       res.write(`data: ${JSON.stringify({
-        type: 'connected', ts: Date.now(), dockItems: hub.dockItems,
+        type: 'connected', ts: Date.now(), dockItems: hub.dockItems, depsRefreshStamp,
         cards: [...hub.activeCards.values()], nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
         autopilot: loadAutopilotCheckpoint(root), campaign: loadCampaignCheckpoint(root)
       })}\n\n`);
@@ -142,8 +153,9 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opt
     }
 
     if (cleanPath === '/bootstrap' && req.method === 'GET') {
+      const depsRefreshStamp = syncHubDepsRefreshStamp(root, hub);
       sendJson(res, 200, {
-        ok: true, platform: process.platform,
+        ok: true, platform: process.platform, depsRefreshStamp,
         atlas: buildDashboardPayload(root), state: readSavedWorkbenchState(root),
         jit: buildJitBootstrapSummary(root), autopilot: loadAutopilotCheckpoint(root),
         campaign: loadCampaignCheckpoint(root), nodeTelemetry: Object.fromEntries(hub.nodeTelemetry),
@@ -283,15 +295,33 @@ async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub,
       return true;
     }
 
-    if (cleanPath === '/workflow-deps/inspect' && req.method === 'POST') {
+    if (cleanPath === '/workflow-deps/inspect' && (req.method === 'POST' || req.method === 'GET')) {
+      const refreshStamp = syncHubDepsRefreshStamp(root, hub);
+      if (req.method === 'GET') {
+        const u = new URL(req.url || '/', 'http://127.0.0.1');
+        const wfId = u.searchParams.get('workflow') || u.searchParams.get('packId') || null;
+        sendJson(res, 200, { ok: true, refreshStamp, report: readWorkflowDepsStatus(root, wfId) });
+        return true;
+      }
       const body = await readJsonBody(req);
       if (body.packs && typeof body.packs === 'object') {
         const reports = {};
         for (const [k, pk] of Object.entries(body.packs)) reports[k] = inspectWorkflowDeps(root, pk);
-        sendJson(res, 200, { ok: true, reports });
+        sendJson(res, 200, { ok: true, refreshStamp, reports });
         return true;
       }
-      sendJson(res, 200, { ok: true, report: inspectWorkflowDeps(root, body.pack || {}) });
+      sendJson(res, 200, { ok: true, refreshStamp, report: body.pack ? inspectWorkflowDeps(root, body.pack) : readWorkflowDepsStatus(root, body.workflowId || body.packId || null) });
+      return true;
+    }
+
+    if (cleanPath === '/workflow-deps/refresh' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const wfId = body.workflowId || body.packId || (body.pack && body.pack.id) || null;
+      const refreshStamp = refreshWorkflowDepsStamp(root, { trigger: 'http-refresh', workflowId: wfId });
+      hub.lastDepsRefreshSeq = refreshStamp.seq;
+      const report = body.pack ? inspectWorkflowDeps(root, body.pack) : readWorkflowDepsStatus(root, wfId);
+      hub.emit({ type: 'workflow_deps_updated', packId: report.packId, refreshStamp, report });
+      sendJson(res, 200, { ok: true, refreshStamp, report });
       return true;
     }
 

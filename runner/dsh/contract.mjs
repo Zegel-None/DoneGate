@@ -11,3 +11,28 @@ export {
 } from './quote-protocol.mjs';
 export { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
 export { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS } from './ui-aesthetics.mjs';
+export { ARCHETYPE_CSS, renderProposalArchetypeBody, resolveProposalArchetype } from './ui-archetypes.mjs';
+export {
+  DEFAULT_RANGE_CHUNK_BYTES,
+  assertPureAsciiBatch,
+  buildProvisionAgentPrompt,
+  buildSharedPoolLauncherScripts,
+  buildWinHardenedGitArgs,
+  buildWorkflowDepEnv,
+  cleanStaleGitIndexLock,
+  downloadWithRangeResume,
+  ensureSharedPoolSkeleton,
+  installSharedPoolBinaryDep,
+  inspectWorkflowDeps,
+  provisionCleanRepoSnapshot,
+  provisionWorkflowDeps,
+  readSharedRefreshStamp,
+  readWorkflowDepsStatus,
+  recordSharedPoolDepReady,
+  refreshWorkflowDepsStamp,
+  repairGitRepoCleanIndex,
+  resolvePoolGradleUserHome,
+  runWorkflowDepsCli,
+  verifySharedPoolLauncher,
+  writeSharedPoolLaunchers
+} from './workflow-deps.mjs';

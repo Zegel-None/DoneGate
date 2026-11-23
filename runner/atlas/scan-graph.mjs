@@ -1,5 +1,5 @@
-// 多语言模块依赖图谱与「前端请求 ↔ 后端路由」跨栈调用链缝合器（<= 300 行聚焦子模块）
-import { existsSync } from 'node:fs';
+// 多语言模块依赖图谱与「前端请求 ↔ 后端路由 / 根目录配置入口 ↔ 下游模块」调用链缝合器
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 
@@ -20,7 +20,9 @@ function loadTsPathAliases(projectRoot) {
         aliases.push({ prefix, targetPrefix });
       }
       return aliases;
-    } catch { /* ignore non-standard jsonc */ }
+    } catch (err) {
+      void err;
+    }
   }
   return [];
 }
@@ -31,7 +33,6 @@ function resolveModuleCandidate(rawBase, fileSet) {
   for (const ext of exts) {
     if (fileSet.has(clean + ext)) return clean + ext;
   }
-  // Support TypeScript ESM './foo.js' -> './foo.ts'
   if (clean.endsWith('.js')) {
     const stem = clean.slice(0, -3);
     if (fileSet.has(stem + '.ts')) return stem + '.ts';
@@ -74,12 +75,61 @@ export function extractExportsOfFile(rel, src) {
 }
 
 function routeToPatternRegex(routePath) {
-  // Convert /api/v1/orders/{order_id} or /api/v1/orders/:id or /api/v1/orders/<int:id> to segment regex
   const segs = String(routePath || '/').split('/').filter(Boolean).map((seg) => {
     if (/^\{[^}]+\}$|^:[A-Za-z0-9_]+$|^<[^>]+>$|^\[[^\]]+\]$/.test(seg)) return '[^/]+';
     return seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   });
   return new RegExp('^/' + segs.join('/') + '/?$');
+}
+
+function pickDirRepresentativeFile(dirPrefix, sourceFiles) {
+  const cleanDir = dirPrefix.replace(/^\^+/, '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '') + '/';
+  const cands = sourceFiles.filter((f) => f.startsWith(cleanDir));
+  if (cands.length === 0) return null;
+  return cands.find((f) => /(?:^|\/)(?:donegate|index|main|app|contract)\.[a-z0-9]+$/i.test(f)) || cands[0];
+}
+
+function scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fileSet, addEdge) {
+  const pathTokenRe = /(?:^|['"`\s=(%~0\\/-])((?:\.\/)?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.(?:mjs|cjs|js|ts|tsx|jsx|py))\b/g;
+  for (const rel of sourceFiles) {
+    const src = fileSourceMap.get(rel) || '';
+    for (const m of src.matchAll(pathTokenRe)) {
+      const clean = m[1].replace(/\\/g, '/').replace(/^\.\//, '');
+      if (fileSet.has(clean) && clean !== rel) {
+        addEdge(rel, clean, !rel.includes('/') ? 'entry-ref' : 'script-ref', clean);
+      }
+    }
+    if (!rel.includes('/')) {
+      for (const dm of src.matchAll(/['"`]\^?([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)\/(?:\.\*)?['"`]/g)) {
+        const rep = pickDirRepresentativeFile(dm[1], sourceFiles);
+        if (rep && rep !== rel) addEdge(rel, rep, 'config-ref', `${dm[1]}/`);
+      }
+    }
+  }
+
+  const rootAnchor = sourceFiles.find((f) => !f.includes('/'));
+  if (!rootAnchor) return;
+  const rootTexts = [];
+  for (const name of ['package.json', 'adapters.registry.json']) {
+    const raw = readMaybe(join(projectRoot, name));
+    if (raw) rootTexts.push([name, raw]);
+  }
+  try {
+    for (const ent of readdirSync(projectRoot, { withFileTypes: true })) {
+      if (ent.isFile() && /\.(?:cmd|sh)$/i.test(ent.name)) {
+        const raw = readMaybe(join(projectRoot, ent.name));
+        if (raw) rootTexts.push([ent.name, raw]);
+      }
+    }
+  } catch (err) {
+    void err;
+  }
+  for (const [label, txt] of rootTexts) {
+    for (const m of txt.matchAll(pathTokenRe)) {
+      const clean = m[1].replace(/\\/g, '/').replace(/^\.\//, '');
+      if (fileSet.has(clean) && clean !== rootAnchor) addEdge(rootAnchor, clean, 'entry-ref', `${label} -> ${clean}`);
+    }
+  }
 }
 
 export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap, entrypoints }) {
@@ -97,7 +147,6 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
     edges.push({ from, to, kind, detail });
   };
 
-  // Pre-compile backend HTTP route matchers for frontend -> backend cross-stack stitching
   const backendRoutes = entrypoints
     .filter((e) => ['fastapi-route', 'flask-route', 'node-api'].includes(e.kind) && e.routePath)
     .map((e) => ({ ...e, re: routeToPatternRegex(e.routePath) }));
@@ -108,7 +157,6 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
     const ext = extname(rel).toLowerCase();
 
     if (ext === '.py') {
-      // Python: from ..pkg.mod import a, b  OR  import pkg.mod
       const stripped = src.replace(/#.*$/gm, '');
       for (const m of stripped.matchAll(/^\s*from\s+(\.*)([A-Za-z0-9_.]*)\s+import\s+([^\r\n#]+)/gm)) {
         const dots = (m[1] || '').length;
@@ -116,7 +164,6 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
         const hit = resolvePythonImport(rel, modName, dots, fileSet);
         if (hit) addEdge(rel, hit, 'py-import', `import ${modName || m[3].trim()}`);
         else {
-          // Also check if `from pkg import submodule` points to pkg/submodule.py
           for (const subSym of m[3].split(',').map((s) => s.trim().split(/\s+/)[0]).filter(Boolean)) {
             const subHit = resolvePythonImport(rel, modName ? `${modName}.${subSym}` : subSym, dots, fileSet);
             if (subHit) addEdge(rel, subHit, 'py-import', `import ${subSym}`);
@@ -133,7 +180,6 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
       continue;
     }
 
-    // JS / TS / Vue static imports & re-exports
     for (const m of src.matchAll(/(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+[^\n;]*?\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g)) {
       const spec = m[1].split(/[?#]/)[0].trim();
       if (!spec) continue;
@@ -152,7 +198,6 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
       if (hit) addEdge(rel, hit, 'js-import', spec);
     }
 
-    // Cross-stack HTTP bridge: match fetch('/api/...'), axios.post('/api/...'), apiClient(`/api/orders/${id}`)
     if (backendRoutes.length > 0) {
       const httpCallRe = /\b(?:fetch|axios(?:\.(?:get|post|put|delete|patch))?|request|apiClient|http(?:\.(?:get|post|put|delete|patch))?)\s*\(\s*(['"`])(\/[^'"`\s)]+)\1/g;
       for (const hm of src.matchAll(httpCallRe)) {
@@ -166,7 +211,8 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
     }
   }
 
-  // Enrich with codegraph observation cycles if present on disk
+  scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fileSet, addEdge);
+
   let cycleCount = 0;
   const cgObsPath = join(projectRoot, '.donegate', 'adapters', 'codegraph', 'observation.json');
   if (existsSync(cgObsPath)) {

@@ -1,4 +1,4 @@
-// DSH 原生引用胶囊编码（含 uiOwner / sliceCmd 直达路由）、Alt+单击全元素拾取、画布跟随微卡与右栏源码联动桥
+// DSH 原生引用胶囊编码（含 uiOwner / sliceCmd 直达路由）、Alt+单击全元素拾取、画布跟随微卡与源码预览联动桥
 const WB_DSH_BRIDGE_SCRIPT = `
 const DSH_URL_PARAMS = (() => {
   try { return new URLSearchParams(window.location.search || ''); } catch (err) { void err; return new URLSearchParams(); }
@@ -192,7 +192,7 @@ function openRightFilePreview(filePath, title, customDiff) {
       type: 'dg:open-right-file',
       address: dshAddr
     }, '*');
-    showToast('👁 已在 DSH 右侧栏打开：' + cleanFile);
+    showToast('👁 已打开关联源码预览：' + cleanFile);
     return;
   }
   dshRuntime.rightPreview = {
@@ -201,7 +201,7 @@ function openRightFilePreview(filePath, title, customDiff) {
     path: cleanFile,
     diffText: customDiff || [
       \`// 完结门契约绑定文件预览：\${cleanFile}\`,
-      \`// DSH 右栏协议地址：\${dshAddr}\`,
+      \`// DSH 源码预览协议地址：\${dshAddr}\`,
       '@@ -14,6 +14,11 @@ export async function runGateStep(ctx) {',
       '-  const timeoutMs = 5000;',
       '+  const timeoutMs = Number(ctx.timeoutMs || 10000);',
@@ -273,7 +273,7 @@ function renderDshCanvasAnchors() {
           <div class="flex items-center justify-between gap-1.5 flex-wrap text-[10.5px]" style="color:var(--text-secondary);">
             <span>\${esc(anc.line2 || '🟢 门禁 3/3 · 📄 1 文件 (+12/-3)')}</span>
             <span class="inline-flex items-center gap-1">
-              <button type="button" class="dg-micro-btn" data-anc-diff="\${esc(key)}">👁 右栏看改动</button>
+              <button type="button" class="dg-micro-btn" data-anc-diff="\${esc(key)}">👁 查看改动</button>
               <button type="button" class="dg-micro-btn" data-anc-undo="\${esc(key)}">↩ 撤销</button>
             </span>
           </div>

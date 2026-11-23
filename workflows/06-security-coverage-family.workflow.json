@@ -52,14 +52,30 @@
     }
   ],
   "groups": [
-    { "id": "grp-06-scanners", "title": "Tier-1 快速安全覆盖族（密钥 + SBOM + 锁文件 + IaC + SAST）", "x": 28, "y": 42, "w": 1564, "h": 326, "color": "rose" },
-    { "id": "grp-06-merge", "title": "内置多源去重定级 (vuln-merge) 与授权处置闸门", "x": 1620, "y": 42, "w": 920, "h": 336, "color": "amber" }
+    {
+      "id": "grp-06-scanners",
+      "title": "Tier-1 快速安全覆盖族（密钥 + SBOM + 锁文件 + IaC + SAST）",
+      "x": 28,
+      "y": 42,
+      "w": 1564,
+      "h": 326,
+      "color": "rose"
+    },
+    {
+      "id": "grp-06-merge",
+      "title": "内置多源去重定级 (vuln-merge) 与授权处置闸门",
+      "x": 1620,
+      "y": 42,
+      "w": 920,
+      "h": 336,
+      "color": "amber"
+    }
   ],
   "nodes": [
     {
       "id": "sec-gitleaks",
       "tplId": "tpl-adp-gitleaks",
-      "title": "Gitleaks 密钥防泄漏门禁",
+      "title": "密钥密码防泄漏",
       "tip": "秒级扫描提交历史与工作区中的 API Key、私钥与凭据熵值（禁止未授权开启外连验活）",
       "repoSlug": "gitleaks/gitleaks",
       "repoUrl": "https://github.com/gitleaks/gitleaks",
@@ -73,20 +89,44 @@
       "y": 98,
       "w": 260,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "代码仓与 Git 历史", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "代码仓与提交历史",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 零密钥码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "脱敏位置报告", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "是否零密码泄漏",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "打码泄漏位置报告",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "gl_1", "label": "硬编码私钥零容忍拦截", "wired": true, "boundOut": "out_sig" },
-        { "id": "gl_2", "label": "脱敏指纹与提交号导出", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "gl_1",
+          "label": "严禁把密码私钥写进代码",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "gl_2",
+          "label": "导出打码后的泄漏文件位置",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sec-syft",
       "tplId": "tpl-adp-syft",
-      "title": "Syft CycloneDX SBOM 生成卡",
+      "title": "软件依赖清单盘点",
       "tip": "产出锁死 SHA-256 的标准 CycloneDX 软件物料清单，供下游多源漏洞扫描与发版归档复用",
       "repoSlug": "anchore/syft",
       "repoUrl": "https://github.com/anchore/syft",
@@ -100,20 +140,44 @@
       "y": 98,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_art", "name": "源码与构建制品", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_art",
+          "name": "密钥检查通过通知",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sbom", "name": "CycloneDX SBOM", "type": "ARTIFACT" },
-        { "id": "out_sig", "name": "0-3 落盘状态码", "type": "SIGNAL" }
+        {
+          "id": "out_sbom",
+          "name": "第三方依赖清单",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_sig",
+          "name": "是否盘点完成",
+          "type": "SIGNAL"
+        }
       ],
       "slots": [
-        { "id": "sy_1", "label": "生成 CycloneDX JSON 物料清单", "wired": true, "boundOut": "out_sbom" },
-        { "id": "sy_2", "label": "统计多语言包组件分布", "wired": true, "boundOut": "out_sig" }
+        {
+          "id": "sy_1",
+          "label": "导出完整第三方依赖清单",
+          "wired": true,
+          "boundOut": "out_sbom"
+        },
+        {
+          "id": "sy_2",
+          "label": "统计各语言依赖包数量",
+          "wired": true,
+          "boundOut": "out_sig"
+        }
       ]
     },
     {
       "id": "sec-osv",
       "tplId": "tpl-adp-osv-scanner",
-      "title": "OSV-Scanner 锁文件扫描（覆盖源 A）",
+      "title": "第三方依赖漏洞排查",
       "tip": "精确解析多生态锁文件（npm/PyPI/Go/Cargo/Maven）查询 OSV 漏洞库",
       "repoSlug": "google/osv-scanner",
       "repoUrl": "https://github.com/google/osv-scanner",
@@ -127,20 +191,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "SBOM 与锁文件", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "依赖清单与锁文件",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 漏洞扫描码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "OSV 原始命中报告", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "是否无已知漏洞",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "依赖包漏洞明细",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "osv_1", "label": "直接/传递依赖 CVE 扫描", "wired": true, "boundOut": "out_sig" },
-        { "id": "osv_2", "label": "输出 OSV JSON 供下游归并", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "osv_1",
+          "label": "排查直接与间接依赖包漏洞",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "osv_2",
+          "label": "输出依赖漏洞清单供去重合并",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sec-trivy",
       "tplId": "tpl-adp-trivy",
-      "title": "Trivy 容器与 IaC 扫描（覆盖源 B）",
+      "title": "容器与部署配置体检",
       "tip": "补齐 OSV 看不见的 OS 系统包（apk/apt）与 Dockerfile/K8s/Terraform 特权配置缺陷",
       "repoSlug": "aquasecurity/trivy",
       "repoUrl": "https://github.com/aquasecurity/trivy",
@@ -154,20 +242,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "Dockerfile 与 IaC", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "前序扫描完成通知",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 配置安全码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "Trivy 报告产物", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "部署配置是否安全",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "容器与配置风险报告",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "tv_1", "label": "容器特权与 IaC 错误配置", "wired": true, "boundOut": "out_sig" },
-        { "id": "tv_2", "label": "输出 Trivy JSON 供归并", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "tv_1",
+          "label": "排查容器权限过大与配置漏洞",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "tv_2",
+          "label": "输出部署风险报告供去重合并",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sec-semgrep",
       "tplId": "tpl-adp-semgrep",
-      "title": "Semgrep 快速 SAST 源码扫描",
+      "title": "代码安全隐患扫描",
       "tip": "拦截自写业务代码中的 SQL/命令注入、SSRF、硬编码弱加密与不安全反序列化",
       "repoSlug": "semgrep/semgrep",
       "repoUrl": "https://github.com/semgrep/semgrep",
@@ -181,20 +293,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "多语言业务源码", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "前序体检完成通知",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 SAST 状态码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "ERROR 级命中明细", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "是否无高危隐患",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "高危代码隐患明细",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "sg_1", "label": "ERROR 级高危规则零命中", "wired": true, "boundOut": "out_sig" },
-        { "id": "sg_2", "label": "文件行号与规则 ID 导出", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "sg_1",
+          "label": "高危代码漏洞零命中检查",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "sg_2",
+          "label": "输出问题文件行号与原因",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sec-vuln-merge",
       "tplId": "tpl-adp-vuln-merge",
-      "title": "多源漏洞去重与可达性归并卡",
+      "title": "多源漏洞去重定级",
       "tip": "内置零二进制 aggregator 节点：按 (package, version, CVE/GHSA) 跨扫描器去重，结合运行时与可达性划分 P0-P3，根治告警刷屏",
       "repoSlug": "",
       "repoUrl": "",
@@ -208,20 +344,44 @@
       "y": 98,
       "w": 276,
       "h": null,
-      "inputs": [{ "id": "in_reports", "name": "多源扫描报告集", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_reports",
+          "name": "多份扫描结果汇总",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 P0 清零码", "type": "SIGNAL" },
-        { "id": "out_plan", "name": "P0-P3 去重修复单", "type": "ARTIFACT" }
+        {
+          "id": "out_sig",
+          "name": "是否无紧急高危项",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_plan",
+          "name": "按轻重排序修复单",
+          "type": "ARTIFACT"
+        }
       ],
       "slots": [
-        { "id": "vm_1", "label": "按包名+版本+CVE跨源去重", "wired": true, "boundOut": "out_plan" },
-        { "id": "vm_2", "label": "可达性×运行时依赖P0-P3定级", "wired": true, "boundOut": "out_sig" }
+        {
+          "id": "vm_1",
+          "label": "合并重复报警避免刷屏",
+          "wired": true,
+          "boundOut": "out_plan"
+        },
+        {
+          "id": "vm_2",
+          "label": "按实际风险排好修复优先级",
+          "wired": true,
+          "boundOut": "out_sig"
+        }
       ]
     },
     {
       "id": "sec-router",
       "tplId": "tpl-router-rule",
-      "title": "P0/P1 安全清零路由器",
+      "title": "高危漏洞清零分流",
       "tip": "0 无 P0 可达高危放行；1 检出 P0/高危漏洞回流升级依赖或修补代码（上限 3 轮）",
       "repoSlug": "",
       "repoUrl": "",
@@ -235,22 +395,55 @@
       "y": 98,
       "w": 256,
       "h": null,
-      "inputs": [{ "id": "in_sig", "name": "0-3 归并安全码", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_sig",
+          "name": "去重后安全结果",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_0", "name": "0 安全达标放行", "type": "SIGNAL" },
-        { "id": "out_1", "name": "1 携 P0 清单回修", "type": "TEXT" },
-        { "id": "out_3", "name": "2/3 离线库缺环境", "type": "TEXT" }
+        {
+          "id": "out_0",
+          "name": "安全达标放行",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_1",
+          "name": "有高危漏洞打回修",
+          "type": "TEXT"
+        },
+        {
+          "id": "out_3",
+          "name": "缺漏洞库转人工",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "s_0", "label": "0 号口进入安全放行闸门", "wired": true, "boundOut": "out_0" },
-        { "id": "s_1", "label": "1 号口回流修补依赖 (maxLoops=3)", "wired": true, "boundOut": "out_1" },
-        { "id": "s_3", "label": "2/3 号口提示更新离线库", "wired": true, "boundOut": "out_3" }
+        {
+          "id": "s_0",
+          "label": "无高危漏洞送往人工签字",
+          "wired": true,
+          "boundOut": "out_0"
+        },
+        {
+          "id": "s_1",
+          "label": "有高危项打回升级依赖（最多3轮）",
+          "wired": true,
+          "boundOut": "out_1"
+        },
+        {
+          "id": "s_3",
+          "label": "离线环境缺漏洞库转人工确认",
+          "wired": true,
+          "boundOut": "out_3"
+        }
       ]
     },
     {
       "id": "sec-human-gate",
       "tplId": "tpl-human-gate",
-      "title": "安全签字与深度扫描授权闸门",
+      "title": "上线安全人工签字",
       "tip": "红线节点：确认无未豁免高危项；若需对隔离靶场执行夜间 CodeQL / ZAP 主动爬虫扫描，必须在此人工授权目标域名",
       "repoSlug": "",
       "repoUrl": "",
@@ -264,19 +457,103 @@
       "y": 98,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_gate", "name": "Tier-1 通过信号", "type": "SIGNAL" }],
-      "outputs": [{ "id": "out_go", "name": "安全签字放行", "type": "FLOW" }],
-      "slots": [{ "id": "hg_1", "label": "人工确认豁免单或授权夜间扫描", "wired": true, "boundOut": "out_go" }]
+      "inputs": [
+        {
+          "id": "in_gate",
+          "name": "安全检查结果",
+          "type": "SIGNAL"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_go",
+          "name": "签字批准放行",
+          "type": "FLOW"
+        }
+      ],
+      "slots": [
+        {
+          "id": "hg_1",
+          "label": "人工确认安全报告后准予放行",
+          "wired": true,
+          "boundOut": "out_go"
+        }
+      ]
     }
   ],
   "links": [
-    { "id": "sec-lk-1", "fromNode": "sec-gitleaks", "fromSlot": "out_sig", "toNode": "sec-syft", "toSlot": "in_art", "type": "SIGNAL" },
-    { "id": "sec-lk-2", "fromNode": "sec-syft", "fromSlot": "out_sbom", "toNode": "sec-osv", "toSlot": "in_src", "type": "ARTIFACT" },
-    { "id": "sec-lk-3", "fromNode": "sec-osv", "fromSlot": "out_sig", "toNode": "sec-trivy", "toSlot": "in_src", "type": "SIGNAL" },
-    { "id": "sec-lk-4", "fromNode": "sec-trivy", "fromSlot": "out_sig", "toNode": "sec-semgrep", "toSlot": "in_src", "type": "SIGNAL" },
-    { "id": "sec-lk-5", "fromNode": "sec-semgrep", "fromSlot": "out_sig", "toNode": "sec-vuln-merge", "toSlot": "in_reports", "type": "SIGNAL" },
-    { "id": "sec-lk-6", "fromNode": "sec-vuln-merge", "fromSlot": "out_sig", "toNode": "sec-router", "toSlot": "in_sig", "type": "SIGNAL" },
-    { "id": "sec-lk-7", "fromNode": "sec-router", "fromSlot": "out_0", "toNode": "sec-human-gate", "toSlot": "in_gate", "type": "SIGNAL" },
-    { "id": "sec-lk-loop", "fromNode": "sec-router", "fromSlot": "out_1", "toNode": "sec-osv", "toSlot": "in_src", "type": "TEXT", "maxLoops": 3 }
+    {
+      "id": "sec-lk-1",
+      "fromNode": "sec-gitleaks",
+      "fromSlot": "out_sig",
+      "toNode": "sec-syft",
+      "toSlot": "in_art",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-2",
+      "fromNode": "sec-syft",
+      "fromSlot": "out_sbom",
+      "toNode": "sec-osv",
+      "toSlot": "in_src",
+      "type": "ARTIFACT"
+    },
+    {
+      "id": "sec-lk-3",
+      "fromNode": "sec-osv",
+      "fromSlot": "out_sig",
+      "toNode": "sec-trivy",
+      "toSlot": "in_src",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-4",
+      "fromNode": "sec-trivy",
+      "fromSlot": "out_sig",
+      "toNode": "sec-semgrep",
+      "toSlot": "in_src",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-5",
+      "fromNode": "sec-semgrep",
+      "fromSlot": "out_sig",
+      "toNode": "sec-vuln-merge",
+      "toSlot": "in_reports",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-6",
+      "fromNode": "sec-vuln-merge",
+      "fromSlot": "out_sig",
+      "toNode": "sec-router",
+      "toSlot": "in_sig",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-7",
+      "fromNode": "sec-router",
+      "fromSlot": "out_0",
+      "toNode": "sec-human-gate",
+      "toSlot": "in_gate",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sec-lk-loop",
+      "fromNode": "sec-router",
+      "fromSlot": "out_1",
+      "toNode": "sec-osv",
+      "toSlot": "in_src",
+      "type": "TEXT",
+      "maxLoops": 3
+    },
+    {
+      "id": "sec-lk-deg",
+      "fromNode": "sec-router",
+      "fromSlot": "out_3",
+      "toNode": "sec-human-gate",
+      "toSlot": "in_gate",
+      "type": "TEXT"
+    }
   ]
 }

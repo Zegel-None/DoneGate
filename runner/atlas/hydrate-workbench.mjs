@@ -1,4 +1,4 @@
-// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 工作流」交互模型（<= 300 行）
+// 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 工作流」交互模型
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +23,34 @@ const UPSTREAM_GITHUB_MAP = {
   codegraph: ['codegraph/codegraph', 'v1.6.0', 'v1.6.0']
 };
 
+const ADAPTER_HUMAN_META = {
+  stryker: { title: '防假绿破坏性抽检', inName: '受测代码与单测', outSig: '测试能否抓出真错', outObs: '漏抓错误位置清单', slots: ['故意改坏代码看测试能否抓出', '汇总未测到与超时行号'] },
+  codegraph: { title: '循环引用与波及范围', inName: '项目代码快照', outSig: '是否无死循环引用', outObs: '受波及模块清单', slots: ['模块间零死循环引用检查', '列出受本次改动影响的模块'] },
+  gitleaks: { title: '密钥密码防泄漏', inName: '代码与提交历史', outSig: '是否零密码泄漏', outObs: '疑似泄漏打码位置', slots: ['拦截误写进代码的密码私钥', '导出打码后的疑似泄漏行号'] },
+  'osv-scanner': { title: '第三方依赖漏洞排查', inName: '依赖锁文件清单', outSig: '是否无高危漏洞', outObs: '依赖漏洞详情表', slots: ['高危与严重依赖漏洞清零', '汇总中低风险待升级依赖'] },
+  depcruise: { title: '模块跨层乱引拦截', inName: '模块引用关系', outSig: '分层边界是否合规', outObs: '违规跨层引用清单', slots: ['严禁跨目录违规互相调用', '导出违规引用调用路径'] },
+  beads: { title: '任务先后顺序排期', inName: '待办任务清单', outSig: '排期是否无死锁', outObs: '推荐施工顺序表', slots: ['检查任务前置依赖无卡死', '生成可直接开工的任务队列'] },
+  'fuck-u-code': { title: '代码臃肿复杂度体检', inName: '业务源码目录', outSig: '复杂度是否可控', outObs: '难懂臃肿文件清单', slots: ['揪出嵌套过深的绕脑函数', '统计扫描文件与复杂度得分'] },
+  jscpd: { title: '重复粘贴代码排查', inName: '项目源码目录', outSig: '重复率是否达标', outObs: '大段重复代码位置', slots: ['拦截大段复制粘贴重复代码', '列出可提取公共函数的位置'] },
+  openspec: { title: '需求规格完整度审校', inName: '需求方案草稿', outSig: '规格是否齐全', outObs: '遗漏与冲突清单', slots: ['检查需求方案有无缺项冲突'] },
+  srclight: { title: '已有代码索引盘点', inName: '项目代码快照', outSig: '索引是否最新', outObs: '公共模块索引表', slots: ['核对代码索引是否同步最新', '导出可复用公共函数目录'] },
+  knip: { title: '废文件与幽灵依赖清理', inName: '工程配置与源码', outSig: '是否无幽灵依赖', outObs: '废文件与闲置包表', slots: ['拦截漏写进配置的幽灵依赖', '列出无人引用的废文件与导出'] },
+  'dotenv-linter': { title: '环境变量配置检查', inName: '环境配置文件', outSig: '配置格式是否合规', outObs: '漏配与重复项清单', slots: ['排查环境变量拼写与重复键', '核对示例配置与正式配置一致'] },
+  playwright: { title: '网页真机点击联调', inName: '待测网页入口', outSig: '页面流程是否走通', outObs: '页面报错与闪烁项', slots: ['核心页面点击流程零报错', '排查偶发失灵的不稳定操作'] },
+  maestro: { title: '安卓界面交互验收', inName: '待测安卓安装包', outSig: '点击验收是否通过', outObs: '失败步骤与闪退表', slots: ['核心界面点击流程走通检查', '记录失败与跳过的交互步骤'] },
+  schemathesis: { title: '接口异常输入压测', inName: '接口文档与服务', outSig: '接口是否扛住异常', outObs: '崩溃报错复现样本', slots: ['异常参数压测零内部崩溃', '提取触发报错的请求样本'] },
+  trivy: { title: '容器与部署配置体检', inName: '容器与部署文件', outSig: '部署配置是否安全', outObs: '配置风险与漏洞表', slots: ['排查容器权限过大与配置错漏', '汇总镜像漏洞与敏感信息风险'] },
+  biome: { title: '代码语法快速检查', inName: '前端与脚本源码', outSig: '语法是否零报错', outObs: '语法与格式问题单', slots: ['代码语法错误数清零检查', '汇总格式警告与问题分类'] },
+  'ast-grep': { title: '危险代码写法扫描', inName: '项目业务源码', outSig: '是否无禁用写法', outObs: '命中位置与代码段', slots: ['按结构精准拦截禁用写法', '导出命中行号与代码片段'] },
+  ruff: { title: '后端语法快速检查', inName: '后端脚本源码', outSig: '语法是否零报错', outObs: '未定义变量与问题单', slots: ['语法错误与未定义变量清零', '汇总代码坏味道违规位置'] },
+  pyright: { title: '跨文件类型核对', inName: '后端业务源码', outSig: '类型是否全部对齐', outObs: '类型不匹配行号表', slots: ['跨文件调用类型错误清零', '汇总类型警告与已查文件数'] },
+  typos: { title: '英文拼写防手滑检查', inName: '代码与文档目录', outSig: '是否无拼写错词', outObs: '疑似拼错词文件表', slots: ['代码与文档英文拼写零错词', '列出含错别字的文件清单'] },
+  actionlint: { title: '流水线配置语法检查', inName: '自动化流水线配置', outSig: '配置语法是否合规', outObs: '配置报错行号清单', slots: ['自动化部署脚本零语法错误', '按错误类别汇总修复提示'] }
+};
+
 function defaultSavedState() {
   return {
-    schemaVersion: '1.0', customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
+    schemaVersion: '1.0', hostLayoutVer: 2, customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
     collapsedWfGroups: [], collapsedNodeCats: [], workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
     starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'], updatedAt: null
   };
@@ -36,7 +61,16 @@ export function readSavedWorkbenchState(projectRoot) {
   if (!existsSync(p)) return defaultSavedState();
   const r = readJsonStrict(p);
   if (!r.ok || !r.value || typeof r.value !== 'object') return defaultSavedState();
-  return { ...defaultSavedState(), ...r.value };
+  const merged = { ...defaultSavedState(), ...r.value };
+  if (r.value.hostLayoutVer !== 2 && merged.hostNodeLayouts && typeof merged.hostNodeLayouts === 'object') {
+    const cleaned = {};
+    for (const [k, v] of Object.entries(merged.hostNodeLayouts)) {
+      if (v && typeof v === 'object') { const { x: _x, y: _y, ...rest } = v; void _x; void _y; cleaned[k] = rest; }
+    }
+    merged.hostNodeLayouts = cleaned;
+    merged.hostLayoutVer = 2;
+  }
+  return merged;
 }
 
 function laneOrderRank(lane) {
@@ -56,11 +90,78 @@ function mapModState(mod) {
   return 'ok';
 }
 
-function buildHostSandboxFromAtlas(baseAtlas, savedState) {
-  const domains = [...(baseAtlas.domains || [])].sort((a, b) => {
+function buildAcyclicDomainTopology(rawDomains, modules, edges) {
+  const modById = new Map(modules.map((m) => [m.id, m]));
+  const weightMap = new Map(), countMap = new Map(), reverseNotes = new Map();
+  for (const e of edges) {
+    const srcMod = modById.get(e.from), dstMod = modById.get(e.to);
+    if (!srcMod || !dstMod || srcMod.domainId === dstMod.domainId) continue;
+    if (dstMod.domainKey === 'root') { reverseNotes.set(srcMod.domainId, (reverseNotes.get(srcMod.domainId) || 0) + 1); continue; }
+    const isAuxCheck = /(?:^|\/)(?:tests?|__tests__|e2e|check-|self-test|fixtures?|progress-note)[^/]*\.|\.(?:test|spec)\./i.test(srcMod.path);
+    const w = srcMod.domainKey === 'root' ? 8 : (isAuxCheck ? 1 : (e.kind === 'script-ref' ? 2 : 4));
+    const pairKey = `${srcMod.domainId}->${dstMod.domainId}`;
+    weightMap.set(pairKey, (weightMap.get(pairKey) || 0) + w);
+    countMap.set(pairKey, (countMap.get(pairKey) || 0) + 1);
+  }
+
+  const nextDomMap = new Map(rawDomains.map((d) => [d.id, new Set()]));
+  const domIds = rawDomains.map((d) => d.id);
+  for (let i = 0; i < domIds.length; i++) {
+    for (let j = i + 1; j < domIds.length; j++) {
+      const a = domIds[i], b = domIds[j];
+      const wab = weightMap.get(`${a}->${b}`) || 0;
+      const wba = weightMap.get(`${b}->${a}`) || 0;
+      if (wab === 0 && wba === 0) continue;
+      if (wab >= wba) {
+        nextDomMap.get(a).add(b);
+        if (wba > 0) reverseNotes.set(b, (reverseNotes.get(b) || 0) + (countMap.get(`${b}->${a}`) || 1));
+      } else {
+        nextDomMap.get(b).add(a);
+        if (wab > 0) reverseNotes.set(a, (reverseNotes.get(a) || 0) + (countMap.get(`${a}->${b}`) || 1));
+      }
+    }
+  }
+
+  const orderedForDfs = [...rawDomains].sort((a, b) => (a.key === 'root' ? -1 : (b.key === 'root' ? 1 : laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane))));
+  const color = new Map();
+  const dfsBreak = (u) => {
+    color.set(u, 1);
+    for (const v of [...(nextDomMap.get(u) || [])]) {
+      if (v === 'dom:root' || color.get(v) === 1) nextDomMap.get(u).delete(v);
+      else if (!color.get(v)) dfsBreak(v);
+    }
+    color.set(u, 2);
+  };
+  for (const d of orderedForDfs) if (!color.get(d.id)) dfsBreak(d.id);
+
+  const hasRoot = rawDomains.some((d) => d.key === 'root');
+  const depthByDom = new Map(rawDomains.map((d) => [d.id, d.key === 'root' ? 0 : (hasRoot ? 1 : 0)]));
+  for (let pass = 0; pass < rawDomains.length; pass++) {
+    for (const [u, targets] of nextDomMap.entries()) {
+      const du = depthByDom.get(u) || 0;
+      for (const v of targets) {
+        if (v !== 'dom:root' && (depthByDom.get(v) || 0) < du + 1) depthByDom.set(v, du + 1);
+      }
+    }
+  }
+  const sortedDomains = [...rawDomains].sort((a, b) => {
+    if (a.key === 'root' && b.key !== 'root') return -1;
+    if (b.key === 'root' && a.key !== 'root') return 1;
+    const da = depthByDom.get(a.id) || 0;
+    const db = depthByDom.get(b.id) || 0;
+    if (da !== db) return da - db;
     const lr = laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane);
     return lr !== 0 ? lr : a.key.localeCompare(b.key);
   });
+  return { sortedDomains, nextDomMap, depthByDom, reverseNotes };
+}
+
+function buildHostSandboxFromAtlas(baseAtlas, savedState) {
+  const { sortedDomains: domains, nextDomMap, depthByDom, reverseNotes } = buildAcyclicDomainTopology(
+    baseAtlas.domains || [],
+    baseAtlas.modules || [],
+    baseAtlas.edges || []
+  );
   const rawById = new Map((baseAtlas.rawContracts || []).map((c) => [c.id, c]));
   const summaryById = new Map(((baseAtlas.status && baseAtlas.status.contractSummaries) || []).map((s) => [s.id, s]));
   const modsByDom = new Map();
@@ -69,23 +170,12 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
     modsByDom.get(m.domainId).push(m);
   }
 
-  // Build cross-domain edges
-  const domByModId = new Map((baseAtlas.modules || []).map((m) => [m.id, m.domainId]));
-  const nextDomMap = new Map();
-  for (const e of (baseAtlas.edges || [])) {
-    const dFrom = domByModId.get(e.from);
-    const dTo = domByModId.get(e.to);
-    if (dFrom && dTo && dFrom !== dTo) {
-      if (!nextDomMap.has(dFrom)) nextDomMap.set(dFrom, new Set());
-      nextDomMap.get(dFrom).add(dTo);
-    }
-  }
-
-  // Assign topological column for clean default x/y coordinates
   const colCounts = new Map();
   const nodes = domains.map((dom, idx) => {
     const domMods = modsByDom.get(dom.id) || [];
-    const col = laneOrderRank(dom.primaryLane);
+    const hasEdges = (baseAtlas.edges || []).length > 0;
+    const hasRoot = domains.some((d) => d.key === 'root');
+    const col = dom.key === 'root' ? 0 : (hasEdges ? (depthByDom.get(dom.id) || (hasRoot ? 1 : 0)) : laneOrderRank(dom.primaryLane) + (hasRoot ? 1 : 0));
     const rowIdx = colCounts.get(col) || 0;
     colCounts.set(col, rowIdx + 1);
 
@@ -110,6 +200,7 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
     const tipParts = [`共 ${domMods.length} 个源码模块`];
     if (dom.wildCount > 0) tipParts.push(`${dom.wildCount} 个尚未挂入契约保护`);
     if (contractIds.length > 0) tipParts.push(`关联契约：${contractIds.join('、')}`);
+    if (reverseNotes.get(dom.id)) tipParts.push(`含 ${reverseNotes.get(dom.id)} 处门禁脚本反向自检调用`);
     if (collisionBranches.length > 1) tipParts.push(`活跃支线：${collisionBranches.join(' / ')}`);
 
     return {
@@ -119,7 +210,7 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
       tip: tipParts.join(' · '),
       contractIds,
       primaryContractId: contractIds[0] || null,
-      lifecycleLabel: (contractIds[0] && summaryById.get(contractIds[0])?.lifecycleLabel) || (contractIds.length ? "草稿待冻结" : "未挂契约"),
+      lifecycleLabel: (contractIds[0] && summaryById.get(contractIds[0])?.lifecycleLabel) || (contractIds.length ? '草稿待冻结' : '未挂契约'),
       scopePaths: [...scopeSet],
       workflowBinding: (savedState.componentWorkflows || {})[nodeId] || null,
       bypassed: Boolean(saved.bypassed || false),
@@ -215,7 +306,7 @@ function loadRegisteredAdapterTemplates(projectRoot) {
     const capDoc = capRes.value || {};
     const cardCfg = (capDoc.card && typeof capDoc.card === 'object') ? capDoc.card : {};
     const upCfg = (capDoc.upstream && typeof capDoc.upstream === 'object') ? capDoc.upstream : {};
-    const obsList = Array.isArray(capDoc.observables) ? capDoc.observables.slice(0, 3) : [];
+    const hm = ADAPTER_HUMAN_META[tool] || null;
     const isZeroBin = (capDoc.archetype === 'knowledge-skill' || capDoc.archetype === 'aggregator') && !upCfg.repo;
     const up = UPSTREAM_GITHUB_MAP[tool] || [isZeroBin ? '' : (upCfg.repo || `opensource/${tool}`), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0'), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0')];
     const repoSlug = isZeroBin ? '' : (upCfg.repo || up[0]);
@@ -224,20 +315,23 @@ function loadRegisteredAdapterTemplates(projectRoot) {
       : (['playwright', 'maestro', 'vitest'].includes(tool) ? '端侧与构建' : '代码护栏'));
     const inputs = Array.isArray(cardCfg.inputs) && cardCfg.inputs.length > 0
       ? cardCfg.inputs
-      : [{ id: 'in_src', name: '代码或构建快照', type: 'ARTIFACT' }];
+      : [{ id: 'in_src', name: (hm && hm.inName) || '待查代码或产物', type: 'ARTIFACT' }];
     const outputs = Array.isArray(cardCfg.outputs) && cardCfg.outputs.length > 0
       ? cardCfg.outputs
-      : [{ id: 'out_sig', name: '0-3 判定码', type: 'SIGNAL' }, { id: 'out_obs', name: '观测声明原文', type: 'TEXT' }];
+      : [
+          { id: 'out_sig', name: (hm && hm.outSig) || '是否通过检查', type: 'SIGNAL' },
+          { id: 'out_obs', name: (hm && hm.outObs) || '问题详情报告', type: 'TEXT' }
+        ];
     const slots = Array.isArray(cardCfg.slots) && cardCfg.slots.length > 0
       ? cardCfg.slots
-      : (obsList.length > 0
-          ? obsList.map((o, i) => ({ id: `ob_${i}`, label: String(o.description || o.id || '观测项').slice(0, 20), wired: o.wired !== false, boundOut: outputs[Math.min(i, outputs.length - 1)].id }))
-          : [{ id: 'ob_0', label: `${tool} 核心能力`, wired: true, boundOut: outputs[0].id }]);
+      : (hm && Array.isArray(hm.slots)
+          ? hm.slots.map((lbl, i) => ({ id: `ob_${i}`, label: lbl, wired: true, boundOut: outputs[Math.min(i, outputs.length - 1)].id }))
+          : [{ id: 'ob_0', label: '自动执行规则检查', wired: true, boundOut: outputs[0].id }]);
 
     templates.push({
       tplId: `tpl-adp-${tool}`,
       category: cat,
-      title: cardCfg.title || `${tool} 适配器节点`,
+      title: cardCfg.title || (hm && hm.title) || '外部工具规则检查',
       archetype: capDoc.archetype || 'scanner',
       uiExternalUrl: upCfg.uiExternalUrl || null,
       repoSlug,
@@ -246,7 +340,7 @@ function loadRegisteredAdapterTemplates(projectRoot) {
       latestUpstream: up[2],
       entryPath: adp.entry || `skill/adapters/${tool}.mjs`,
       brickDir: `bricks/${tool}/`,
-      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `适配器协议 v${adp.protocolVersion} · 边界：${adp.blindSpots[0]}` : `适配器协议外部工具转接卡（${tool}）`),
+      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `自动检查边界说明：${adp.blindSpots[0]}` : '外部开源规则检查节点'),
       inputs,
       outputs,
       slots

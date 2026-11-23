@@ -12,7 +12,7 @@ export const AESTHETIC_GROUPS = [
 
 export const AESTHETIC_PROPOSALS = [
   {
-    id: 'swiss-minimal', code: 'A', group: '极简与现代办公',
+    id: 'swiss-minimal', code: 'A', archetype: 'editorial-asymmetric', layoutBadge: '非对称双栏 · 3区细线留白', cardCount: 3, group: '极简与现代办公',
     name: '方案 A · 瑞士极简留白 (Swiss Editorial)', badge: '极简高留白',
     bestFor: ['saas', 'docs', 'productivity', 'knowledge', 'b2b', 'ai', '管理', '知识', '办公', '工具'],
     summary: '高呼吸感纸白底色 + 1px 建筑感细线 + 宝蓝单点聚焦，杜绝花哨渐变，突出排版秩序与可读性。',
@@ -23,11 +23,11 @@ export const AESTHETIC_PROPOSALS = [
       '--ui-text': '#111827', '--ui-muted': '#6B7280', '--ui-primary': '#1D4ED8', '--ui-primary-fg': '#FFFFFF',
       '--ui-accent': '#0F172A', '--ui-border': '#E5E7EB', '--ui-radius': '8px',
       '--ui-shadow': '0 1px 2px rgba(15, 23, 42, 0.05)',
-      '--ui-font-sans': '"Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif'
+      '--ui-font-sans': '"Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif', '--ui-font-display': 'Georgia, "Source Serif 4", "Noto Serif SC", serif', '--ui-font-mono': '"JetBrains Mono", ui-monospace, monospace'
     }
   },
   {
-    id: 'bento-craft', code: 'B', group: '品牌创意与消费门户',
+    id: 'bento-craft', code: 'B', archetype: 'tactile-bento', layoutBadge: '浮岛胶囊导航 · 6卡便当盒网格', cardCount: 6, group: '品牌创意与消费门户',
     name: '方案 B · 现代便当盒卡片 (Tactile Bento)', badge: '模块卡片感',
     bestFor: ['portal', 'commerce', 'consumer', 'education', 'course', '电商', '门户', '培训', '课程', '工作台'],
     summary: '暖白亚麻底色配高对比纯白圆角模块格，森绿主色搭配琥珀强调色，层次分明且亲和力强。',
@@ -38,11 +38,11 @@ export const AESTHETIC_PROPOSALS = [
       '--ui-text': '#1C1917', '--ui-muted': '#57534E', '--ui-primary': '#0F766E', '--ui-primary-fg': '#FFFFFF',
       '--ui-accent': '#D97706', '--ui-border': '#E2E0D8', '--ui-radius': '16px',
       '--ui-shadow': '0 6px 18px -4px rgba(28, 25, 23, 0.07)',
-      '--ui-font-sans': '"DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif'
+      '--ui-font-sans': '"DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif', '--ui-font-display': '"DM Sans", "PingFang SC", sans-serif', '--ui-font-mono': '"Space Mono", ui-monospace, monospace'
     }
   },
   {
-    id: 'industrial-dark', code: 'C', group: '深色与研发控制台',
+    id: 'industrial-dark', code: 'C', archetype: 'cockpit-split', layoutBadge: '侧轨遥测条 · 8面板分栏驾驶舱', cardCount: 8, group: '深色与研发控制台',
     name: '方案 C · 深空精密控制台 (Linear Industrial)', badge: '专业深色台',
     bestFor: ['devtools', 'fintech', 'ops', 'security', 'monitor', 'data', '监控', '安全', '数据', '研发', '控制台'],
     summary: '深岩黑底与微光描边，青色信号焦点与等宽数字对齐，适合高密度状态监控与专业研发软件。',
@@ -53,11 +53,11 @@ export const AESTHETIC_PROPOSALS = [
       '--ui-text': '#F1F5F9', '--ui-muted': '#94A3B8', '--ui-primary': '#06B6D4', '--ui-primary-fg': '#082F49',
       '--ui-accent': '#10B981', '--ui-border': '#263248', '--ui-radius': '10px',
       '--ui-shadow': '0 8px 24px rgba(0, 0, 0, 0.38)',
-      '--ui-font-sans': '"Geist", "Inter", system-ui, sans-serif'
+      '--ui-font-sans': '"Geist", "Inter", system-ui, sans-serif', '--ui-font-display': '"Geist", "Inter", sans-serif', '--ui-font-mono': '"JetBrains Mono", ui-monospace, monospace'
     }
   },
   {
-    id: 'neo-brutal', code: 'D', group: '品牌创意与消费门户',
+    id: 'neo-brutal', code: 'D', archetype: 'brutal-poster', layoutBadge: '粗黑横幅 · 5卡错位硬阴影海报', cardCount: 5, group: '品牌创意与消费门户',
     name: '方案 D · 新粗野高反差工坊 (Neo-Brutalist)', badge: '鲜明个性风',
     bestFor: ['creative', 'studio', 'campaign', 'game', 'social', '创意', '活动', '社区', '设计'],
     summary: '暖米纸底 + 2px 纯黑实线边框与硬朗偏移投影，记忆点极强，彻底告别温吞模板感。',
@@ -72,7 +72,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'enterprise-dense', code: 'E', group: '政企合规与高密度台账',
+    id: 'enterprise-dense', code: 'E', archetype: 'ledger-workbench', layoutBadge: '双层顶栏+左树 · 7区合规台账台', cardCount: 7, group: '政企合规与高密度台账',
     name: '方案 E · 高密度政企合规台 (Polaris Enterprise)', badge: '严谨业务流',
     bestFor: ['erp', 'crm', 'audit', 'gov', 'hospital', '台账', '审批', '合规', '企业', '后台'],
     summary: '冷灰分层背景 + 高对比深蓝主操作 + 紧凑表格间距，保障长表单、审批流与安全台账零视觉疲劳。',
@@ -87,7 +87,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'nordic-slate', code: 'F', group: '极简与现代办公',
+    id: 'nordic-slate', code: 'F', archetype: 'editorial-asymmetric', layoutBadge: '非对称双栏 · 3区细线留白', cardCount: 3, group: '极简与现代办公',
     name: '方案 F · 北欧岩灰轻办公 (Nordic Slate)', badge: '清透低噪点',
     bestFor: ['workspace', 'calendar', 'notes', 'collab', '协同', '日程', '项目', '排期'],
     summary: '冰川雾白底色配青岩灰边框与海湾深蓝主钮，低饱和度长久阅读不刺眼。',
@@ -102,7 +102,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'warm-paper', code: 'G', group: '极简与现代办公',
+    id: 'warm-paper', code: 'G', archetype: 'chronicle-cascade', layoutBadge: '双线居中刊头 · 5卡时间轴长卷', cardCount: 5, group: '极简与现代办公',
     name: '方案 G · 暖调纸感知识库 (Warm Parchment)', badge: '人文阅读感',
     bestFor: ['wiki', 'research', 'writing', 'library', '写作', '研报', '文档', '笔记'],
     summary: '温润原浆纸底色配炭黑墨字与赭石重点色，弱化机械框线，适合重度阅读与知识编纂。',
@@ -117,7 +117,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'obsidian-terminal', code: 'H', group: '深色与研发控制台',
+    id: 'obsidian-terminal', code: 'H', archetype: 'cockpit-split', layoutBadge: '侧轨遥测条 · 8面板分栏驾驶舱', cardCount: 8, group: '深色与研发控制台',
     name: '方案 H · 黑曜石研发终端 (Obsidian Terminal)', badge: '极客终端风',
     bestFor: ['cli', 'ide', 'infra', 'cloud', 'pipeline', '部署', '流水线', '容器', '日志'],
     summary: '纯正黑曜石基底搭配翠绿运行信号灯与锐利直角分割，契合基础设施与流水线编排。',
@@ -132,7 +132,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'graphite-ops', code: 'I', group: '深色与研发控制台',
+    id: 'graphite-ops', code: 'I', archetype: 'cockpit-split', layoutBadge: '侧轨遥测条 · 8面板分栏驾驶舱', cardCount: 8, group: '深色与研发控制台',
     name: '方案 I · 石墨可观测指挥台 (Graphite Telemetry)', badge: '暗色态势图',
     bestFor: ['apm', 'noc', 'iot', 'dispatch', '告警', '调度', '遥测', '指挥'],
     summary: '中性暖石墨暗色层级配琥珀金主操作色，夜间大屏与长时值守不眩光。',
@@ -147,7 +147,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'fin-ledger', code: 'J', group: '政企合规与高密度台账',
+    id: 'fin-ledger', code: 'J', archetype: 'ledger-workbench', layoutBadge: '双层顶栏+左树 · 7区合规台账台', cardCount: 7, group: '政企合规与高密度台账',
     name: '方案 J · 金融级风控核算台 (Financial Ledger)', badge: '高信噪比表',
     bestFor: ['finance', 'accounting', 'tax', 'billing', '财务', '对账', '结算', '风控', '报表'],
     summary: '银灰底板与高稳重深海蓝主色，强化数字等宽对齐与复核状态对比度。',
@@ -162,7 +162,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'ehs-command', code: 'K', group: '政企合规与高密度台账',
+    id: 'ehs-command', code: 'K', archetype: 'ledger-workbench', layoutBadge: '双层顶栏+左树 · 7区合规台账台', cardCount: 7, group: '政企合规与高密度台账',
     name: '方案 K · 工业安全巡检中枢 (EHS Safety Grid)', badge: '安全规范感',
     bestFor: ['ehs', 'manufacturing', 'inspection', 'quality', '安全', '巡检', '工厂', '特种设备', '隐患'],
     summary: '清爽雾绿灰背景配国标安全绿主色与警示橙辅助色，现场巡检与合规闭环一目了然。',
@@ -177,7 +177,7 @@ export const AESTHETIC_PROPOSALS = [
     }
   },
   {
-    id: 'editorial-serif', code: 'L', group: '品牌创意与消费门户',
+    id: 'editorial-serif', code: 'L', archetype: 'chronicle-cascade', layoutBadge: '双线居中刊头 · 5卡时间轴长卷', cardCount: 5, group: '品牌创意与消费门户',
     name: '方案 L · 先锋买手消费门户 (Editorial Commerce)', badge: '质感品牌风',
     bestFor: ['brand', 'retail', 'booking', 'lifestyle', '品牌', '商城', '预约', '消费', '展示'],
     summary: '象牙暖底与深炭黑主视觉形成经典杂志感反差，陶土红点睛，凸显商品与内容质感。',
@@ -248,6 +248,7 @@ export function lockDesignSystemMaster(projectRoot, proposalId, projectName = 'P
     `- **核心气质**：${chosen.summary}`,
     `- **字体配对**：${chosen.typography}`,
     `- **空间密度**：\`${chosen.layoutDensity}\``,
+    `- **页面骨架**：\`${chosen.archetype || 'editorial-asymmetric'}\`（${chosen.layoutBadge || ''}）`,
     '',
     '## 二、语义设计令牌 (CSS Custom Properties)',
     tokenLines,

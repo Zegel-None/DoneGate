@@ -4,7 +4,7 @@ export function renderDshLocaleZhJson() {
   return JSON.stringify({
     meta: {
       title: '完结门工作台',
-      description: '在会话顶栏与输入框左侧新增「完结门」入口，仅接管消息记录区嵌入无限项目看板与确定性工作流画布，完整保留底部原生输入框、蓝色行内引用胶囊累加、悬停折叠回执条与右栏源码预览。',
+      description: '在会话顶栏与输入框左侧新增「完结门」入口，仅接管消息记录区嵌入无限项目看板与确定性工作流画布，完整保留底部原生输入框、蓝色行内引用胶囊累加、悬停折叠回执条与关联源码预览。',
       detail: 'docs/DETAIL.zh.md'
     }
   }, null, 2) + '\n';

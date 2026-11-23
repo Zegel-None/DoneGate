@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// 全量界面与工程名词归一化硬门禁（拦截「开发流 / 工作流语境的宏 / 导航栏资产」三类口语漂移词）
+// 全量界面与工程名词归一化硬门禁（拦截「开发流 / 工作流语境的宏 / 未归一化开发包与方案包 / 导航栏资产」四类口语漂移词）
 //
 // 为什么要有它：
-//   业主与 AI 对话时常使用打比方或早期过渡词（如把工作流比作「宏」、早期的「开发流」、把项目导航叫「资产」）。
+//   业主与 AI 对话时常使用打比方或早期过渡词（如把工作流比作「宏」、早期的「开发流 / 开发包 / 护栏包」、把项目导航叫「资产」）。
 //   若不设全量机械门禁，不同子代理会在 UI、契约、工作流 JSON 与技能文档中各自混用多套叫法，造成产品概念分裂。
 //
 // 用法：
 //   node skill/check-terminology.mjs                          # 扫描本仓默认活跃研发与产品范围
-//   node skill/check-terminology.mjs --root <dir>             # 指定扫描仓库根目录
+//   node skill/check-terminology.mjs --root <dir>             # 指定扫描仓库根目录（兼容 --project <dir>）
 //   node skill/check-terminology.mjs --scope a,b,c            # 仅扫描逗号分隔的相对路径子集
 //   node skill/check-terminology.mjs --red-self-test          # 必红负样本 + 修正后正样本双向自检
 //
@@ -55,6 +55,12 @@ export const TERMINOLOGY_RULES = [
     message: '禁止用口语比喻词「宏」指代工作流 → 请统一改为「工作流」'
   },
   {
+    id: 'no-workflow-pack',
+    pattern: /(?:新)?开发包(?!含|括)|护栏包|守护包|联防包|润色包|预设包|(?:工作流)?方案包|工作流包(?!含|括)|持久化包/g,
+    replacement: '工作流',
+    message: '禁止用「开发包 / 护栏包 / 守护包 / 联防包 / 润色包 / 预设包 / 工作流包 / 方案包」指代工作流 → 请统一改为「工作流」'
+  },
+  {
     id: 'no-asset-nav-label',
     pattern: /(?:rail-label[^>]*>\s*资产|tb:资产|['"]资产：查看|快捷图标栏（资产)/g,
     replacement: '项目',
@@ -71,7 +77,8 @@ function parseTermCliArgs(argv) {
   const scopes = scopeRaw
     ? scopeRaw.split(',').map((s) => s.trim().replace(/\\/g, '/').replace(/^\.\//, '')).filter(Boolean)
     : null;
-  return { root: resolve(getTermOpt('--root', REPO)), scopes, redSelfTest: argv.includes('--red-self-test') };
+  const rootArg = getTermOpt('--root', getTermOpt('--project', REPO));
+  return { root: resolve(rootArg), scopes, redSelfTest: argv.includes('--red-self-test') };
 }
 
 function collectTermTargetFiles(root, scopes = null) {
@@ -132,34 +139,35 @@ function runTerminologyRedSelfTest() {
     mkdirSync(join(tmp, 'runner'), { recursive: true });
     mkdirSync(join(tmp, 'workflows'), { recursive: true });
     mkdirSync(join(tmp, 'decisions'), { recursive: true });
-    writeFileSync(join(tmp, 'decisions/2026-11-20-hist.md'), '历史决策含开发流与预置宏不扫\n', 'utf8');
+    writeFileSync(join(tmp, 'decisions/2026-11-20-hist.md'), '历史决策含开发流、新开发包与预置宏不扫\n', 'utf8');
     writeFileSync(join(tmp, 'workflows/demo.workflow.json'), JSON.stringify({
-      group: '预置全周期开发流', action: '套用此宏'
+      group: '预置全周期开发流', action: '套用此宏', packLabel: '另存当前为新开发包'
     }, null, 2) + '\n', 'utf8');
     writeFileSync(join(tmp, 'runner/nav.mjs'), [
       'export const nav = \'<span class="rail-label">资产</span>\';',
-      'export const safeWords = "宏观架构与纯规则资产及软件资产不误伤";',
+      'export const safeWords = "宏观架构、纯规则资产、APK 安装包、发行包、源码包、复核包、交接包、压缩包、工作流包含、开发包含均不误伤";',
       'export const compat = "开发流"; // dg-term-allow: 历史字段读取兼容断言'
     ].join('\n') + '\n', 'utf8');
 
     const redRes = scanTerminologyViolations(tmp);
     const hitIds = new Set(redRes.violations.map((v) => v.ruleId));
-    c.check('必红样本：精准检出 no-kaifaliu / no-workflow-macro / no-asset-nav-label 三类违规且退 1',
-      redRes.exitCode === 1 && redRes.violations.length === 3 &&
-      hitIds.has('no-kaifaliu') && hitIds.has('no-workflow-macro') && hitIds.has('no-asset-nav-label'),
+    c.check('必红样本：精准检出 no-kaifaliu / no-workflow-macro / no-workflow-pack / no-asset-nav-label 四类违规且退 1',
+      redRes.exitCode === 1 && redRes.violations.length === 4 &&
+      hitIds.has('no-kaifaliu') && hitIds.has('no-workflow-macro') &&
+      hitIds.has('no-workflow-pack') && hitIds.has('no-asset-nav-label'),
       JSON.stringify(redRes.violations));
 
     writeFileSync(join(tmp, 'workflows/demo.workflow.json'), JSON.stringify({
-      group: '预置全周期工作流', action: '套用此工作流'
+      group: '预置全周期工作流', action: '套用此工作流', packLabel: '另存当前为新工作流'
     }, null, 2) + '\n', 'utf8');
     writeFileSync(join(tmp, 'runner/nav.mjs'), [
       'export const nav = \'<span class="rail-label">项目</span>\';',
-      'export const safeWords = "宏观架构与纯规则资产及软件资产不误伤";',
+      'export const safeWords = "宏观架构、纯规则资产、APK 安装包、发行包、源码包、复核包、交接包、压缩包、工作流包含、开发包含均不误伤";',
       'export const compat = "开发流"; // dg-term-allow: 历史字段读取兼容断言'
     ].join('\n') + '\n', 'utf8');
 
     const greenRes = scanTerminologyViolations(tmp);
-    c.check('正样本回归：归一化为「工作流」与「项目」后退 0（且宏观/纯规则资产/dg-term-allow 零误报）',
+    c.check('正样本回归：归一化为「工作流」与「项目」后退 0（且安装包/发行包/复核包/包含短语零误报）',
       greenRes.exitCode === 0 && greenRes.violations.length === 0,
       JSON.stringify(greenRes.violations));
   } finally {

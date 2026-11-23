@@ -1,12 +1,16 @@
 // Agent Native UI 看板前端控制器：完整窗口原生交互、分组美学方案 0ms 秒切与锁定、Alt+单击拾取蓝胶囊与假动作转真后端接线台
-import { AESTHETIC_PROPOSALS, buildInjectedUiBridgeScript } from '../dsh/contract.mjs';
+import { AESTHETIC_PROPOSALS, ARCHETYPE_CSS, buildInjectedUiBridgeScript, renderProposalArchetypeBody } from '../dsh/contract.mjs';
 
 const EMBEDDED_PROPOSALS_JSON = JSON.stringify(AESTHETIC_PROPOSALS);
 const EMBEDDED_BRIDGE_JS = JSON.stringify(buildInjectedUiBridgeScript());
+const EMBEDDED_ARCHETYPE_CSS = JSON.stringify(ARCHETYPE_CSS);
+const EMBEDDED_ARCHETYPE_FN = renderProposalArchetypeBody.toString();
 
 const WB_UIBOARD_SCRIPT = `
 const UIBOARD_FALLBACK_PROPOSALS = ${EMBEDDED_PROPOSALS_JSON};
 const UIBOARD_EMBEDDED_BRIDGE = ${EMBEDDED_BRIDGE_JS};
+const UIBOARD_ARCHETYPE_CSS = ${EMBEDDED_ARCHETYPE_CSS};
+const renderClientArchetypeBody = ${EMBEDDED_ARCHETYPE_FN};
 
 const uiBoardState = {
   initialized: false,
@@ -38,16 +42,16 @@ function resolveProposalGroupLabel(p) {
 
 function buildOfflineUiSrcdoc() {
   const prop = uiBoardState.proposals.find((p) => p.id === uiBoardState.activeProposalId) || uiBoardState.proposals[0];
+  const pid = (prop && prop.id) || 'swiss-minimal';
   const cssVars = Object.entries((prop && prop.tokens) || {}).map(([k, v]) => '  ' + k + ': ' + v + ';').join('\\n');
+  const bodyHtml = renderClientArchetypeBody(pid, { sourceFile: 'src/pages/Home.tsx' });
   return [
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>:root {',
     cssVars,
-    '} html, body { height: 100%; } * { box-sizing: border-box; } body { margin: 0; padding: 20px; background: var(--ui-bg); color: var(--ui-text); font-family: var(--ui-font-sans); }',
-    '.c { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); padding: 16px 18px; margin-bottom: 14px; }',
-    '.b { padding: 7px 13px; border-radius: var(--ui-radius); background: var(--ui-primary); color: var(--ui-primary-fg); border: none; font-weight: 600; cursor: pointer; }',
-    '</style></head><body>',
-    '<section class="c" data-dg-block="blk-hero" data-dg-source="src/pages/Home.tsx:14:1"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>智能业务工作台</strong><button type="button" class="b" data-dg-action="act-create-order" data-dg-wiring="mock" data-dg-source="src/pages/Home.tsx:18:5">新建业务单据</button></div><h2 style="margin:10px 0 4px;">完整窗口实时预览与原生交互</h2><p style="margin:0;color:var(--ui-muted);font-size:13px;">普通点击直接执行原生交互；按住 Alt+单击任意元素累加蓝色引用胶囊；左栏分组下拉可 0ms 实时换肤。</p></section>',
-    '<section class="c" data-dg-block="blk-form" data-dg-source="src/pages/Home.tsx:32:1"><div style="display:flex;gap:8px;flex-wrap:wrap;"><input placeholder="输入审批事项名称..." style="flex:1;padding:7px 10px;border-radius:var(--ui-radius);border:1px solid var(--ui-border);background:var(--ui-surface-muted);color:var(--ui-text);"><button type="button" class="b" data-dg-action="act-submit-form" data-dg-wiring="mock" data-dg-source="src/pages/Home.tsx:38:7">提交并触发流转</button></div></section>',
+    '} * { box-sizing: border-box; } html, body { min-height: 100%; margin: 0; background: var(--ui-bg); color: var(--ui-text); }',
+    UIBOARD_ARCHETYPE_CSS,
+    '</style></head><body data-proposal-id="' + esc(pid) + '">',
+    bodyHtml,
     '<script>' + UIBOARD_EMBEDDED_BRIDGE + '<\\/script></body></html>'
   ].join('\\n');
 }
@@ -224,7 +228,7 @@ function renderUiBoardDrawer(headEl, bodyEl, footEl) {
     '  <div class="flex items-center justify-between px-1"><span class="text-[11px] font-semibold" style="color:var(--text-secondary);">1. 美学方案实时选型</span><button type="button" data-uib-act="lock-theme" class="text-[10.5px] font-semibold hover:underline" style="color:var(--primary);">🔒 锁定当前方案</button></div>',
     '  <select id="uib-theme-select" data-ctrl-id="uib-theme-select" aria-label="美学方案分组选型" class="w-full px-2 py-1.5 rounded-lg border text-xs outline-none" style="background:var(--surface-soft);border-color:var(--border-strong);color:var(--text-main);">' + optgroupsHtml + '</select>',
     '  <div class="p-2 rounded-xl border flex flex-col gap-1" style="background:var(--surface-soft);border-color:var(--border-subtle);">',
-    '    <div class="flex items-center justify-between gap-1.5"><span class="inline-flex items-center gap-1">' + dotsHtml + '</span>' + (isLocked ? '<span class="text-[10px] font-semibold" style="color:var(--ok);">✓ 已锁入 MASTER.md</span>' : '<span class="text-[10px]" style="color:var(--text-muted);">0ms 实时换肤</span>') + '</div>',
+    '    <div class="flex items-center justify-between gap-1.5"><span class="inline-flex items-center gap-1">' + dotsHtml + '</span>' + (isLocked ? '<span class="text-[10px] font-semibold" style="color:var(--ok);">✓ 已锁入 MASTER.md</span>' : '<span class="text-[10px] font-medium" style="color:var(--primary);">' + esc((curProp && curProp.layoutBadge) || '异构骨架实时切换') + '</span>') + '</div>',
     '    <div class="text-[10.5px] leading-snug" style="color:var(--text-muted);">' + esc((curProp && curProp.summary) || '') + '</div>',
     '  </div>',
     '</div>',
@@ -282,8 +286,11 @@ document.addEventListener('change', (e) => {
     const prop = uiBoardState.proposals.find((x) => x.id === pid);
     if (!prop) return;
     uiBoardState.activeProposalId = pid;
-    postToUiIframe({ type: 'dg-ui:apply-tokens', proposalId: pid, tokens: prop.tokens });
-    if (!/^https?:$/i.test(location.protocol)) reloadUiBoardIframe();
+    if (uiBoardState.sourceMode === 'proxy') {
+      postToUiIframe({ type: 'dg-ui:apply-tokens', proposalId: pid, tokens: prop.tokens });
+    } else {
+      reloadUiBoardIframe();
+    }
     renderLeftDrawer();
     showToast('🎨 已切换美学方案：「' + prop.name + '」');
   }

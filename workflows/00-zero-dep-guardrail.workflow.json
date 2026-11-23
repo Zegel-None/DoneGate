@@ -5,14 +5,30 @@
   "tip": "开箱即跑（0 外部二进制依赖）：串联本仓内置防 AI 手搓护栏、交互控件矩阵规则卡、确定性条件路由（上限 2 轮熔断）、过夜挂机人工审批闸门与原语提示词拼装器。",
   "deps": [],
   "groups": [
-    { "id": "grp-00-static", "title": "内置零依赖静态护栏与交互预检", "x": 28, "y": 42, "w": 636, "h": 310, "color": "blue" },
-    { "id": "grp-00-gate", "title": "确定性路由、挂机审批与上下文交付", "x": 692, "y": 42, "w": 636, "h": 360, "color": "amber" }
+    {
+      "id": "grp-00-static",
+      "title": "内置零依赖静态护栏与交互预检",
+      "x": 28,
+      "y": 42,
+      "w": 636,
+      "h": 310,
+      "color": "blue"
+    },
+    {
+      "id": "grp-00-gate",
+      "title": "确定性路由、挂机审批与上下文交付",
+      "x": 692,
+      "y": 42,
+      "w": 636,
+      "h": 360,
+      "color": "amber"
+    }
   ],
   "nodes": [
     {
       "id": "zg-anti-slop",
       "tplId": "tpl-anti-slop",
-      "title": "防 AI 手搓护栏套件",
+      "title": "防 AI 手搓护栏",
       "tip": "本仓内置零依赖检查：拦截空 catch、私引 child_process/crypto、超 350 行巨石文件与越界写入",
       "repoSlug": "",
       "repoUrl": "",
@@ -26,20 +42,44 @@
       "y": 96,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "代码工作区", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "待查代码目录",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_art", "name": "合规代码快照", "type": "ARTIFACT" },
-        { "id": "out_txt", "name": "违规行号报告", "type": "TEXT" }
+        {
+          "id": "out_art",
+          "name": "合规代码快照",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_txt",
+          "name": "违规位置清单",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "as_1", "label": "合规代码快照放行通道", "wired": true, "boundOut": "out_art" },
-        { "id": "as_2", "label": "违规手搓详情报告输出", "wired": true, "boundOut": "out_txt" }
+        {
+          "id": "as_1",
+          "label": "合规代码放行给下一步",
+          "wired": true,
+          "boundOut": "out_art"
+        },
+        {
+          "id": "as_2",
+          "label": "违规文件与行号明细",
+          "wired": true,
+          "boundOut": "out_txt"
+        }
       ]
     },
     {
       "id": "zg-ui-matrix",
       "tplId": "tpl-adp-ui-interaction-matrix",
-      "title": "UI 交互与控件映射矩阵",
+      "title": "界面交互与控件核对",
       "tip": "内置 knowledge-skill 规则卡：按 16 条控件选型规则与五态清单（空态/加载/报错/无权限/正常）执行静态审查",
       "repoSlug": "",
       "repoUrl": "",
@@ -53,20 +93,44 @@
       "y": 96,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_spec", "name": "界面规格或组件源码", "type": "SPEC" }],
+      "inputs": [
+        {
+          "id": "in_spec",
+          "name": "页面设计或源码",
+          "type": "SPEC"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 审查码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "控件映射与五态报告", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "是否通过核对",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "控件与状态报告",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "ui_0", "label": "五态覆盖完整度校验", "wired": true, "boundOut": "out_sig" },
-        { "id": "ui_1", "label": "16 条控件误用扫描", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "ui_0",
+          "label": "空载错五种状态覆盖检查",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "ui_1",
+          "label": "常见控件误用排查",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "zg-router",
       "tplId": "tpl-router-rule",
-      "title": "护栏 0-3 确定性分流器",
+      "title": "护栏结果分流开关",
       "tip": "0 过关进入人工审批闸门；1 触发违规回跳重检（上限 2 轮防空烧 Token）",
       "repoSlug": "",
       "repoUrl": "",
@@ -80,22 +144,55 @@
       "y": 96,
       "w": 256,
       "h": null,
-      "inputs": [{ "id": "in_sig", "name": "状态或指标", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_sig",
+          "name": "上游核对结果",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_0", "name": "0 过关放行", "type": "SIGNAL" },
-        { "id": "out_1", "name": "1 触发拦截回跳", "type": "TEXT" },
-        { "id": "out_3", "name": "2/3 缺环境降级", "type": "TEXT" }
+        {
+          "id": "out_0",
+          "name": "检查通过放行",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_1",
+          "name": "未过打回重修",
+          "type": "TEXT"
+        },
+        {
+          "id": "out_3",
+          "name": "缺环境转指令",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "s_0", "label": "0 号口放行至人工闸门", "wired": true, "boundOut": "out_0" },
-        { "id": "s_1", "label": "1 号口回流重修 (maxLoops=2)", "wired": true, "boundOut": "out_1" },
-        { "id": "s_3", "label": "2/3 号口转诊断提示词", "wired": true, "boundOut": "out_3" }
+        {
+          "id": "s_0",
+          "label": "通过后送往人工审批",
+          "wired": true,
+          "boundOut": "out_0"
+        },
+        {
+          "id": "s_1",
+          "label": "未通过打回重修（最多2轮）",
+          "wired": true,
+          "boundOut": "out_1"
+        },
+        {
+          "id": "s_3",
+          "label": "异常情况转生成排查指令",
+          "wired": true,
+          "boundOut": "out_3"
+        }
       ]
     },
     {
       "id": "zg-human-gate",
       "tplId": "tpl-human-gate",
-      "title": "人工审批闸门（挂机断点）",
+      "title": "人工审批闸门",
       "tip": "过夜挂机运行至此自动挂起并写入早间简报，零 Token 等待业主批准后从原位续跑",
       "repoSlug": "",
       "repoUrl": "",
@@ -109,14 +206,33 @@
       "y": 82,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_gate", "name": "前置验证信号", "type": "SIGNAL" }],
-      "outputs": [{ "id": "out_go", "name": "人工批准放行", "type": "FLOW" }],
-      "slots": [{ "id": "hg_1", "label": "过夜挂机遇此自动挂起待审", "wired": true, "boundOut": "out_go" }]
+      "inputs": [
+        {
+          "id": "in_gate",
+          "name": "待审批结果",
+          "type": "SIGNAL"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_go",
+          "name": "批准继续执行",
+          "type": "FLOW"
+        }
+      ],
+      "slots": [
+        {
+          "id": "hg_1",
+          "label": "挂机遇到此处自动暂停等审",
+          "wired": true,
+          "boundOut": "out_go"
+        }
+      ]
     },
     {
       "id": "zg-prompt-out",
       "tplId": "tpl-prompt-gen",
-      "title": "下一棒高熵提示词拼装器",
+      "title": "下一步指令拼装",
       "tip": "汇总护栏证据、公共原语索引与契约写边界，输出下一棒可直接注入的结构化提示词",
       "repoSlug": "",
       "repoUrl": "",
@@ -130,17 +246,79 @@
       "y": 248,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_txt", "name": "报告或放行流", "type": "TEXT" }],
-      "outputs": [{ "id": "out_prm", "name": "结构化提示词", "type": "PROMPT" }],
-      "slots": [{ "id": "pg_1", "label": "注入公共原语防手搓提示词", "wired": true, "boundOut": "out_prm" }]
+      "inputs": [
+        {
+          "id": "in_txt",
+          "name": "检查报告或放行单",
+          "type": "TEXT"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_prm",
+          "name": "整理好的修改指令",
+          "type": "PROMPT"
+        }
+      ],
+      "slots": [
+        {
+          "id": "pg_1",
+          "label": "自动附上防重复造轮子说明",
+          "wired": true,
+          "boundOut": "out_prm"
+        }
+      ]
     }
   ],
   "links": [
-    { "id": "zg-lk-1", "fromNode": "zg-anti-slop", "fromSlot": "out_art", "toNode": "zg-ui-matrix", "toSlot": "in_spec", "type": "ARTIFACT" },
-    { "id": "zg-lk-2", "fromNode": "zg-ui-matrix", "fromSlot": "out_sig", "toNode": "zg-router", "toSlot": "in_sig", "type": "SIGNAL" },
-    { "id": "zg-lk-3", "fromNode": "zg-router", "fromSlot": "out_0", "toNode": "zg-human-gate", "toSlot": "in_gate", "type": "SIGNAL" },
-    { "id": "zg-lk-loop", "fromNode": "zg-router", "fromSlot": "out_1", "toNode": "zg-ui-matrix", "toSlot": "in_spec", "type": "TEXT", "maxLoops": 2 },
-    { "id": "zg-lk-deg", "fromNode": "zg-router", "fromSlot": "out_3", "toNode": "zg-prompt-out", "toSlot": "in_txt", "type": "TEXT" },
-    { "id": "zg-lk-4", "fromNode": "zg-human-gate", "fromSlot": "out_go", "toNode": "zg-prompt-out", "toSlot": "in_txt", "type": "FLOW" }
+    {
+      "id": "zg-lk-1",
+      "fromNode": "zg-anti-slop",
+      "fromSlot": "out_art",
+      "toNode": "zg-ui-matrix",
+      "toSlot": "in_spec",
+      "type": "ARTIFACT"
+    },
+    {
+      "id": "zg-lk-2",
+      "fromNode": "zg-ui-matrix",
+      "fromSlot": "out_sig",
+      "toNode": "zg-router",
+      "toSlot": "in_sig",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "zg-lk-3",
+      "fromNode": "zg-router",
+      "fromSlot": "out_0",
+      "toNode": "zg-human-gate",
+      "toSlot": "in_gate",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "zg-lk-loop",
+      "fromNode": "zg-router",
+      "fromSlot": "out_1",
+      "toNode": "zg-ui-matrix",
+      "toSlot": "in_spec",
+      "type": "TEXT",
+      "maxLoops": 2
+    },
+    {
+      "id": "zg-lk-deg",
+      "fromNode": "zg-router",
+      "fromSlot": "out_3",
+      "toNode": "zg-prompt-out",
+      "toSlot": "in_txt",
+      "type": "TEXT"
+    },
+    {
+      "id": "zg-lk-4",
+      "fromNode": "zg-human-gate",
+      "fromSlot": "out_go",
+      "toNode": "zg-prompt-out",
+      "toSlot": "in_txt",
+      "type": "FLOW"
+    }
   ]
 }

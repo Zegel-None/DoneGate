@@ -9,19 +9,41 @@
     "extractMode": "skill-prompt"
   },
   "card": {
-    "title": "交互模式与控件决策表卡",
+    "title": "界面交互与控件核对",
     "category": "规划与设计",
-    "summary": "免外部二进制：锁定 16 条控件选型判据与五态矩阵，对功能清单做反模式核对并生成前端子代理硬约束提示词",
+    "summary": "免外部依赖：对页面功能清单核对常见错误控件用法，并补齐空、载、错、权、常五种状态要求",
     "inputs": [
-      { "id": "in_req", "name": "页面与功能盘点清单", "type": "SPEC" }
+      {
+        "id": "in_req",
+        "name": "页面功能清单",
+        "type": "SPEC"
+      }
     ],
     "outputs": [
-      { "id": "out_prm", "name": "前端子代理交互约束", "type": "PROMPT" },
-      { "id": "out_spec", "name": "控件映射与五态清单", "type": "SPEC" }
+      {
+        "id": "out_prm",
+        "name": "前端编写要求",
+        "type": "PROMPT"
+      },
+      {
+        "id": "out_spec",
+        "name": "控件与状态清单",
+        "type": "SPEC"
+      }
     ],
     "slots": [
-      { "id": "uim_1", "label": "16 条控件选型反模式拦截", "wired": true, "boundOut": "out_spec" },
-      { "id": "uim_2", "label": "空/载/错/权/常五态矩阵注入", "wired": true, "boundOut": "out_prm" }
+      {
+        "id": "uim_1",
+        "label": "拦截常见错误控件用法",
+        "wired": true,
+        "boundOut": "out_spec"
+      },
+      {
+        "id": "uim_2",
+        "label": "补齐空载错等五种页面状态",
+        "wired": true,
+        "boundOut": "out_prm"
+      }
     ]
   },
   "observables": [
@@ -29,7 +51,9 @@
       "id": "antiPatternHitCount",
       "from": "antiPatternHitCount",
       "kind": "count",
-      "assertableAs": ["zero"],
+      "assertableAs": [
+        "zero"
+      ],
       "wired": false,
       "reason": "作为阶段 4 前置设计规划卡接入，待具体前端契约认领后转为硬判据"
     }

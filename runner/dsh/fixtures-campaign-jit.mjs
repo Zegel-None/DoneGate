@@ -114,7 +114,7 @@ async function verifySharedDepsAndRealAdapter(tmp) {
   gitInit(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init project']);
 
   // (A) 共享底座池 workflows/.deps/_shared/：一次补齐后，派生 JIT 工作流零重复下载直接复用
-  const webPack = { id: 'pack-web', name: '网页全栈开发包', nodes: [{ id: 'n1', tplId: 'tpl-playwright' }, { id: 'n2', tplId: 'tpl-biome-knip' }] };
+  const webPack = { id: 'pack-web', name: '网页全栈工作流', nodes: [{ id: 'n1', tplId: 'tpl-playwright' }, { id: 'n2', tplId: 'tpl-biome-knip' }] };
   provisionWorkflowDeps(tmp, webPack, { markInstalledIds: ['playwright', 'biome'] });
   const uiNode = { id: 'comp-ui', title: '界面视图组件', scopePaths: ['src/ui/'], modules: [{ name: 'view', role: '界面', path: 'src/ui/view.mjs' }] };
   assignComponentWorkflow(tmp, uiNode, { actorRole: 'super-agent' });

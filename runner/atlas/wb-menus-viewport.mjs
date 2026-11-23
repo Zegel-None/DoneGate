@@ -126,7 +126,7 @@ const WB_MENUS_VIEWPORT_LINES = [
   "            卡片：${esc(node.title)}",
   "          </div>",
   "          <div class=\"ctx-row font-semibold\" style=\"color: var(--text-main);\" data-dsh-ctx=\"quote-card\" data-node=\"${esc(node.id)}\"><span>❝ 引用到底部输入框</span><span class=\"text-[10.5px] font-mono opacity-75\">Alt+单击</span></div>",
-  "          <div class=\"ctx-row\" data-dsh-ctx=\"preview-card\" data-node=\"${esc(node.id)}\"><span>👁 在右栏预览关联源码</span></div>",
+  "          <div class=\"ctx-row\" data-dsh-ctx=\"preview-card\" data-node=\"${esc(node.id)}\"><span>👁 预览关联源码</span></div>",
   "          ${state.page === 'sandbox' && !node.isSubRepoRef && !ro ? `<div class=\"ctx-row font-semibold\" style=\"color: var(--text-main);\" data-card-ctx=\"jit-open\" data-node=\"${esc(node.id)}\"><span>⚡ 按新需求即时派生 / 查看工作流</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-auto-assign\" data-node=\"${esc(node.id)}\"><span>🎯 让总控重新自动选配</span></div><div class=\"ctx-row\" data-card-ctx=\"jit-promote\" data-node=\"${esc(node.id)}\"><span>💾 将节点工作流另存为预置工作流</span></div>` : ''}",
   "          ${state.page === 'workshop' ? `<div class=\"ctx-row\" data-card-ctx=\"preview-obs\" data-node=\"${esc(node.id)}\"><span>📊 直看节点观测输出 (observation.json)</span></div>` : ''}",
   "          ${(node.primaryContractId || (node.contractIds && node.contractIds.length)) ? `<div class=\"ctx-row font-semibold\" style=\"color: var(--subgraph-accent);\" data-card-ctx=\"judge-pack\" data-node=\"${esc(node.id)}\"><span>⚖️ 一键生成门 5 复核包</span></div>` : ''}",

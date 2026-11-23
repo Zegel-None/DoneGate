@@ -18,7 +18,8 @@ import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
 } from './dsh/workflow-runner.mjs';
 import {
-  buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps, runNpmPrefixInstall
+  buildWinHardenedGitArgs, buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps,
+  readWorkflowDepsStatus, recordSharedPoolDepReady, runNpmPrefixInstall, writeSharedPoolLaunchers
 } from './dsh/workflow-deps.mjs';
 import {
   buildDshBundleDirectory, installDshWebBundle, stripCordisPatchText, uninstallDshWebBundle
@@ -430,6 +431,13 @@ async function verifyWorkflowDepsIsolation(check) {
       const unblocked = await executeDeterministicWorkflowRun(tmp, { ticketId: 'tkt-dep-2' }, pack);
       assert.equal(unblocked.ok, true);
       assert.equal(unblocked.exitCode, 0);
+
+      const winGit = buildWinHardenedGitArgs(['fetch'], { HTTPS_PROXY: 'http://127.0.0.1:7897' });
+      assert.ok(winGit.includes('http.sslBackend=openssl') && winGit.includes('core.longpaths=true'));
+      const lnch = writeSharedPoolLaunchers(tmp, { binName: 'gradle', distSubdir: 'gradle-8.10.2', comment: '安卓工作流启动器' });
+      assert.ok(/^[\x00-\x7F]*$/.test(readFileSync(lnch.batPath, 'utf8')));
+      recordSharedPoolDepReady(tmp, { id: 'gradle', version: '8.10.2', workflowId: 'pack-android', bin: lnch.relBin });
+      assert.equal(readWorkflowDepsStatus(tmp, 'pack-android').ready, true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

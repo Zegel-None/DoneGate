@@ -9,7 +9,7 @@
 | `@scanner` | 全栈入口盘点、跨语言依赖图谱、Git 支线撞车雷达、看板注水与全景体检四视图 | `contract.mjs`, `index.mjs`, `assemble-atlas.mjs`, `scan-entries.mjs`, `scan-graph.mjs`, `scan-branches.mjs`, `hydrate-workbench.mjs`, `humanize.mjs`, `serve-atlas.mjs`, `ui-views.mjs` |
 | `@canvas` | 无限画布引擎、样式与 DOM 骨架、卡片/连线/组合框渲染、拓扑自动整理、级联菜单、视口与 100 步撤销栈 | `render-html.mjs`, `wb-style-base.mjs`, `wb-style-canvas.mjs`, `wb-dom.mjs`, `wb-graph-engine.mjs`, `wb-layout-tidy.mjs`, `wb-render-cards.mjs`, `wb-render-wires.mjs`, `wb-snap-rulers.mjs`, `wb-menus-viewport.mjs`, `wb-viewport-ops.mjs`, `wb-events-wheel-drop.mjs`, `wb-events-pointer.mjs`, `wb-inline-rename.mjs`, `wb-events-actions.mjs`, `wb-history.mjs` |
 | `@uiboard` | Agent Native UI 看板前端控制器：实时换肤、同源代理预览、跨窗口拾取桥接收与假动作转真后端 | `wb-uiboard.mjs` |
-| `@workflow` | 预置工作流方案包目录、节点级即时派生（JIT）弹窗、实时后端水合外壳与过夜挂机调度、右栏会话子代理 | `wb-catalog.mjs`, `wb-jit-workflow.mjs`, `ui-shell.mjs`, `wb-subagent.mjs` |
+| `@workflow` | 预置工作流目录、节点级即时派生（JIT）弹窗、实时后端水合外壳与过夜挂机调度、会话子代理联动 | `wb-catalog.mjs`, `wb-jit-workflow.mjs`, `ui-shell.mjs`, `wb-subagent.mjs` |
 | `@dsh-dock` | DSH `postMessage` 引用胶囊编码、全元素 `Alt+Click` `resolveUiOwner` 拾取监听与卡包抽卡式底部对话抽屉 | `wb-dsh-style.mjs`, `wb-dsh-bridge.mjs`, `wb-dsh-shell.mjs` |
 
 ## 二、工作台前端拼装顺序 (`WB_CONCAT_MANIFEST` 单一数据源)
@@ -27,15 +27,15 @@
 | 界面区域 / 交互组件 | DOM 选择器与特征属性 | `data-ui-owner` 归属模块 | 所属子包 |
 |---|---|---|---|
 | 顶栏主控按钮、主题切换、挂机、左侧快捷导航栏与导入/保存弹窗 | `header`, `#left-icon-rail`, `#save-modal`, `#import-project-modal` | `runner/atlas/ui-shell.mjs` | `@workflow` |
-| 左栏抽屉（项目列表、工作流方案包列表、节点库）与一键整理按钮组 | `#left-drawer`, `.tidy-split-wrap`, `[data-switch-pack]`, `[data-view-repo]` | `runner/atlas/wb-layout-tidy.mjs` | `@canvas` |
+| 左栏抽屉（项目列表、工作流列表、节点库）与一键整理按钮组 | `#left-drawer`, `.tidy-split-wrap`, `[data-switch-pack]`, `[data-view-repo]` | `runner/atlas/wb-layout-tidy.mjs` | `@canvas` |
 | 全景体检单弹窗（功能清单、跨栈调用链、支线撞车雷达、验收体检单） | `#atlas-overview-modal`, `#btn-atlas-overview`, `[data-ov-tab]` | `runner/atlas/ui-views.mjs` | `@scanner` |
 | 画布业务/工作流节点卡、自适应组合框与选中悬浮工具条 | `#cards-layer`, `.node-card`, `#groups-layer`, `.group-frame`, `.selection-toolbox` | `runner/atlas/wb-render-cards.mjs` | `@canvas` |
 | 画布贝塞尔连线与自循环回跳次数胶囊 | `#wires-svg`, `.wire-hit`, `#loop-badges-layer`, `.loop-pill` | `runner/atlas/wb-render-wires.mjs` | `@canvas` |
 | 节点级即时派生（JIT）双窗对比弹窗与卡片工作流胶囊条 | `#dg-jit-modal-root`, `.dg-jit-modal`, `.dg-sb-wf-bar`, `[data-jit-open]` | `runner/atlas/wb-jit-workflow.mjs` | `@workflow` |
 | UI 看板实时舞台、顶部视口/代理工具条、左栏美学选型与内嵌原型元素 | `#uiboard-stage`, `#uiboard-frame-wrap`, `[data-uib-act]`, `#uib-theme-select` | `runner/atlas/wb-uiboard.mjs` | `@uiboard` |
 | 级联右键菜单、面包屑下钻栏、右下角缩放全览 HUD 与源码目录弹窗 | `#ctx-root-menu`, `#ctx-sub-menu`, `#drilldown-bar`, `#folder-modal` | `runner/atlas/wb-menus-viewport.mjs` | `@canvas` |
-| 右侧常驻会话子代理侧边栏 | `#right-sidebar` | `runner/atlas/wb-subagent.mjs` | `@workflow` |
-| 底部卡包抽卡式对话抽屉壳层与右栏改动预览抽屉 | `#dsh-composer-shell`, `#dsh-input-dock`, `#dsh-right-preview` | `runner/atlas/wb-dsh-shell.mjs` | `@dsh-dock` |
+| 辅助会话子代理面板 | `#right-sidebar` | `runner/atlas/wb-subagent.mjs` | `@workflow` |
+| 底部卡包抽卡式对话抽屉壳层与源码改动预览浮层 | `#dsh-composer-shell`, `#dsh-input-dock`, `#dsh-right-preview` | `runner/atlas/wb-dsh-shell.mjs` | `@dsh-dock` |
 
 ### 聚焦切片直达命令示例
 

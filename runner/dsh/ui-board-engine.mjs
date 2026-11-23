@@ -7,6 +7,7 @@ import {
   AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
   lockDesignSystemMaster, readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
+import { ARCHETYPE_CSS, renderProposalArchetypeBody, resolveProposalArchetype } from './ui-archetypes.mjs';
 import { buildWinCmdSpawn } from './win-paths.mjs';
 import { findExecutableInDirs, getSharedWorkflowDepsPaths, getWorkflowDepsPaths, provisionWorkflowDeps } from './workflow-deps.mjs';
 
@@ -129,64 +130,34 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
   const { layout, wiring } = loadOrInitUiLayoutAndWiring(root);
   const lock = readDesignSystemLock(root);
   const activeProposalId = opts.proposalId || lock?.proposalId || 'swiss-minimal';
+  const archetype = resolveProposalArchetype(activeProposalId);
   const cssVars = buildCssVariablesStyleText(activeProposalId);
   const wireById = new Map(wiring.actions.map((a) => [a.actionId, a.status === 'wired' || a.status === 'verified' ? 'wired' : 'mock']));
 
-  const blockHtmlList = (layout.content || []).map((blk, idx) => {
-    const p = blk.props || {};
-    const lineNo = 24 + idx * 24;
-    const srcAttr = `data-dg-block="${escHtml(blk.id)}" data-dg-source=".donegate/ui-prototype/index.html:${lineNo}:1"`;
-    if (blk.type === 'hero_nav') {
-      const wst = wireById.get(p.ctaActionId) || 'mock';
-      return `<section ${srcAttr} class="ui-card ui-hero">
-        <div class="ui-nav">
-          <strong class="ui-brand" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 2}:5">${escHtml(p.brand)}</strong>
-          <button type="button" class="ui-btn ui-btn-primary" data-dg-action="${escHtml(p.ctaActionId)}" data-dg-wiring="${wst}" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 3}:5">${escHtml(p.ctaLabel)}</button>
-        </div>
-        <h1 class="ui-h1" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 5}:3">${escHtml(p.headline)}</h1>
-        <p class="ui-sub" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 6}:3">${escHtml(p.subline)}</p>
-      </section>`;
-    }
-    if (blk.type === 'kpi_row') {
-      return `<section ${srcAttr} class="ui-grid-3">
-        <div class="ui-card"><div class="ui-muted">${escHtml(p.item1Title)}</div><div class="ui-kpi">${escHtml(p.item1Val)}</div></div>
-        <div class="ui-card"><div class="ui-muted">${escHtml(p.item2Title)}</div><div class="ui-kpi">${escHtml(p.item2Val)}</div></div>
-        <div class="ui-card"><div class="ui-muted">${escHtml(p.item3Title)}</div><div class="ui-kpi">${escHtml(p.item3Val)}</div></div>
-      </section>`;
-    }
-    if (blk.type === 'action_form') {
-      const wst = wireById.get(p.submitActionId) || 'mock';
-      return `<section ${srcAttr} class="ui-card">
-        <h2 class="ui-h2" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 1}:3">${escHtml(p.title)}</h2>
-        <form class="ui-form" onsubmit="event.preventDefault(); window.__runMockAction('${escHtml(p.submitActionId)}', '${escHtml(p.submitLabel)}');">
-          <input class="ui-input" type="text" placeholder="${escHtml(p.field1)}" required data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 3}:5">
-          <input class="ui-input" type="text" placeholder="${escHtml(p.field2)}" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 4}:5">
-          <button type="submit" class="ui-btn ui-btn-primary" data-dg-action="${escHtml(p.submitActionId)}" data-dg-wiring="${wst}" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 5}:5">${escHtml(p.submitLabel)}</button>
-        </form>
-      </section>`;
-    }
-    if (blk.type === 'confirm_modal_trigger') {
-      const wst = wireById.get(p.actionId) || 'mock';
-      return `<section ${srcAttr} class="ui-card ui-row-between">
-        <div><h2 class="ui-h2">${escHtml(p.title)}</h2><div class="ui-muted">直接点击右侧按钮体验二次确认弹窗，按住 Alt+单击定位源码</div></div>
-        <button type="button" class="ui-btn ui-btn-primary" data-dg-action="${escHtml(p.actionId)}" data-dg-wiring="${wst}" onclick="window.__openConfirmModal('${escHtml(p.actionId)}', '${escHtml(p.btnLabel)}')" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 3}:5">${escHtml(p.btnLabel)}</button>
-      </section>`;
-    }
-    const wst = wireById.get(p.exportActionId) || 'mock';
-    return `<section ${srcAttr} class="ui-card">
-      <div class="ui-row-between">
-        <h2 class="ui-h2" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 2}:5">${escHtml(p.title)}</h2>
-        <button type="button" class="ui-btn ui-btn-ghost" data-dg-action="${escHtml(p.exportActionId)}" data-dg-wiring="${wst}" onclick="window.__runMockAction('${escHtml(p.exportActionId)}', '${escHtml(p.exportLabel)}')" data-dg-source=".donegate/ui-prototype/index.html:${lineNo + 3}:5">${escHtml(p.exportLabel)}</button>
-      </div>
-      <table class="ui-table">
-        <thead><tr><th>单号</th><th>事项名称</th><th>状态</th></tr></thead>
-        <tbody>
-          <tr><td>#1024</td><td>核心网关限流策略升级</td><td><span class="ui-pill">进行中</span></td></tr>
-          <tr><td>#1025</td><td>季度安全合规巡检复核</td><td><span class="ui-pill">已就绪</span></td></tr>
-        </tbody>
-      </table>
-    </section>`;
-  }).join('\n');
+  const content = layout.content || [];
+  const findBlk = (t) => content.find((b) => b.type === t);
+  const usedIds = new Set();
+  const hBlk = findBlk('hero_nav'); if (hBlk) usedIds.add(hBlk.id);
+  const kBlk = findBlk('kpi_row'); if (kBlk) usedIds.add(kBlk.id);
+  const fBlk = findBlk('action_form'); if (fBlk) usedIds.add(fBlk.id);
+  const tBlk = findBlk('data_table'); if (tBlk) usedIds.add(tBlk.id);
+  const extraBlocks = content.filter((b) => !usedIds.has(b.id)).map((b) => ({
+    ...b,
+    wiring: wireById.get(b.props?.actionId || b.props?.ctaActionId || b.props?.submitActionId || b.props?.exportActionId) || 'mock'
+  }));
+
+  const hp = (hBlk && hBlk.props) || PUCK_BLOCK_TEMPLATES.hero_nav.defaultProps;
+  const kp = (kBlk && kBlk.props) || PUCK_BLOCK_TEMPLATES.kpi_row.defaultProps;
+  const fp = (fBlk && fBlk.props) || PUCK_BLOCK_TEMPLATES.action_form.defaultProps;
+  const tp = (tBlk && tBlk.props) || PUCK_BLOCK_TEMPLATES.data_table.defaultProps;
+  const bodyMarkup = renderProposalArchetypeBody(activeProposalId, {
+    sourceFile: '.donegate/ui-prototype/index.html',
+    hero: { id: (hBlk && hBlk.id) || 'blk-hero', ...hp, ctaWiring: wireById.get(hp.ctaActionId) || 'mock' },
+    kpi: { id: (kBlk && kBlk.id) || 'blk-kpi', ...kp },
+    form: { id: (fBlk && fBlk.id) || 'blk-form', ...fp, submitWiring: wireById.get(fp.submitActionId) || 'mock' },
+    table: { id: (tBlk && tBlk.id) || 'blk-table', ...tp, exportWiring: wireById.get(tp.exportActionId) || 'mock' },
+    extraBlocks
+  });
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -198,42 +169,21 @@ export function renderPrototypeHtml(projectRoot, opts = {}) {
 ${cssVars}
     * { box-sizing: border-box; }
     html, body { min-height: 100%; margin: 0; background: var(--ui-bg); color: var(--ui-text); }
-    body { padding: 24px; font-family: var(--ui-font-sans); transition: background 0.18s ease, color 0.18s ease; }
-    .ui-wrap { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-    .ui-card { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); padding: 18px 20px; }
-    .ui-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-    .ui-brand { font-size: 15px; letter-spacing: -0.01em; }
-    .ui-h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.25; }
-    .ui-h2 { margin: 0 0 10px; font-size: 15px; }
-    .ui-sub, .ui-muted { margin: 0; font-size: 13px; color: var(--ui-muted); line-height: 1.5; }
-    .ui-grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-    .ui-kpi { font-size: 26px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; color: var(--ui-primary); }
-    .ui-form { display: flex; flex-wrap: wrap; gap: 10px; }
-    .ui-input { flex: 1 1 200px; padding: 8px 12px; border-radius: var(--ui-radius); border: 1px solid var(--ui-border); background: var(--ui-surface-muted); color: var(--ui-text); font-size: 13px; }
-    .ui-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--ui-radius); font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--ui-border); transition: opacity 0.15s; }
-    .ui-btn:hover { opacity: 0.9; }
-    .ui-btn-primary { background: var(--ui-primary); color: var(--ui-primary-fg); border-color: var(--ui-primary); }
-    .ui-btn-ghost { background: var(--ui-surface-muted); color: var(--ui-text); }
-    .ui-row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .ui-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
-    .ui-table th, .ui-table td { text-align: left; padding: 9px 8px; border-top: 1px solid var(--ui-border); }
-    .ui-pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--ui-surface-muted); color: var(--ui-primary); font-weight: 600; }
+${ARCHETYPE_CSS}
     #ui-mock-toast { position: fixed; bottom: 18px; right: 18px; padding: 10px 14px; border-radius: var(--ui-radius); background: var(--ui-text); color: var(--ui-bg); font-size: 12.5px; font-weight: 600; display: none; box-shadow: var(--ui-shadow); z-index: 9000; }
     #ui-confirm-modal { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: none; align-items: center; justify-content: center; z-index: 9100; }
   </style>
 </head>
-<body>
-  <div class="ui-wrap">
-${blockHtmlList}
-  </div>
+<body data-proposal-id="${escHtml(activeProposalId)}" data-archetype="${escHtml(archetype)}">
+${bodyMarkup}
   <div id="ui-mock-toast"></div>
   <div id="ui-confirm-modal">
-    <div class="ui-card" style="max-width: 360px; width: 90%;">
-      <h2 class="ui-h2" id="ui-modal-title">确认执行此操作？</h2>
-      <p class="ui-muted" style="margin-bottom: 14px;">当前为原型交互模拟弹窗（接通真实后端 API 后将自动切换为正式事务请求）。</p>
-      <div class="ui-row-between" style="justify-content: flex-end;">
+    <div class="ui-modal-dialog ck-panel bt-card ep-panel" style="max-width: 360px; width: 90%; background: var(--ui-surface); padding: 18px 20px;">
+      <h2 style="margin:0 0 8px;font-size:16px;" id="ui-modal-title">确认执行此操作？</h2>
+      <p style="margin:0 0 14px;font-size:13px;color:var(--ui-muted);">当前为原型交互模拟弹窗（接通真实后端接口后将自动切换为正式请求）。</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
         <button type="button" class="ui-btn ui-btn-ghost" onclick="document.getElementById('ui-confirm-modal').style.display='none'">取消</button>
-        <button type="button" class="ui-btn ui-btn-primary" onclick="document.getElementById('ui-confirm-modal').style.display='none'; window.__runMockAction('modal-confirmed', '确认跳转')">确认执行</button>
+        <button type="button" class="ui-btn ui-btn-primary" onclick="document.getElementById('ui-confirm-modal').style.display='none'; window.__runMockAction('modal-confirmed', '确认执行')">确认执行</button>
       </div>
     </div>
   </div>
@@ -241,7 +191,7 @@ ${blockHtmlList}
     window.__runMockAction = function(actId, label) {
       var t = document.getElementById('ui-mock-toast');
       if (!t) return;
-      t.textContent = '⚡ 已触发「' + label + '」（Mock 桩响应正常，可在左栏一键接通真实数据库）';
+      t.textContent = '已触发「' + label + '」（原型模拟响应正常，可在左栏一键接通真实数据库）';
       t.style.display = 'block';
       clearTimeout(window.__mockTimer);
       window.__mockTimer = setTimeout(function() { t.style.display = 'none'; }, 2800);
@@ -265,7 +215,7 @@ ${blockHtmlList}
   mkdirSync(protoDir, { recursive: true });
   const outPath = join(protoDir, 'index.html');
   writeFileSync(outPath, html, 'utf8');
-  return { outPath, html, activeProposalId, layout, wiring };
+  return { outPath, html, activeProposalId, archetype, layout, wiring };
 }
 
 export function mutateUiLayoutBlocks(projectRoot, mutation = {}) {

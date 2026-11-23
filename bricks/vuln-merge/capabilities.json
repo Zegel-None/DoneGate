@@ -9,19 +9,41 @@
     "extractMode": "artifact-merge"
   },
   "card": {
-    "title": "多源漏洞去重与定级归并卡",
+    "title": "多源漏洞去重定级",
     "category": "安全与运维",
-    "summary": "免外部二进制：按 (包名, 版本, CVE/GHSA) 归并多扫描器报告，保留最高严重度并结合调用可达性输出分级修复清单",
+    "summary": "免外部依赖：合并多份扫描报告中的重复报警，保留最高风险等级并输出按轻重排序的修复清单",
     "inputs": [
-      { "id": "in_reports", "name": "锁文件/镜像/可达性扫描报告集", "type": "ARTIFACT" }
+      {
+        "id": "in_reports",
+        "name": "多份漏洞扫描报告",
+        "type": "ARTIFACT"
+      }
     ],
     "outputs": [
-      { "id": "out_plan", "name": "去重分级修复清单", "type": "ARTIFACT" },
-      { "id": "out_sig", "name": "0-3 聚合信号码", "type": "SIGNAL" }
+      {
+        "id": "out_plan",
+        "name": "按轻重排序修复单",
+        "type": "ARTIFACT"
+      },
+      {
+        "id": "out_sig",
+        "name": "是否无紧急漏洞",
+        "type": "SIGNAL"
+      }
     ],
     "slots": [
-      { "id": "vm_1", "label": "按包名+版本+CVE跨源去重", "wired": true, "boundOut": "out_plan" },
-      { "id": "vm_2", "label": "可达性×运行时依赖P0-P3定级", "wired": true, "boundOut": "out_sig" }
+      {
+        "id": "vm_1",
+        "label": "合并重复报警避免刷屏",
+        "wired": true,
+        "boundOut": "out_plan"
+      },
+      {
+        "id": "vm_2",
+        "label": "按实际风险排好修复优先级",
+        "wired": true,
+        "boundOut": "out_sig"
+      }
     ]
   },
   "observables": [
@@ -29,7 +51,9 @@
       "id": "p0Count",
       "from": "priorityCounts.P0",
       "kind": "count",
-      "assertableAs": ["zero"],
+      "assertableAs": [
+        "zero"
+      ],
       "wired": false,
       "reason": "供阶段 7 安全覆盖族工作流统一收口去重，待项目安全契约认领"
     }

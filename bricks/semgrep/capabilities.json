@@ -18,19 +18,41 @@
     "installCmd": "pip install semgrep==1.101.0"
   },
   "card": {
-    "title": "Semgrep 静态安全快扫卡",
+    "title": "代码安全隐患扫描",
     "category": "安全与运维",
-    "summary": "多语言规则驱动 SAST 快速扫描，拦截注入、不安全反序列化、SSRF 与硬编码高危调用模式",
+    "summary": "多语言代码安全扫描，自动揪出注入漏洞、危险调用与越权隐患",
     "inputs": [
-      { "id": "in_src", "name": "多语言业务源码", "type": "ARTIFACT" }
+      {
+        "id": "in_src",
+        "name": "多语言业务源码",
+        "type": "ARTIFACT"
+      }
     ],
     "outputs": [
-      { "id": "out_sig", "name": "0-3 安全状态码", "type": "SIGNAL" },
-      { "id": "out_obs", "name": "SAST 规则命中明细", "type": "TEXT" }
+      {
+        "id": "out_sig",
+        "name": "是否无高危隐患",
+        "type": "SIGNAL"
+      },
+      {
+        "id": "out_obs",
+        "name": "安全隐患位置清单",
+        "type": "TEXT"
+      }
     ],
     "slots": [
-      { "id": "sg_1", "label": "ERROR 级高危规则零命中判定口", "wired": true, "boundOut": "out_sig" },
-      { "id": "sg_2", "label": "命中文件行号与规则 ID 原文", "wired": true, "boundOut": "out_obs" }
+      {
+        "id": "sg_1",
+        "label": "高危安全隐患零命中检查",
+        "wired": true,
+        "boundOut": "out_sig"
+      },
+      {
+        "id": "sg_2",
+        "label": "问题文件行号与原因明细",
+        "wired": true,
+        "boundOut": "out_obs"
+      }
     ]
   },
   "observables": [
@@ -38,7 +60,9 @@
       "id": "errorSeverityCount",
       "from": "errorSeverityCount",
       "kind": "count",
-      "assertableAs": ["zero"],
+      "assertableAs": [
+        "zero"
+      ],
       "wired": false,
       "reason": "供阶段 6/7 安全门禁与覆盖族调用，待业务安全契约认领"
     }

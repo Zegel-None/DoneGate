@@ -34,14 +34,30 @@
     }
   ],
   "groups": [
-    { "id": "grp-01-spec", "title": "需求清晰度、架构索引与规格收敛环", "x": 28, "y": 42, "w": 948, "h": 320, "color": "blue" },
-    { "id": "grp-01-freeze", "title": "DAG 任务拆解与契约冻结确认", "x": 1004, "y": 42, "w": 620, "h": 340, "color": "amber" }
+    {
+      "id": "grp-01-spec",
+      "title": "需求清晰度、架构索引与规格收敛环",
+      "x": 28,
+      "y": 42,
+      "w": 948,
+      "h": 320,
+      "color": "blue"
+    },
+    {
+      "id": "grp-01-freeze",
+      "title": "DAG 任务拆解与契约冻结确认",
+      "x": 1004,
+      "y": 42,
+      "w": 620,
+      "h": 340,
+      "color": "amber"
+    }
   ],
   "nodes": [
     {
       "id": "sp-srclight",
       "tplId": "tpl-adp-srclight",
-      "title": "Srclight 仓内原语索引校验",
+      "title": "已有代码索引盘点",
       "tip": "确保混合代码索引新鲜，防止需求拆解遗漏本仓已有公共原语而重复造轮子",
       "repoSlug": "srclight/srclight",
       "repoUrl": "https://github.com/srclight/srclight",
@@ -55,20 +71,44 @@
       "y": 98,
       "w": 264,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "代码仓快照", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "项目代码快照",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 新鲜度码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "原语索引摘要", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "索引是否最新",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "已有功能模块摘要",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "sl_1", "label": "索引提交哈希对齐检查", "wired": true, "boundOut": "out_sig" },
-        { "id": "sl_2", "label": "已有原语符号表导出", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "sl_1",
+          "label": "核对代码索引是否同步最新",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "sl_2",
+          "label": "导出已有公共函数清单",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sp-openspec",
       "tplId": "tpl-adp-openspec",
-      "title": "OpenSpec 规格完整性审校",
+      "title": "需求规格审校",
       "tip": "扫描需求草案中的验收缺口、状态冲突与过度设计，输出 0-3 完整度信号",
       "repoSlug": "Fission-AI/OpenSpec",
       "repoUrl": "https://github.com/Fission-AI/OpenSpec",
@@ -82,20 +122,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_spec", "name": "需求规格草案", "type": "SPEC" }],
+      "inputs": [
+        {
+          "id": "in_spec",
+          "name": "需求方案草稿",
+          "type": "SPEC"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 完整度信号", "type": "SIGNAL" },
-        { "id": "out_rep", "name": "冲突与缺口报告", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "规格是否齐全",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_rep",
+          "name": "遗漏与冲突报告",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "os_1", "label": "规格结构合法性 0-3 码", "wired": true, "boundOut": "out_sig" },
-        { "id": "os_2", "label": "缺失边界与膨胀项摘录", "wired": true, "boundOut": "out_rep" }
+        {
+          "id": "os_1",
+          "label": "检查需求结构是否完整",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "os_2",
+          "label": "列出遗漏边界与过度设计项",
+          "wired": true,
+          "boundOut": "out_rep"
+        }
       ]
     },
     {
       "id": "sp-router",
       "tplId": "tpl-router-rule",
-      "title": "规格收敛条件路由",
+      "title": "规格审校分流开关",
       "tip": "0 规格完整进入任务拓扑拆解；1 规格有缺口回跳重审（最多 3 轮）",
       "repoSlug": "",
       "repoUrl": "",
@@ -109,22 +173,55 @@
       "y": 98,
       "w": 256,
       "h": null,
-      "inputs": [{ "id": "in_sig", "name": "0-3 完整度码", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_sig",
+          "name": "规格审校结果",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_0", "name": "0 规格齐备放行", "type": "SIGNAL" },
-        { "id": "out_1", "name": "1 缺口打回重审", "type": "TEXT" },
-        { "id": "out_3", "name": "2/3 缺环境降级", "type": "TEXT" }
+        {
+          "id": "out_0",
+          "name": "规格齐备放行",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_1",
+          "name": "有缺口打回补齐",
+          "type": "TEXT"
+        },
+        {
+          "id": "out_3",
+          "name": "缺环境转追问",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "s_0", "label": "0 号口进入 Beads 拓扑拆解", "wired": true, "boundOut": "out_0" },
-        { "id": "s_1", "label": "1 号口回流补齐规格 (maxLoops=3)", "wired": true, "boundOut": "out_1" },
-        { "id": "s_3", "label": "2/3 号口降级输出追问清单", "wired": true, "boundOut": "out_3" }
+        {
+          "id": "s_0",
+          "label": "通过后进入任务排期拆解",
+          "wired": true,
+          "boundOut": "out_0"
+        },
+        {
+          "id": "s_1",
+          "label": "有遗漏打回补充（最多3轮）",
+          "wired": true,
+          "boundOut": "out_1"
+        },
+        {
+          "id": "s_3",
+          "label": "缺工具时直接生成追问清单",
+          "wired": true,
+          "boundOut": "out_3"
+        }
       ]
     },
     {
       "id": "sp-beads",
       "tplId": "tpl-adp-beads",
-      "title": "Beads 依赖图只读排序",
+      "title": "任务先后顺序排期",
       "tip": "计算子任务 DAG 拓扑序与无阻塞优先队列（仅作只读建议，绝不篡改 DoneGate 契约核状态）",
       "repoSlug": "steveyegge/beads",
       "repoUrl": "https://github.com/steveyegge/beads",
@@ -138,20 +235,44 @@
       "y": 82,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_src", "name": "通过审校的规格", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_src",
+          "name": "审校通过的需求",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 拓扑无环码", "type": "SIGNAL" },
-        { "id": "out_obs", "name": "子任务实施顺序", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "排期是否无死循环",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_obs",
+          "name": "推荐开发顺序清单",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "bd_1", "label": "DAG 无死锁依赖校验", "wired": true, "boundOut": "out_sig" },
-        { "id": "bd_2", "label": "优先施工队列导出", "wired": true, "boundOut": "out_obs" }
+        {
+          "id": "bd_1",
+          "label": "检查任务之间无互相卡死",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "bd_2",
+          "label": "导出按先后排好的施工单",
+          "wired": true,
+          "boundOut": "out_obs"
+        }
       ]
     },
     {
       "id": "sp-freeze-gate",
       "tplId": "tpl-human-gate",
-      "title": "契约立约与 ADR 冻结闸门",
+      "title": "立约确认人工闸门",
       "tip": "不可逆立约节点：请业主确认架构选型（ADR）与契约 scope[] 写边界后再放行编码",
       "repoSlug": "",
       "repoUrl": "",
@@ -165,14 +286,33 @@
       "y": 82,
       "w": 260,
       "h": null,
-      "inputs": [{ "id": "in_gate", "name": "拓扑就绪信号", "type": "SIGNAL" }],
-      "outputs": [{ "id": "out_go", "name": "批准冻结立约", "type": "FLOW" }],
-      "slots": [{ "id": "hg_1", "label": "人工确认契约冻结放行", "wired": true, "boundOut": "out_go" }]
+      "inputs": [
+        {
+          "id": "in_gate",
+          "name": "排期就绪通知",
+          "type": "SIGNAL"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_go",
+          "name": "确认锁定方案",
+          "type": "FLOW"
+        }
+      ],
+      "slots": [
+        {
+          "id": "hg_1",
+          "label": "人工确认需求范围后放行",
+          "wired": true,
+          "boundOut": "out_go"
+        }
+      ]
     },
     {
       "id": "sp-prompt-pack",
       "tplId": "tpl-prompt-gen",
-      "title": "契约施工提示词组装器",
+      "title": "开发施工指令组装",
       "tip": "将冻结规格、ADR 决策与允许写入目录拼成 Worker 施工单",
       "repoSlug": "",
       "repoUrl": "",
@@ -186,18 +326,87 @@
       "y": 244,
       "w": 260,
       "h": null,
-      "inputs": [{ "id": "in_txt", "name": "立约放行流", "type": "TEXT" }],
-      "outputs": [{ "id": "out_prm", "name": "施工提示词", "type": "PROMPT" }],
-      "slots": [{ "id": "pg_1", "label": "生成带写边界约束提示词", "wired": true, "boundOut": "out_prm" }]
+      "inputs": [
+        {
+          "id": "in_txt",
+          "name": "锁定后的方案",
+          "type": "TEXT"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_prm",
+          "name": "开发施工指令",
+          "type": "PROMPT"
+        }
+      ],
+      "slots": [
+        {
+          "id": "pg_1",
+          "label": "生成带目录边界的施工指令",
+          "wired": true,
+          "boundOut": "out_prm"
+        }
+      ]
     }
   ],
   "links": [
-    { "id": "sp-lk-1", "fromNode": "sp-srclight", "fromSlot": "out_obs", "toNode": "sp-openspec", "toSlot": "in_spec", "type": "TEXT" },
-    { "id": "sp-lk-2", "fromNode": "sp-openspec", "fromSlot": "out_sig", "toNode": "sp-router", "toSlot": "in_sig", "type": "SIGNAL" },
-    { "id": "sp-lk-3", "fromNode": "sp-router", "fromSlot": "out_0", "toNode": "sp-beads", "toSlot": "in_src", "type": "SIGNAL" },
-    { "id": "sp-lk-loop", "fromNode": "sp-router", "fromSlot": "out_1", "toNode": "sp-openspec", "toSlot": "in_spec", "type": "TEXT", "maxLoops": 3 },
-    { "id": "sp-lk-deg", "fromNode": "sp-router", "fromSlot": "out_3", "toNode": "sp-prompt-pack", "toSlot": "in_txt", "type": "TEXT" },
-    { "id": "sp-lk-4", "fromNode": "sp-beads", "fromSlot": "out_sig", "toNode": "sp-freeze-gate", "toSlot": "in_gate", "type": "SIGNAL" },
-    { "id": "sp-lk-5", "fromNode": "sp-freeze-gate", "fromSlot": "out_go", "toNode": "sp-prompt-pack", "toSlot": "in_txt", "type": "FLOW" }
+    {
+      "id": "sp-lk-1",
+      "fromNode": "sp-srclight",
+      "fromSlot": "out_obs",
+      "toNode": "sp-openspec",
+      "toSlot": "in_spec",
+      "type": "TEXT"
+    },
+    {
+      "id": "sp-lk-2",
+      "fromNode": "sp-openspec",
+      "fromSlot": "out_sig",
+      "toNode": "sp-router",
+      "toSlot": "in_sig",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sp-lk-3",
+      "fromNode": "sp-router",
+      "fromSlot": "out_0",
+      "toNode": "sp-beads",
+      "toSlot": "in_src",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sp-lk-loop",
+      "fromNode": "sp-router",
+      "fromSlot": "out_1",
+      "toNode": "sp-openspec",
+      "toSlot": "in_spec",
+      "type": "TEXT",
+      "maxLoops": 3
+    },
+    {
+      "id": "sp-lk-deg",
+      "fromNode": "sp-router",
+      "fromSlot": "out_3",
+      "toNode": "sp-prompt-pack",
+      "toSlot": "in_txt",
+      "type": "TEXT"
+    },
+    {
+      "id": "sp-lk-4",
+      "fromNode": "sp-beads",
+      "fromSlot": "out_sig",
+      "toNode": "sp-freeze-gate",
+      "toSlot": "in_gate",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "sp-lk-5",
+      "fromNode": "sp-freeze-gate",
+      "fromSlot": "out_go",
+      "toNode": "sp-prompt-pack",
+      "toSlot": "in_txt",
+      "type": "FLOW"
+    }
   ]
 }

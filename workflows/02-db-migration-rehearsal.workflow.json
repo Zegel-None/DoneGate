@@ -34,14 +34,30 @@
     }
   ],
   "groups": [
-    { "id": "grp-02-truth", "title": "单一迁移真值 (Flyway) + 只读漂移对账 (Atlas)", "x": 28, "y": 42, "w": 956, "h": 320, "color": "emerald" },
-    { "id": "grp-02-gate", "title": "迁移对账分流与破坏性 DDL 人工签字", "x": 1012, "y": 42, "w": 612, "h": 330, "color": "amber" }
+    {
+      "id": "grp-02-truth",
+      "title": "单一迁移真值 (Flyway) + 只读漂移对账 (Atlas)",
+      "x": 28,
+      "y": 42,
+      "w": 956,
+      "h": 320,
+      "color": "emerald"
+    },
+    {
+      "id": "grp-02-gate",
+      "title": "迁移对账分流与破坏性 DDL 人工签字",
+      "x": 1012,
+      "y": 42,
+      "w": 612,
+      "h": 330,
+      "color": "amber"
+    }
   ],
   "nodes": [
     {
       "id": "db-sqlfluff",
       "tplId": "tpl-anti-slop",
-      "title": "SQLFluff 迁移脚本与锁表审计",
+      "title": "数据库脚本与锁表检查",
       "tip": "静态拦截无 WHERE 更新、DROP COLUMN 硬删列与长事务大表锁风险",
       "repoSlug": "sqlfluff/sqlfluff",
       "repoUrl": "https://github.com/sqlfluff/sqlfluff",
@@ -57,20 +73,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_sql", "name": "migrations/*.sql", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_sql",
+          "name": "待查数据库脚本",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sql", "name": "合规 SQL 脚本", "type": "ARTIFACT" },
-        { "id": "out_lint", "name": "锁表与方言告警", "type": "TEXT" }
+        {
+          "id": "out_sql",
+          "name": "合规升级脚本",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_lint",
+          "name": "锁表与风险提示",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "sq_1", "label": "破坏性 DDL 零容忍检查", "wired": true, "boundOut": "out_sql" },
-        { "id": "sq_2", "label": "方言与索引规范报告", "wired": true, "boundOut": "out_lint" }
+        {
+          "id": "sq_1",
+          "label": "拦截误删表与锁死操作",
+          "wired": true,
+          "boundOut": "out_sql"
+        },
+        {
+          "id": "sq_2",
+          "label": "数据库语法与索引检查报告",
+          "wired": true,
+          "boundOut": "out_lint"
+        }
       ]
     },
     {
       "id": "db-flyway-truth",
       "tplId": "tpl-anti-slop",
-      "title": "Flyway 空库正反向演练（唯一真值）",
+      "title": "空库升级与回退演练",
       "tip": "主真值声明：本项目迁移历史只认 Flyway 版本脚本；在隔离临时库执行 up -> down -> up 幂等校验",
       "repoSlug": "flyway/flyway",
       "repoUrl": "https://github.com/flyway/flyway",
@@ -86,20 +126,44 @@
       "y": 98,
       "w": 276,
       "h": null,
-      "inputs": [{ "id": "in_sql", "name": "待演练迁移集", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_sql",
+          "name": "待演练升级脚本",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_schema", "name": "演练后库快照", "type": "ARTIFACT" },
-        { "id": "out_log", "name": "演练回滚日志", "type": "TEXT" }
+        {
+          "id": "out_schema",
+          "name": "演练后表结构快照",
+          "type": "ARTIFACT"
+        },
+        {
+          "id": "out_log",
+          "name": "升级与回退日志",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "fw_1", "label": "空库正反向迁移零报错", "wired": true, "boundOut": "out_schema" },
-        { "id": "fw_2", "label": "唯一迁移历史表校验", "wired": true, "boundOut": "out_log" }
+        {
+          "id": "fw_1",
+          "label": "空库正反向升级无报错",
+          "wired": true,
+          "boundOut": "out_schema"
+        },
+        {
+          "id": "fw_2",
+          "label": "核对升级历史记录完整",
+          "wired": true,
+          "boundOut": "out_log"
+        }
       ]
     },
     {
       "id": "db-atlas-readonly",
       "tplId": "tpl-anti-slop",
-      "title": "Atlas 只读漂移对账（禁写库）",
+      "title": "表结构一致性对账",
       "tip": "仅调用 atlas schema diff / migrate lint 对账 ORM 模型与真实迁移库结构漂移，严禁执行 atlas migrate apply",
       "repoSlug": "ariga/atlas",
       "repoUrl": "https://github.com/ariga/atlas",
@@ -115,20 +179,44 @@
       "y": 98,
       "w": 268,
       "h": null,
-      "inputs": [{ "id": "in_schema", "name": "演练后库快照", "type": "ARTIFACT" }],
+      "inputs": [
+        {
+          "id": "in_schema",
+          "name": "演练后表结构快照",
+          "type": "ARTIFACT"
+        }
+      ],
       "outputs": [
-        { "id": "out_sig", "name": "0-3 零漂移码", "type": "SIGNAL" },
-        { "id": "out_diff", "name": "Schema 漂移明细", "type": "TEXT" }
+        {
+          "id": "out_sig",
+          "name": "表结构是否一致",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_diff",
+          "name": "表结构差异明细",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "at_1", "label": "代码模型与数据库零漂移", "wired": true, "boundOut": "out_sig" },
-        { "id": "at_2", "label": "外键缺索引静态告警", "wired": true, "boundOut": "out_diff" }
+        {
+          "id": "at_1",
+          "label": "检查代码与数据库结构一致",
+          "wired": true,
+          "boundOut": "out_sig"
+        },
+        {
+          "id": "at_2",
+          "label": "外键缺少索引风险提醒",
+          "wired": true,
+          "boundOut": "out_diff"
+        }
       ]
     },
     {
       "id": "db-router",
       "tplId": "tpl-router-rule",
-      "title": "迁移与漂移对账路由",
+      "title": "数据库对账分流",
       "tip": "0 零漂移进入人工终审；1 发现模型与脚本漂移打回重对齐（上限 3 轮）",
       "repoSlug": "",
       "repoUrl": "",
@@ -142,22 +230,55 @@
       "y": 98,
       "w": 256,
       "h": null,
-      "inputs": [{ "id": "in_sig", "name": "0-3 对账信号", "type": "SIGNAL" }],
+      "inputs": [
+        {
+          "id": "in_sig",
+          "name": "结构对账结果",
+          "type": "SIGNAL"
+        }
+      ],
       "outputs": [
-        { "id": "out_0", "name": "0 对账一致放行", "type": "SIGNAL" },
-        { "id": "out_1", "name": "1 漂移打回重修", "type": "TEXT" },
-        { "id": "out_3", "name": "2/3 缺数据库环境", "type": "TEXT" }
+        {
+          "id": "out_0",
+          "name": "对账一致放行",
+          "type": "SIGNAL"
+        },
+        {
+          "id": "out_1",
+          "name": "有差异打回重修",
+          "type": "TEXT"
+        },
+        {
+          "id": "out_3",
+          "name": "缺数据库转人工",
+          "type": "TEXT"
+        }
       ],
       "slots": [
-        { "id": "s_0", "label": "0 号口进入迁移审批闸门", "wired": true, "boundOut": "out_0" },
-        { "id": "s_1", "label": "1 号口回流修正 SQL (maxLoops=3)", "wired": true, "boundOut": "out_1" },
-        { "id": "s_3", "label": "2/3 号口输出环境就绪工单", "wired": true, "boundOut": "out_3" }
+        {
+          "id": "s_0",
+          "label": "对账一致送往人工审批",
+          "wired": true,
+          "boundOut": "out_0"
+        },
+        {
+          "id": "s_1",
+          "label": "有差异打回修脚本（最多3轮）",
+          "wired": true,
+          "boundOut": "out_1"
+        },
+        {
+          "id": "s_3",
+          "label": "缺少本地数据库转人工确认",
+          "wired": true,
+          "boundOut": "out_3"
+        }
       ]
     },
     {
       "id": "db-human-gate",
       "tplId": "tpl-human-gate",
-      "title": "生产迁移扩缩契约审批闸门",
+      "title": "上线改库人工审批",
       "tip": "高危不可逆节点：确认遵循 Expand -> Migrate -> Contract 分步演进，未跨版本直接删改线上列",
       "repoSlug": "",
       "repoUrl": "",
@@ -171,16 +292,79 @@
       "y": 98,
       "w": 260,
       "h": null,
-      "inputs": [{ "id": "in_gate", "name": "演练通过信号", "type": "SIGNAL" }],
-      "outputs": [{ "id": "out_go", "name": "签字准予合并迁移", "type": "FLOW" }],
-      "slots": [{ "id": "hg_1", "label": "DBA/业主确认回滚预案完备", "wired": true, "boundOut": "out_go" }]
+      "inputs": [
+        {
+          "id": "in_gate",
+          "name": "演练通过通知",
+          "type": "SIGNAL"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_go",
+          "name": "批准执行改库",
+          "type": "FLOW"
+        }
+      ],
+      "slots": [
+        {
+          "id": "hg_1",
+          "label": "人工确认备份与回退方案齐备",
+          "wired": true,
+          "boundOut": "out_go"
+        }
+      ]
     }
   ],
   "links": [
-    { "id": "db-lk-1", "fromNode": "db-sqlfluff", "fromSlot": "out_sql", "toNode": "db-flyway-truth", "toSlot": "in_sql", "type": "ARTIFACT" },
-    { "id": "db-lk-2", "fromNode": "db-flyway-truth", "fromSlot": "out_schema", "toNode": "db-atlas-readonly", "toSlot": "in_schema", "type": "ARTIFACT" },
-    { "id": "db-lk-3", "fromNode": "db-atlas-readonly", "fromSlot": "out_sig", "toNode": "db-router", "toSlot": "in_sig", "type": "SIGNAL" },
-    { "id": "db-lk-4", "fromNode": "db-router", "fromSlot": "out_0", "toNode": "db-human-gate", "toSlot": "in_gate", "type": "SIGNAL" },
-    { "id": "db-lk-loop", "fromNode": "db-router", "fromSlot": "out_1", "toNode": "db-flyway-truth", "toSlot": "in_sql", "type": "TEXT", "maxLoops": 3 }
+    {
+      "id": "db-lk-1",
+      "fromNode": "db-sqlfluff",
+      "fromSlot": "out_sql",
+      "toNode": "db-flyway-truth",
+      "toSlot": "in_sql",
+      "type": "ARTIFACT"
+    },
+    {
+      "id": "db-lk-2",
+      "fromNode": "db-flyway-truth",
+      "fromSlot": "out_schema",
+      "toNode": "db-atlas-readonly",
+      "toSlot": "in_schema",
+      "type": "ARTIFACT"
+    },
+    {
+      "id": "db-lk-3",
+      "fromNode": "db-atlas-readonly",
+      "fromSlot": "out_sig",
+      "toNode": "db-router",
+      "toSlot": "in_sig",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "db-lk-4",
+      "fromNode": "db-router",
+      "fromSlot": "out_0",
+      "toNode": "db-human-gate",
+      "toSlot": "in_gate",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "db-lk-loop",
+      "fromNode": "db-router",
+      "fromSlot": "out_1",
+      "toNode": "db-flyway-truth",
+      "toSlot": "in_sql",
+      "type": "TEXT",
+      "maxLoops": 3
+    },
+    {
+      "id": "db-lk-deg",
+      "fromNode": "db-router",
+      "fromSlot": "out_3",
+      "toNode": "db-human-gate",
+      "toSlot": "in_gate",
+      "type": "TEXT"
+    }
   ]
 }
