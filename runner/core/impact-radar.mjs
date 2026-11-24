@@ -1,16 +1,15 @@
-// 跨文件语义与 UI 锚点影响面雷达（STORM/NP-Bench 边界契约感知，<= 350 行）
-// 在修改源码文件、DOM ID、data-* 属性、HTTP 路由或导出符号前，静态反查全仓受影响的跨卡生产模块与关联单测
+// 跨文件语义与 UI 锚点影响面雷达（支持含点号配置文件锚点与 1-Hop 生产模块关联单测自动推导，<= 350 行）
 import { existsSync, readFileSync } from 'node:fs';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { extractFileInterfaceStub } from './ast-stub.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs';
 
-const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows'];
+const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
 const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
 const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json']);
-const IR_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$/i;
-const IR_GENERIC_ANCHORS = new Set(['app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer', 'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false']);
+const IR_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$|^runner\/self-test\.mjs$/i;
+const IR_GENERIC_ANCHORS = new Set(['app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer', 'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false', 'index', 'contract', 'shared']);
 
 function irIsSpecificAnchor(token) {
   if (!token || token.length < 4) return false;
@@ -22,6 +21,8 @@ function irExtractAnchorsFromFile(raw, relPath) {
   const addAnchor = (token, kind) => {
     if (irIsSpecificAnchor(token) && !anchors.has(token)) anchors.set(token, kind);
   };
+  const baseName = basename(relPath);
+  if (baseName.length >= 6 && /\.(json|jsonl|cmd)$/i.test(baseName)) addAnchor(baseName, 'config-file');
   if (/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(relPath)) {
     const stub = extractFileInterfaceStub(raw, relPath);
     for (const ex of stub.exports) {
@@ -40,8 +41,8 @@ function irExtractAnchorsFromFile(raw, relPath) {
   for (const m of raw.matchAll(/(\/(?:donegate\/)?api\/[A-Za-z0-9_/-]{3,})/g)) {
     addAnchor(m[1].replace(/\/+$/, ''), 'api-route');
   }
-  const stem = relPath.replace(/\.[a-z0-9]+$/i, '').split('/').pop();
-  if (stem && stem.length >= 5 && !IR_GENERIC_ANCHORS.has(stem)) addAnchor(stem, 'module-stem');
+  const stem = baseName.replace(/\.[a-z0-9]+$/i, '');
+  if (stem && stem.length >= 5 && !IR_GENERIC_ANCHORS.has(stem.toLowerCase())) addAnchor(stem, 'module-stem');
   return anchors;
 }
 
@@ -59,6 +60,10 @@ function irResolveSearchAnchors(root, rawTargets) {
       }
     } else if (irIsSpecificAnchor(rawTarget)) {
       anchorMap.set(rawTarget, { token: rawTarget, kind: 'literal', source: 'cli' });
+      const strippedRoute = rawTarget.replace(/^\/(?:donegate\/)?api\/(?:uiboard|autopilot|jit)\//, '');
+      if (strippedRoute !== rawTarget && strippedRoute.length >= 5) {
+        anchorMap.set(strippedRoute, { token: strippedRoute, kind: 'sub-route', source: 'cli' });
+      }
     }
   }
   return { selfFiles, anchors: [...anchorMap.values()] };
@@ -92,6 +97,23 @@ function irResolveOwners(rel, nodes) {
   return nodes.filter((n) => fileBelongsToScopes(rel, n.scope || [])).map((n) => n.id);
 }
 
+function irInferTransitiveTests(candidates, affectedProdFiles, directTestSet) {
+  const prodStems = [...new Set(
+    affectedProdFiles
+      .map((p) => basename(p.file).replace(/\.[a-z0-9]+$/i, ''))
+      .filter((s) => s.length >= 5 && !IR_GENERIC_ANCHORS.has(s.toLowerCase()))
+  )];
+  if (prodStems.length === 0) return [];
+  const stemAnchors = prodStems.map((s) => ({ token: s, kind: '1hop-module' }));
+  const inferred = [];
+  for (const { abs, rel } of candidates) {
+    if (!IR_TEST_RE.test(rel) || directTestSet.has(rel)) continue;
+    const hits = irFindAnchorHitsInText(readFileSync(abs, 'utf8'), stemAnchors);
+    if (hits.length > 0) inferred.push({ file: rel, hitCount: hits.length, hits: hits.slice(0, 6) });
+  }
+  return inferred;
+}
+
 export function analyzeImpactRadar(projectRoot, rawTargets = []) {
   const t0 = Date.now();
   const root = resolve(projectRoot);
@@ -102,14 +124,14 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
   const graph = discoverHermeticGraph(root);
   const nodes = graph.ok ? graph.nodes : [];
   const selfContracts = new Set([...selfFiles].flatMap((sf) => irResolveOwners(sf, nodes)));
+  const candidates = irCollectRepoCandidateFiles(root, selfFiles);
 
   const affectedTests = [];
   const affectedProdFiles = [];
   const crossContractSet = new Set();
 
-  for (const { abs, rel } of irCollectRepoCandidateFiles(root, selfFiles)) {
-    const raw = readFileSync(abs, 'utf8');
-    const hits = irFindAnchorHitsInText(raw, anchors);
+  for (const { abs, rel } of candidates) {
+    const hits = irFindAnchorHitsInText(readFileSync(abs, 'utf8'), anchors);
     if (hits.length === 0) continue;
     if (IR_TEST_RE.test(rel)) {
       affectedTests.push({ file: rel, hitCount: hits.length, hits: hits.slice(0, 8) });
@@ -122,8 +144,12 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
     affectedProdFiles.push({ file: rel, owners, hitCount: hits.length, hits: hits.slice(0, 8) });
   }
 
-  const vitestTargets = affectedTests.filter((t) => /\.test\.[a-z0-9]+$/i.test(t.file)).map((t) => t.file);
-  const fixtureTargets = affectedTests.filter((t) => /-fixtures\.mjs$/i.test(t.file)).map((t) => t.file);
+  const directSet = new Set(affectedTests.map((t) => t.file));
+  const transitiveTests = irInferTransitiveTests(candidates, affectedProdFiles, directSet);
+  const allRecTests = [...affectedTests, ...transitiveTests];
+  const vitestTargets = allRecTests.filter((t) => /\.test\.[a-z0-9]+$/i.test(t.file)).map((t) => t.file);
+  const fixtureTargets = allRecTests.filter((t) => /-fixtures\.mjs$|^runner\/self-test\.mjs$/i.test(t.file)).map((t) => t.file);
+
   return {
     exitCode: 0,
     durationMs: Date.now() - t0,
@@ -132,9 +158,10 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
     selfContracts: [...selfContracts].sort(),
     crossContractIds: [...crossContractSet].sort(),
     affectedTests,
+    transitiveTests,
     affectedProdFiles,
-    suggestedVitestCommand: vitestTargets.length > 0 ? `npx vitest run ${vitestTargets.join(' ')}` : null,
-    suggestedFixtureCommands: fixtureTargets.map((f) => `node ${f}`)
+    suggestedVitestCommand: vitestTargets.length > 0 ? `npx vitest run ${vitestTargets.slice(0, 8).join(' ')}` : null,
+    suggestedFixtureCommands: fixtureTargets.slice(0, 6).map((f) => `node ${f}`)
   };
 }
 
@@ -147,17 +174,21 @@ export function cmdImpact(projectRoot, opts = {}) {
     `=== DoneGate 跨文件契约与 UI 锚点影响面雷达（提取锚点 ${res.extractedAnchorCount} 个，耗时 ${res.durationMs}ms） ===`,
     `本卡归属契约：${res.selfContracts.join(', ') || '（字面量锚点查询）'} | 跨卡波及契约：${res.crossContractIds.join(', ') || '无'}`
   ];
-  lines.push(`\n1. 波及单测与夹具（${res.affectedTests.length} 个）：`);
-  if (res.affectedTests.length === 0) lines.push('   （未检出直接引用上述锚点的单测文件）');
+  lines.push(`\n1. 直连引用单测与夹具（${res.affectedTests.length} 个）：`);
+  if (res.affectedTests.length === 0) lines.push('   （未检出字面量直连单测）');
   for (const t of res.affectedTests) {
-    const summary = t.hits.slice(0, 4).map((h) => `${h.token}@L${h.line}`).join(', ');
-    lines.push(`   · ${t.file} [${summary}]`);
+    lines.push(`   · ${t.file} [${t.hits.slice(0, 4).map((h) => `${h.token}@L${h.line}`).join(', ')}]`);
   }
-  lines.push(`\n2. 波及生产与配置模块（${res.affectedProdFiles.length} 个）：`);
+  if (res.transitiveTests.length > 0) {
+    lines.push(`\n2. 1-Hop 生产模块覆盖单测（自动推导推荐回归 ${res.transitiveTests.length} 个）：`);
+    for (const t of res.transitiveTests.slice(0, 12)) {
+      lines.push(`   · ${t.file} [${t.hits.slice(0, 3).map((h) => `${h.token}@L${h.line}`).join(', ')}]`);
+    }
+  }
+  lines.push(`\n3. 波及生产与配置模块（${res.affectedProdFiles.length} 个）：`);
   if (res.affectedProdFiles.length === 0) lines.push('   （未检出跨文件生产引用）');
-  for (const p of res.affectedProdFiles.slice(0, 15)) {
-    const summary = p.hits.slice(0, 3).map((h) => `${h.token}@L${h.line}`).join(', ');
-    lines.push(`   · ${p.file} (${p.owners.join(',') || '共享'}) [${summary}]`);
+  for (const p of res.affectedProdFiles.slice(0, 20)) {
+    lines.push(`   · ${p.file} (${p.owners.join(',') || '共享'}) [${p.hits.slice(0, 3).map((h) => `${h.token}@L${h.line}`).join(', ')}]`);
   }
   if (res.suggestedVitestCommand) lines.push(`\n建议提交前联跑单测：${res.suggestedVitestCommand}`);
   for (const fc of res.suggestedFixtureCommands) lines.push(`建议提交前联跑夹具：${fc}`);

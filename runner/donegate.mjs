@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八）及密封契约切片与微门禁快捷入口
+// DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八）及主控三级变焦驾驶舱、密封契约切片与微门禁快捷入口
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
 import Module from 'node:module';
@@ -9,14 +9,15 @@ import { fileURLToPath } from 'node:url';
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 
 import { cmdInit, cmdContractNew, cmdContractFreeze, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
-import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact } from './core/commands-b.mjs';
+import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact, cmdBrief, cmdZoom } from './core/commands-b.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
 const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
-  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease'
+  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
+  'stubs', 'decisions', 'full'
 ]);
 
 const HELP_TEXT = [
@@ -37,11 +38,13 @@ const HELP_TEXT = [
   '  verify apply <packDir> --verdict <verdict.json>   记录门 5 裁决（不过退 1，材料被篡改退 2，材料不全退 3）',
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
-  '密封契约切片与子代理毫秒级微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
+  '主控三级变焦驾驶舱、密封契约切片与子代理微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
+  '· brief [--json] [--out <path>]                 生成主控 Zoom-0 零魔法数字全局根视口（画布双生域 + Kneedle 承重接口 + 寻址句柄）',
+  '· zoom <域|契约|文件|rules|tests|gaps|all> [--stubs] [--decisions] [--full [词]]   三级按需确定性下钻寻址（穿透门面与内联脚本）',
   '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
-  '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/导出符号影响面雷达（预检波及单测与跨卡模块）',
+  '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/导出符号影响面雷达（含 1-Hop 单测自动推导）',
   '· preflight [--stamp-lease] [--expect-branch <b>] [--target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
@@ -95,6 +98,13 @@ function dgCmdContract(root, sub, pos, flags) {
 }
 
 function dgCmdSubagentTools(cmd, root, pos, flags) {
+  if (cmd === 'brief') return cmdBrief(root, { json: Boolean(flags.json), out: flags.out });
+  if (cmd === 'zoom') {
+    return cmdZoom(root, {
+      targets: pos.slice(1), stubs: Boolean(flags.stubs),
+      decisions: Boolean(flags.decisions), full: Boolean(flags.full), json: Boolean(flags.json)
+    });
+  }
   if (cmd === 'lint-edit') return cmdLintEdit(root, { files: pos.slice(1), json: Boolean(flags.json) });
   if (cmd === 'impact') return cmdImpact(root, { targets: pos.slice(1), json: Boolean(flags.json) });
   if (cmd === 'preflight') {
@@ -207,7 +217,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
 
   return {
     exitCode: 3,
-    stderr: '未知命令。十二条命令：init | contract new | contract freeze | check | teeth | status | graph | gaps | handover | verify pack | verify apply | retire（快捷入口：slice | check-node | lint-edit | impact | preflight）'
+    stderr: '未知命令。十二条命令：init | contract new | contract freeze | check | teeth | status | graph | gaps | handover | verify pack | verify apply | retire（快捷入口：brief | zoom | slice | check-node | lint-edit | impact | preflight）'
   };
 }
 
