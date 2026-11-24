@@ -61,3 +61,4 @@ workflows/.deps/
 .donegate/worktrees/
 .donegate/autopilot/
 .donegate/rsi-candidates/
+.donegate/

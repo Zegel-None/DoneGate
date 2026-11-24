@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import {
   isNodeVersionSupported,
   probeAndFixBareWindowsTraps,
@@ -38,9 +38,9 @@ test('裸机 Windows 陷阱探针：自动捕获 PowerShell Restricted 与 core.
   };
 
   const winEnv = {
-    USERPROFILE: 'C:\\Users\\张 小白',
-    ProgramFiles: 'C:\\Program Files',
-    'ProgramFiles(x86)': 'C:\\Program Files (x86)'
+    USERPROFILE: win32.join('\\mock-win-vol', 'Users', '张 小白'),
+    ProgramFiles: win32.join('\\mock-win-vol', 'Program Files'),
+    'ProgramFiles(x86)': win32.join('\\mock-win-vol', 'Program Files (x86)')
   };
   const traps = probeAndFixBareWindowsTraps({
     platform: 'win32',
@@ -73,10 +73,9 @@ test('裸机 Windows 陷阱探针：自动捕获 PowerShell Restricted 与 core.
 test('防撒谎安装验真：未装必红、损坏必红、多 Profile 中文空格目录一站式 --install 产出防伪回执码', async () => {
   const sb = mkdtempSync(join(tmpdir(), 'dg-vi-test-'));
   try {
-    const dshHome = join(sb, 'C_Users_李四 Vibecoder', '.dsh');
+    const dshHome = join(sb, 'Users_李四 Vibecoder', '.dsh');
     mkdirSync(join(dshHome, 'profiles', 'my-profile'), { recursive: true });
 
-    // 1. 尚未安装时严禁给绿灯或生成防伪码
     const before = await verifyDoneGateInstallation({
       projectRoot: REPO_ROOT,
       dshHome,
@@ -87,7 +86,6 @@ test('防撒谎安装验真：未装必红、损坏必红、多 Profile 中文�
     assert.equal(before.proofToken, null);
     assert.match(formatInstallReceiptBox(before), /严禁向用户谎称已安装成功/);
 
-    // 2. 执行一站式 --install：同时挂载 web 与 my-profile 并通过全部 6 道硬门禁
     const installed = await verifyDoneGateInstallation({
       projectRoot: REPO_ROOT,
       dshHome,
@@ -100,7 +98,6 @@ test('防撒谎安装验真：未装必红、损坏必红、多 Profile 中文�
     assert.match(box, /6\/6 硬门禁全绿/);
     assert.match(box, /RESULT: PASS/);
 
-    // 3. 故意破坏已挂载的 client.js（模拟半截子假安装），G3 VM 槽位试装立即拦截
     writeFileSync(
       join(dshHome, 'profiles', 'web', 'node_modules', '@local', 'dsh-donegate', 'lib', 'client.js'),
       '// empty broken bundle\n',
