@@ -53,21 +53,21 @@ const ADAPTER_HUMAN_META = {
 };
 
 const HYD_WB_SUBUNIT_RULES = [
-  { match: (p) => !p.includes('/'), key: 'root', title: '根级入口与工程配置', scope: './', tier: 0 },
-  { match: (p) => /^runner\/[^/]+$/.test(p), key: 'runner', title: 'CLI 总控与运行入口', scope: 'runner/', tier: 1 },
-  { match: (p) => p.startsWith('runner/core/') && /\/(?:cmd-|commands-|progress\.|dashboard\.)/.test(p), key: 'core-cmds', title: '阶段门禁与进度命令', scope: 'runner/core/', tier: 2 },
-  { match: (p) => p.startsWith('runner/core/') && /\/(?:ast-stub|barrel-stub|context-router|hermetic-capsule|dom-wiring|graph-edges|node-micro-gate)/.test(p), key: 'core-slice', title: '契约切片与图谱路由', scope: 'runner/core/', tier: 3 },
-  { match: (p) => p.startsWith('runner/core/'), key: 'core-verdict', title: '12令判定与证据链核', scope: 'runner/core/', tier: 4 },
-  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:scan-|assemble-atlas|hydrate-workbench|humanize|contract\.|index\.)/.test(p), key: 'atlas-scanner', title: '全栈测绘与工作台水合', scope: 'runner/atlas/', tier: 3 },
-  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:serve-atlas|ui-|wb-catalog|wb-jit-|wb-subagent|wb-uiboard|wb-dsh-)/.test(p), key: 'atlas-shell', title: '实时服务与宿主壳层', scope: 'runner/atlas/', tier: 2 },
-  { match: (p) => p.startsWith('runner/atlas/'), key: 'atlas-canvas', title: '无限画布与连线标尺渲染', scope: 'runner/atlas/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/') && /\/(?:shared-pool-|workflow-deps|dg-deps-|workflow-jit)/.test(p), key: 'dsh-deps', title: '共享依赖池与节点派生', scope: 'runner/dsh/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/') && /\/ui-/.test(p), key: 'dsh-uiboard', title: 'UI 看板与美学原型引擎', scope: 'runner/dsh/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/'), key: 'dsh-host', title: '宿主桥接与过夜挂机编排', scope: 'runner/dsh/', tier: 2 },
-  { match: (p) => p.startsWith('skill/adapters/'), key: 'skill-adapters', title: '外部工具适配器套件', scope: 'skill/adapters/', tier: 5 },
-  { match: (p) => p.startsWith('skill/') && /\/(?:check-|cognitive-complexity|commit-hygiene|schema-lite)/.test(p), key: 'skill-gates', title: '四维硬门禁与合规套件', scope: 'skill/', tier: 5 },
-  { match: (p) => p.startsWith('skill/'), key: 'skill-kit', title: '公共原语与构建脚手架', scope: 'skill/', tier: 5 },
-  { match: (p) => p.startsWith('tools/'), key: 'tools', title: '规格一致性与腐化核验', scope: 'tools/', tier: 6 }
+  { match: (p) => !p.includes('/'), key: 'root', title: '项目基础设置与测试开关', scope: './', tier: 0 },
+  { match: (p) => /^runner\/[^/]+$/.test(p), key: 'runner', title: '接收指令并启动各项检查', scope: 'runner/', tier: 1 },
+  { match: (p) => p.startsWith('runner/core/') && /\/(?:cmd-|commands-|progress\.|dashboard\.)/.test(p), key: 'core-cmds', title: '记录每项功能的完成进度', scope: 'runner/core/', tier: 2 },
+  { match: (p) => p.startsWith('runner/core/') && /\/(?:ast-stub|barrel-stub|context-router|hermetic-capsule|dom-wiring|graph-edges|node-micro-gate)/.test(p), key: 'core-slice', title: '只挑相关文件发给 AI', scope: 'runner/core/', tier: 3 },
+  { match: (p) => p.startsWith('runner/core/'), key: 'core-verdict', title: '真跑测试打分并留存记录', scope: 'runner/core/', tier: 4 },
+  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:scan-|assemble-atlas|hydrate-workbench|humanize|contract\.|index\.)/.test(p), key: 'atlas-scanner', title: '自动盘点项目功能与改乱风险', scope: 'runner/atlas/', tier: 3 },
+  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:serve-atlas|ui-|wb-catalog|wb-jit-|wb-subagent|wb-uiboard|wb-dsh-)/.test(p), key: 'atlas-shell', title: '实时状态同步与过夜挂机', scope: 'runner/atlas/', tier: 2 },
+  { match: (p) => p.startsWith('runner/atlas/'), key: 'atlas-canvas', title: '流程图拖拽、连线与展开收起', scope: 'runner/atlas/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/') && /\/(?:shared-pool-|workflow-deps|dg-deps-|workflow-jit)/.test(p), key: 'dsh-deps', title: '自动安装检查工具（免配环境）', scope: 'runner/dsh/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/') && /\/ui-/.test(p), key: 'dsh-uiboard', title: '边看网页效果、边点选修改处', scope: 'runner/dsh/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/'), key: 'dsh-host', title: '安排后台小助手分头改代码', scope: 'runner/dsh/', tier: 2 },
+  { match: (p) => p.startsWith('skill/adapters/'), key: 'skill-adapters', title: '调用开源工具查漏洞与坏味道', scope: 'skill/adapters/', tier: 5 },
+  { match: (p) => p.startsWith('skill/') && /\/(?:check-|cognitive-complexity|commit-hygiene|schema-lite)/.test(p), key: 'skill-gates', title: '拦截 AI 偷懒删功能与绕脑代码', scope: 'skill/', tier: 5 },
+  { match: (p) => p.startsWith('skill/'), key: 'skill-kit', title: '基础文件读写与公开发布打包', scope: 'skill/', tier: 5 },
+  { match: (p) => p.startsWith('tools/'), key: 'tools', title: '核对说明文档与实际功能一致', scope: 'tools/', tier: 6 }
 ];
 
 const LANE_RANK = { ui: 0, api: 1, tool: 2 };

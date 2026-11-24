@@ -92,7 +92,7 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
       expect(hostWs.nodes.length).toBeGreaterThanOrEqual(4);
       expect(hostWs.nodes.length).toBeLessThanOrEqual(6);
       expect(hostWs.nodes.every((n) => Boolean(n.isSubgraph))).toBe(true);
-      expect(hostWs.nodes[0].title).toContain('澄清用户意图');
+      expect(hostWs.nodes[0].title).toContain('沟通需求');
       expect(hostWs.nodes[0].subgraph.nodes.some((sn) => sn.id === 'host-dom-grill-me')).toBe(true);
       expect(hostWs.codeUnitNodes.some((rn) => String(rn.sublinePath || '').includes('workflows/.deps'))).toBe(false);
       expect(hostWs.codeUnitNodes.some((rn) => String(rn.title || '').includes('workflows'))).toBe(false);
@@ -276,16 +276,65 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
       });
       expect(bottomLeafHasCapsule).toBe(true);
 
-      // Return to top level -> test in-place fisheye expand + Code X-Ray 2D view toggle
+      // Return to top level -> exhaustively click ALL 8 in-place expand buttons (including nested level-2 subgraphs) + 4-mode compound tidy
       await page.evaluate(() => {
         state.sbSubgraphStack = [];
         renderAll();
+        fitCanvas();
       });
-      const hasSubgraphBtn = await page.locator('[data-action="fisheye-expand-subgraph"]').count();
-      expect(hasSubgraphBtn).toBeGreaterThan(0);
-      await page.locator('[data-action="fisheye-expand-subgraph"]').first().click();
-      const groupCountAfterFisheye = await page.evaluate(() => getActiveGroupsList().length);
-      expect(groupCountAfterFisheye).toBeGreaterThan(0);
+      let expandedClicks = 0;
+      while (expandedClicks < 12) {
+        const rem = await page.locator('[data-action="fisheye-expand-subgraph"]').count();
+        if (rem === 0) break;
+        await page.locator('[data-action="fisheye-expand-subgraph"]').first().click();
+        expandedClicks++;
+      }
+      expect(expandedClicks).toBeGreaterThanOrEqual(7);
+
+      // Cycle global auto-tidy across all 4 modes while 7 groups exist and verify 0 overlaps & 0 broken wires
+      for (let m = 0; m < 4; m++) {
+        await page.click('#btn-tidy-mode-cycle');
+        const audit = await page.evaluate(() => {
+          const nodes = getActiveNodesList();
+          const groups = pruneActiveGroups();
+          const idSet = new Set(nodes.map((n) => n.id));
+          let deadEdges = 0;
+          const undir = new Map(nodes.map((n) => [n.id, new Set()]));
+          nodes.forEach((u) => {
+            (u.nextIds || []).forEach((v) => {
+              if (!idSet.has(v)) deadEdges++;
+              else { undir.get(u.id).add(v); undir.get(v).add(u.id); }
+            });
+          });
+          const vis = new Set([nodes[0].id]);
+          const q = [nodes[0].id];
+          while (q.length) {
+            const cur = q.shift();
+            (undir.get(cur) || []).forEach((nb) => { if (!vis.has(nb)) { vis.add(nb); q.push(nb); } });
+          }
+          const overlap = (a, b) => a.x < b.x + b.w - 2 && b.x < a.x + a.w - 2 && a.y < b.y + b.h - 2 && b.y < a.y + a.h - 2;
+          const cardRects = nodes.map((n) => {
+            const el = document.getElementById('card-' + n.id);
+            return { id: n.id, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+          });
+          const grpRects = groups.map((g) => ({ id: g.id, memberSet: new Set(g.memberIds), ...computeGroupBounds(g) }));
+          let cardOv = 0, grpOv = 0, foreignOv = 0;
+          for (let i = 0; i < cardRects.length; i++) {
+            for (let j = i + 1; j < cardRects.length; j++) if (overlap(cardRects[i], cardRects[j])) cardOv++;
+          }
+          for (let i = 0; i < grpRects.length; i++) {
+            for (let j = i + 1; j < grpRects.length; j++) if (overlap(grpRects[i], grpRects[j])) grpOv++;
+            for (const c of cardRects) if (!grpRects[i].memberSet.has(c.id) && overlap(grpRects[i], c)) foreignOv++;
+          }
+          return { groupCount: groups.length, deadEdges, allConnected: vis.size === nodes.length, cardOv, grpOv, foreignOv };
+        });
+        expect(audit.groupCount).toBeGreaterThanOrEqual(6);
+        expect(audit.deadEdges).toBe(0);
+        expect(audit.allConnected).toBe(true);
+        expect(audit.cardOv).toBe(0);
+        expect(audit.grpOv).toBe(0);
+        expect(audit.foreignOv).toBe(0);
+      }
 
       await page.click('#btn-sb-code-xray');
       const xrayActive = await page.evaluate(() => Boolean(state.sandboxCodeXray && getActiveSandboxContainer().isCodeXray));

@@ -4,56 +4,56 @@
 import { basename } from 'node:path';
 
 const HUMAN_CAPABILITY_TITLES = {
-  'host-dom-root': '工程配置与根级启动入口',
-  'host-dom-runner': '命令行总控与统一调度入口',
-  'host-dom-core-cmds': '契约生命周期与进度核验',
-  'host-dom-core-slice': '改动波及切片与上下文路由',
-  'host-dom-core-verdict': '12 令确定性判定与哈希证据链',
-  'host-dom-atlas-scanner': '项目全栈测绘与支线冲突感知',
-  'host-dom-atlas-shell': '实时工作台服务与过夜挂机面板',
-  'host-dom-atlas-canvas': '无限画布、连线与子流交互',
-  'host-dom-dsh-deps': '共享依赖池与按需工作流派生',
-  'host-dom-dsh-uiboard': 'UI 看板实时预览与点选拾取',
-  'host-dom-dsh-host': 'DSH 主从隔离调度与断点沙箱',
-  'host-dom-skill-adapters': '开源检查工具转接套件',
-  'host-dom-skill-gates': '四维认知复杂度与代码合规门禁',
-  'host-dom-skill-kit': '公共底座原语与分发构建',
-  'host-dom-tools': '规格一致性与文档防腐化巡检'
+  'host-dom-root': '项目基础设置与测试开关',
+  'host-dom-runner': '接收指令并启动各项检查',
+  'host-dom-core-cmds': '记录每项功能的完成进度',
+  'host-dom-core-slice': '只挑相关文件发给 AI',
+  'host-dom-core-verdict': '真跑测试打分并留存记录',
+  'host-dom-atlas-scanner': '自动盘点项目功能与改乱风险',
+  'host-dom-atlas-shell': '实时状态同步与过夜挂机',
+  'host-dom-atlas-canvas': '流程图拖拽、连线与展开收起',
+  'host-dom-dsh-deps': '自动安装检查工具（免配环境）',
+  'host-dom-dsh-uiboard': '边看网页效果、边点选修改处',
+  'host-dom-dsh-host': '安排后台小助手分头改代码',
+  'host-dom-skill-adapters': '调用开源工具查漏洞与坏味道',
+  'host-dom-skill-gates': '拦截 AI 偷懒删功能与绕脑代码',
+  'host-dom-skill-kit': '基础文件读写与公开发布打包',
+  'host-dom-tools': '核对说明文档与实际功能一致'
 };
 
 const DOMAIN_ARCHETYPES = [
   {
     key: 'intent',
     match: (id) => id === 'host-dom-grill-me' || id === 'host-dom-root' || id.includes('openspec'),
-    title: '澄清用户意图与工程立约',
+    title: '沟通需求与定好验收标准',
     colorKey: 'blue',
     baseTier: 0
   },
   {
     key: 'atlas',
     match: (id) => id.includes('atlas-'),
-    title: '可视化项目看板与画布编排',
+    title: '可视化项目看板与过夜挂机',
     colorKey: 'teal',
     baseTier: 2
   },
   {
     key: 'dsh',
     match: (id) => id.includes('dsh-'),
-    title: '宿主隔离调度与 UI 看板预览',
+    title: '界面实时预览与分派助手',
     colorKey: 'emerald',
     baseTier: 2
   },
   {
     key: 'core',
     match: (id) => id === 'host-dom-runner' || id.includes('core-'),
-    title: '契约切片路由与确定性判定核',
+    title: '精准挑文件与真跑验收',
     colorKey: 'indigo',
     baseTier: 3
   },
   {
     key: 'gates',
     match: (id) => id.includes('skill-') || id.includes('tools'),
-    title: '四维门禁与开源检查工具套件',
+    title: '防 AI 偷懒与代码质量体检',
     colorKey: 'amber',
     baseTier: 5
   }
@@ -64,15 +64,15 @@ const GENERIC_SUBGRAPH_PALETTE = ['blue', 'teal', 'emerald', 'indigo', 'amber'];
 export function createGrillMeCapabilityNode(savedGrill, downstreamIds = []) {
   const base = (savedGrill && typeof savedGrill === 'object') ? savedGrill : {};
   const scopes = Array.isArray(base.scopePaths) && base.scopePaths.length ? base.scopePaths : ['INTENT.md', 'contracts/'];
-  const defaultMods = [{ name: '需求追问与验收边界立约 (grill me)', role: '立约', state: 'ok', path: 'INTENT.md' }];
+  const defaultMods = [{ name: '先把模糊想法问清楚并写成可自动检查的清单', role: '定标准', state: 'ok', path: 'INTENT.md' }];
   return {
     ...base,
     id: 'host-dom-grill-me',
     step: '00',
     archTier: 0,
-    title: 'grill me · 需求澄清与立约',
+    title: '先把想法聊透、列好验收清单',
     sublinePath: 'INTENT.md',
-    tip: base.tip || '把模糊想法或 UI 看板拾取记录追问澄清为可验收契约边界（contract.json）',
+    tip: base.tip || '先把模糊想法或界面点选记录聊清楚，变成一条条可自动验收的清单',
     scopePaths: scopes,
     contractIds: Array.isArray(base.contractIds) ? base.contractIds : [],
     codeCapsule: { moduleCount: 1, sharedCount: 0, scopePaths: scopes },
@@ -272,12 +272,26 @@ function toScopeSlug(rawStr) {
   return String(rawStr || '').replace(/^\.?\//, '').replace(/\/+$/, '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 24);
 }
 
-function resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx) {
+function resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx, usedIds) {
   const slugs = [
     ...[...(scopePaths || [])].filter((s) => s && s !== './').sort().map(toScopeSlug),
     ...[...allIds].sort().map(toScopeSlug)
   ].filter(Boolean);
-  return `sg-mod-d${depth}-${slugs[0] || `g${seqIdx}`}`;
+  for (const s of slugs) {
+    const cand = `sg-mod-d${depth}-${s}`;
+    if (!usedIds.has(cand)) {
+      usedIds.add(cand);
+      return cand;
+    }
+  }
+  let suffix = seqIdx + 1;
+  let fallback = `sg-mod-d${depth}-${slugs[0] || 'g'}-${suffix}`;
+  while (usedIds.has(fallback)) {
+    suffix += 1;
+    fallback = `sg-mod-d${depth}-${slugs[0] || 'g'}-${suffix}`;
+  }
+  usedIds.add(fallback);
+  return fallback;
 }
 
 function pickUniqueArchetype(allIds, usedTitles) {
@@ -294,25 +308,33 @@ function pickUniqueArchetype(allIds, usedTitles) {
   return best;
 }
 
-function buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles) {
-  const cleanFirst = String(memberNodes[0]?.title || '核心业务').replace(/\s*[·(（].*$/, '').trim();
+const SUBFLOW_PLAIN_TITLES = [
+  { match: (ids) => ids.some((x) => x.includes('core-verdict') || x.includes('core-slice')), title: '挑准文件与真跑打分' },
+  { match: (ids) => ids.some((x) => x.includes('skill-gates') || x.includes('skill-adapters')), title: '拦截偷懒与开源扫描' },
+  { match: (ids) => ids.some((x) => x.includes('skill-kit') || x.includes('tools')), title: '基础读写与文档对账' }
+];
+
+function buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles, allIds = []) {
+  const hit = SUBFLOW_PLAIN_TITLES.find((r) => !usedTitles.has(r.title) && r.match(allIds));
+  if (hit) return hit.title;
+  const cleanFirst = String(memberNodes[0]?.title || '核心步骤').replace(/\s*[·(（].*$/, '').trim();
   const cleanSecond = String(memberNodes[1]?.title || '').replace(/\s*[·(（].*$/, '').trim();
   const scopeHint = (scopePaths || []).map((s) => s.replace(/^\.?\//, '').replace(/\/+$/, '')).find(Boolean) || '';
   let cand = cleanSecond && cleanFirst.length + cleanSecond.length <= 16
     ? `${cleanFirst}与${cleanSecond}`
-    : `${cleanFirst}业务流`;
+    : `${cleanFirst.slice(0, 10)}等环节`;
   if (usedTitles.has(cand) && scopeHint) cand = `${cleanFirst} (${scopeHint})`;
   return cand;
 }
 
-function deriveSubgraphMeta(memberNodes, scopePaths, depth, seqIdx, usedTitles) {
+function deriveSubgraphMeta(memberNodes, scopePaths, depth, seqIdx, usedTitles, usedIds) {
   const allIds = collectLeafIds(memberNodes);
   const arch = depth === 0 ? pickUniqueArchetype(allIds, usedTitles) : null;
-  const title = arch ? arch.title : buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles);
+  const title = arch ? arch.title : buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles, allIds);
   usedTitles.add(title);
   const fallbackColor = GENERIC_SUBGRAPH_PALETTE[seqIdx % GENERIC_SUBGRAPH_PALETTE.length];
   const colorKey = arch ? arch.colorKey : (memberNodes[0]?.colorKey || fallbackColor);
-  const id = resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx);
+  const id = resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx, usedIds);
   return {
     id,
     title,
@@ -355,18 +377,39 @@ export function transitivelyReduceDag(nodes) {
   return nodes;
 }
 
+function collectDagSourcesAndSinks(innerNodes) {
+  const idSet = new Set(innerNodes.map((n) => n.id));
+  const indeg = new Map(innerNodes.map((n) => [n.id, 0]));
+  const outdeg = new Map(innerNodes.map((n) => [n.id, 0]));
+  for (const u of innerNodes) {
+    for (const v of (u.nextIds || [])) {
+      if (!idSet.has(v) || v === u.id) continue;
+      outdeg.set(u.id, (outdeg.get(u.id) || 0) + 1);
+      indeg.set(v, (indeg.get(v) || 0) + 1);
+    }
+  }
+  const sources = innerNodes.filter((n) => (indeg.get(n.id) || 0) === 0);
+  const sinks = innerNodes.filter((n) => (outdeg.get(n.id) || 0) === 0);
+  return {
+    sources: sources.length ? sources : innerNodes.slice(0, 1),
+    sinks: sinks.length ? sinks : innerNodes.slice(-1)
+  };
+}
+
 function wireBoundaryPortMaps(srcRec, dstRec) {
   const srcTopId = srcRec.node.id;
   const dstTopId = dstRec.node.id;
   if (!srcRec.single && srcRec.node.subgraph) {
-    const inner = srcRec.node.subgraph.nodes;
-    const tail = inner[inner.length - 1];
-    if (tail) srcRec.node.subgraph._exitMap.push({ fromInner: tail.id, toExternal: dstTopId });
+    const { sinks } = collectDagSourcesAndSinks(srcRec.node.subgraph.nodes);
+    for (const tail of sinks) {
+      srcRec.node.subgraph._exitMap.push({ fromInner: tail.id, toExternal: dstTopId });
+    }
   }
   if (!dstRec.single && dstRec.node.subgraph) {
-    const inner = dstRec.node.subgraph.nodes;
-    const head = inner[0];
-    if (head) dstRec.node.subgraph._entryMap.push({ fromExternal: srcTopId, toInner: head.id });
+    const { sources } = collectDagSourcesAndSinks(dstRec.node.subgraph.nodes);
+    for (const head of sources) {
+      dstRec.node.subgraph._entryMap.push({ fromExternal: srcTopId, toInner: head.id });
+    }
   }
 }
 
@@ -508,17 +551,17 @@ function layoutDagLayerNodes(nodes, savedState = {}) {
   });
 }
 
-function buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles) {
+function buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles, usedIds) {
   const memberIdSet = new Set(rawMembers.map((m) => m.id));
   const scopedMembers = rawMembers.map((m) => ({
     ...m,
     nextIds: (m.nextIds || []).filter((tid) => memberIdSet.has(tid))
   }));
   const innerHierarchy = scopedMembers.length >= 4
-    ? buildHierarchyRecursive(scopedMembers, depth + 1, {})
+    ? buildHierarchyRecursive(scopedMembers, depth + 1, {}, usedIds)
     : layoutDagLayerNodes(scopedMembers, {});
   const scopePaths = [...new Set(rawMembers.flatMap((m) => m.scopePaths || []))];
-  const meta = deriveSubgraphMeta(innerHierarchy, scopePaths, depth, gIdx, usedTitles);
+  const meta = deriveSubgraphMeta(innerHierarchy, scopePaths, depth, gIdx, usedTitles, usedIds);
   const contractIds = [...new Set(rawMembers.flatMap((m) => m.contractIds || []))];
   const sharedSum = rawMembers.reduce((s, m) => s + (m.codeCapsule?.sharedCount || 0), 0);
   const modSum = rawMembers.reduce((s, m) => s + (m.codeCapsule?.moduleCount || (m.modules || []).length), 0);
@@ -556,7 +599,7 @@ function buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTi
   };
 }
 
-function buildHierarchyRecursive(nodes, depth, savedState) {
+function buildHierarchyRecursive(nodes, depth, savedState, usedIds = new Set()) {
   const rootSaved = depth === 0 ? savedState : {};
   if (nodes.length <= 3 || depth >= 3) return layoutDagLayerNodes(nodes, rootSaved);
   const part = partitionByLouvainModularity(nodes, depth);
@@ -576,7 +619,7 @@ function buildHierarchyRecursive(nodes, depth, savedState) {
         node: { ...m, nextIds: [] }
       };
     }
-    return buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles);
+    return buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles, usedIds);
   });
 
   orientAndReduceGroupRecords(groupRecords, part.dirW);
@@ -589,5 +632,6 @@ export function buildAdaptiveBusinessHierarchy(codeUnitNodes, savedState = {}, h
     return [createGrillMeCapabilityNode(savedState?.grillMeNode, [])];
   }
   const leaves = enrichLeafBusinessCapabilityNodes(codeUnitNodes, savedState, hasInitializedIntent);
-  return buildHierarchyRecursive(leaves, 0, savedState);
+  const usedIds = new Set(leaves.map((n) => n.id));
+  return buildHierarchyRecursive(leaves, 0, savedState, usedIds);
 }
