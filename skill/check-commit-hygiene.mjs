@@ -55,7 +55,13 @@ function loadActiveContractScopes(projectRoot) {
   return scopes;
 }
 
-const isClaimedByScopes = (relPath, scopes) => scopes.some((s) => (s.endsWith('/') ? relPath.startsWith(s) : (relPath === s || relPath.startsWith(s + '/'))));
+function hyMatchesSingleScope(relPath, s) {
+  if (s.endsWith('/')) return relPath.startsWith(s);
+  if (relPath === s || relPath.startsWith(s + '/')) return true;
+  const comp = s.replace(/\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i, '') + '/';
+  return comp !== s + '/' && relPath.startsWith(comp);
+}
+const isClaimedByScopes = (relPath, scopes) => scopes.some((s) => hyMatchesSingleScope(relPath, s));
 
 function listUntrackedFiles(projectRoot) {
   const r = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' });

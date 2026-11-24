@@ -43,7 +43,8 @@ const MICRO_GATE = isMicroGateEnabled();
 const MICRO_GATE_SKIP_SUITES = new Set([
   'skill/check-skills.mjs',
   'runner/atlas-fixtures.mjs',
-  'skill/gen-feature-overview.mjs'
+  'skill/gen-feature-overview.mjs',
+  'skill/build-public.mjs'
 ]);
 
 function buildMicroGateHabitsRoot(repoRoot) {
@@ -398,6 +399,10 @@ if (has('--self-check')) {
     ['skill/check-terminology.mjs', []],
     ['skill/install-hooks.mjs', ['--red-self-test']],
     ['skill/new-adapter.mjs', ['--self-test']],
+    ['skill/symbols-fixtures.mjs', []],
+    ['skill/lint-edit.mjs', ['--red-self-test']],
+    ['skill/preflight-subagent.mjs', ['--red-self-test']],
+    ['skill/build-public.mjs', ['--dry-check']],
     ['runner/atlas-fixtures.mjs', []],
     ['skill/gen-feature-overview.mjs', ['--check']],
     ['skill/check-escapes.mjs', []],
@@ -412,7 +417,8 @@ if (has('--self-check')) {
   const leanOptional = new Set([
     'tools/check-package.mjs', 'tools/verify-spec.mjs', 'tools/check-rot.mjs',
     'skill/check-cards.mjs', 'skill/check-brick-capabilities.mjs', 'skill/check-decisions.mjs',
-    'skill/check-ai-habits.mjs', 'skill/gen-feature-overview.mjs'
+    'skill/check-ai-habits.mjs', 'skill/gen-feature-overview.mjs',
+    'skill/symbols-fixtures.mjs', 'skill/build-public.mjs'
   ]);
   const childEnv = MICRO_GATE ? { ...process.env, DONEGATE_MICRO_GATE: '1' } : process.env;
   const microHabRoot = MICRO_GATE && existsSync(join(ROOT, 'skill/check-ai-habits.mjs')) ? buildMicroGateHabitsRoot(ROOT) : null;

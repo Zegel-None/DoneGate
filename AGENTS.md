@@ -14,28 +14,30 @@
      ```
    - 只要退出码不为 `0`，或未打印 `RESULT: PASS` 与 `DG-INSTALL-OK-` 防伪码，**严禁向用户声称「已安装完成」**；必须排障重跑至全绿，并将输出的 **【✅ 完结门安装验真回执】框** 原样贴给用户。
 
-## 1. 项目施工第一铁律：先读路由表，按节点领胶囊局部施工
+## 1. 项目施工第一铁律：启动探针 · 局部领胶囊 · 单文件即时微检
 
-1. **生成并只读 L0 全局路由表（禁扫全仓）**：
-   在已初始化契约（`contracts/`）或已保存画布组件（`.donegate/workbench-state.json`）的项目根目录，第一条命令固定执行：
+1. **工作树健康探针（多代理并行工作树必跑）**：
+   子代理进入隔离工作树第一条命令运行 `node runner/donegate.mjs preflight`；若返回退出码 `78`（`WORKTREE_EXPIRED`），必须立即停止操作回报总控重派，严禁自行探测系统目录。
+2. **生成并只读 L0 全局路由表（禁扫全仓）**：
+   在已初始化契约（`contracts/`）或已保存画布组件（`.donegate/workbench-state.json`）的项目根目录执行：
    ```bash
    node runner/donegate.mjs slice --router-only
    ```
    仅阅读生成的 `.donegate/ROUTER.md` 锁定目标节点 ID、管辖路径（`scope`）与上下游依赖拓扑，不预加载无关目录源码。
-2. **按节点切出 L2 密封施工胶囊（默认 1M×40% = 400,000 Tokens 五段预算）**：
+3. **按节点切出 L2 密封胶囊 + 跨文件锚点影响面预检**：
    ```bash
    node runner/donegate.mjs slice <nodeId> --freeze-stub
-   # 若子代理上下文窗口较小（如 128k 模型），按同比例缩放预算：
-   node runner/donegate.mjs slice <nodeId> --context-window 128000 --utilization 0.4
+   # 修改共享 DOM ID、data-* 属性、API 路由或导出符号前，先预检波及单测与跨卡调用方：
+   node runner/donegate.mjs impact <目标文件或锚点名>
    ```
-   子代理仅加载 `.donegate/capsules/<nodeId>.capsule.md`（含本节点 0-Hop 全量源码与关联测试 `160k` + 上下游 1-Hop 只读 `.stub.d.ts` 接口存根 `48k`；2-Hop 以外节点物理屏蔽）。
-3. **严守单点门面出口与单卡四重微门禁**：
-   - 模块目录若含 `index.mjs` 或 `contract.mjs` 门面出口，跨节点引用只准经由门面导入，严禁深层私引邻居内部实现文件。
-   - 节点施工完毕后执行单卡微门禁：
-     ```bash
-     node runner/donegate.mjs check-node <nodeId> --allow-dirty --receipt
-     ```
-     自动拦截越界改写非本卡 `scope` 文件、私改已冻结导出签名、绕过门面私引内部实现与未声明红线依赖；退出码为 `0` 后，子代理仅将输出的 **500 Tokens 以内 JSON 回执**交回总控会话，随即销毁子会话上下文。
+   子代理仅加载 `.donegate/capsules/<nodeId>.capsule.md`；当显式文件 `foo.mjs` 过长时，支持直接拆分为同名伴生子模块目录 `foo/*.mjs`（自动继承契约 `scope` 且保持门面 `stubHash` 不变）。
+4. **每改完单文件跑 `lint-edit` 即时微门禁 + 收尾跑 `check-node`**：
+   ```bash
+   # 每写完 1 个文件，100ms 内即时定位语法、认知复杂度、压行、术语与内联脚本漏挂：
+   node runner/donegate.mjs lint-edit <文件路径>
+   # 节点全部改完后执行单卡四重微门禁并交回 500-Token 回执：
+   node runner/donegate.mjs check-node <nodeId> --allow-dirty --receipt
+   ```
 
 ## 2. 四维工程与提交红线
 
@@ -47,6 +49,8 @@
 
 ```bash
 node skill/verify-install.mjs --red-self-test
+node skill/lint-edit.mjs --red-self-test
+node skill/preflight-subagent.mjs --red-self-test
 node skill/check-escapes.mjs --self-check
 node skill/check-commit-hygiene.mjs --audit-repo
 node runner/self-test.mjs

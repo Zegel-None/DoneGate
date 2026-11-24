@@ -1,4 +1,4 @@
-// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 桶文件门面重导出解引用与 HTTP 路由契约提取）
+// L1 邻域接口存根剥离器（保留前置 JSDoc 契约注释 + 伴生子模块闭包 + 桶文件门面重导出解引用与 HTTP 路由契约提取）
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
@@ -171,17 +171,14 @@ function extractJsTsExports(source) {
     let tailEnd = closeParen + 1;
     while (tailEnd < masked.length && !'{;\n'.includes(masked[tailEnd])) tailEnd++;
     const name = m[4] || 'defaultExport';
-    const defPref = m[1] ? 'default ' : '';
-    const asyncPref = m[2] ? 'async ' : '';
-    const genStar = m[3] ? '* ' : '';
+    const defPref = m[1] ? 'default ' : '', asyncPref = m[2] ? 'async ' : '', genStar = m[3] ? '* ' : '';
     entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}${asyncPref}function ${genStar}${name}${compactWs(source.slice(openParen, tailEnd))};` });
   }
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(default\s+)?class\s+([A-Za-z_$][\w$]*)([^{\n]*)\{/g)) {
     const openBrace = m.index + m[0].length - 1, closeBrace = findBalancedEnd(masked, openBrace, '{', '}'), name = m[2];
     const heritage = compactWs(source.slice(m.index + m[0].indexOf(name) + name.length, openBrace));
     const methods = closeBrace > openBrace ? extractJsClassMethods(source.slice(openBrace + 1, closeBrace), masked.slice(openBrace + 1, closeBrace)) : [];
-    const defPref = m[1] ? 'default ' : '';
-    const heritagePart = heritage ? ` ${heritage}` : '';
+    const defPref = m[1] ? 'default ' : '', heritagePart = heritage ? ` ${heritage}` : '';
     const bodyPart = methods.length > 0 ? ` { ${methods.join(' ')} }` : ' {}';
     entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}class ${name}${heritagePart}${bodyPart}` });
   }
@@ -245,14 +242,19 @@ function astStubIsTestRelPath(rel, includeTestDirs) {
   return /\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(rel);
 }
 
-function astStubCollectScopeDir(projectRoot, abs, dirClean, found, relatedTests, publicEntries) {
+function astStubWalkCodeIntoSets(projectRoot, absDir, found, relatedTests) {
   const dirCodeFiles = [];
-  for (const f of walk(abs, { skipDirs: SKIP_DIRS }).files) {
+  for (const f of walk(absDir, { skipDirs: SKIP_DIRS }).files) {
     const rel = relative(projectRoot, f).replace(/\\/g, '/');
     if (!CODE_EXTS.has(extname(rel).toLowerCase())) continue;
     if (astStubIsTestRelPath(rel, true)) relatedTests.add(rel);
     else { found.add(rel); dirCodeFiles.push(rel); }
   }
+  return dirCodeFiles;
+}
+
+function astStubCollectScopeDir(projectRoot, abs, dirClean, found, relatedTests, publicEntries) {
+  const dirCodeFiles = astStubWalkCodeIntoSets(projectRoot, abs, found, relatedTests);
   const barrels = dirCodeFiles.filter((f) => {
     const slash = f.lastIndexOf('/');
     const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
@@ -269,7 +271,12 @@ function astStubAddScopeEntry(projectRoot, rawScope, found, relatedTests, public
   if (st.isDirectory()) return astStubCollectScopeDir(projectRoot, abs, clean.replace(/\/+$/, ''), found, relatedTests, publicEntries);
   if (!st.isFile() || !CODE_EXTS.has(extname(clean).toLowerCase())) return false;
   if (astStubIsTestRelPath(clean, false)) relatedTests.add(clean);
-  else { found.add(clean); publicEntries.add(clean); }
+  else {
+    found.add(clean);
+    publicEntries.add(clean);
+    const companionAbs = resolve(projectRoot, clean.slice(0, clean.length - extname(clean).length));
+    if (astStubStatSafe(companionAbs)?.isDirectory()) astStubWalkCodeIntoSets(projectRoot, companionAbs, found, relatedTests);
+  }
   return false;
 }
 

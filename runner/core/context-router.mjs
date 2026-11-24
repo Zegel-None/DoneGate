@@ -1,4 +1,4 @@
-// L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算与共享治理资产声明）
+// L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算、共享治理与伴生子模块归属）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
@@ -15,11 +15,21 @@ export const SHARED_GOVERNANCE_GLOBS = [
 const normalizeScopePrefix = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '');
 const CTX_RTR_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
 
+export function companionDirForFileScope(normScope) {
+  if (!normScope || normScope.endsWith('/')) return '';
+  const stripped = normScope.replace(/\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i, '');
+  return stripped !== normScope ? `${stripped}/` : '';
+}
+
 export function fileBelongsToScopes(relFile, scopes = []) {
   const rf = normalizeScopePrefix(relFile);
   return (Array.isArray(scopes) ? scopes : []).some((s) => {
     const ns = normalizeScopePrefix(s);
-    return ns ? (ns.endsWith('/') ? rf.startsWith(ns) : (rf === ns || rf.startsWith(ns + '/'))) : false;
+    if (!ns) return false;
+    if (ns.endsWith('/')) return rf.startsWith(ns);
+    if (rf === ns || rf.startsWith(ns + '/')) return true;
+    const compDir = companionDirForFileScope(ns);
+    return Boolean(compDir && rf.startsWith(compDir));
   });
 }
 

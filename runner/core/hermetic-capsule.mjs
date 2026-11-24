@@ -1,10 +1,11 @@
-// L2 密封施工胶囊打包器（1M×40%=400k 预算 · 隐式 DOM 耦合闭包 · 词法扫描 · 双指标 TOC，<= 350 行）
+// L2 密封施工胶囊打包器（1M×40%=400k 预算 · 隐式 DOM 耦合闭包 · Louvain 分片建议 · 双指标 TOC，<= 350 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { extractFileInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { inspectCrossCardFocusPatterns, writeProjectRouter } from './context-router.mjs';
 import { buildDomWiringGraph, computeFileLineMetrics, formatDomWiringStubComment, resolveSubpackFocusPatterns } from './dom-wiring-graph.mjs';
+import { adviseCapsuleModularitySplit, formatShardAdviceLines } from './capsule-shard-advisor.mjs';
 
 const HCAP_GENERIC_STEMS = new Set(['index', 'contract', 'main', 'types', 'utils', '_shared']);
 const HCAP_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
@@ -148,14 +149,10 @@ function hcapSelectZeroHopSources(metaByFile, domGraph, selCtx) {
   let usedChars = 0;
   for (const rel of hcapOrderCandidates(metaByFile, isPriority)) {
     const meta = metaByFile.get(rel), wiring = domGraph.byFile.get(rel);
-    if (narrowMode && !closureSet.has(rel)) {
-      siblingStubs.push(hcapBuildSiblingStub(rel, meta, wiring));
-      continue;
-    }
+    if (narrowMode && !closureSet.has(rel)) { siblingStubs.push(hcapBuildSiblingStub(rel, meta, wiring)); continue; }
     if (usedChars + meta.content.length <= zeroHopCharCap) {
       usedChars += meta.content.length;
-      const { lm, headroom, content } = meta;
-      const role = hcapResolveZeroHopRole(narrowMode, seedSources.has(rel), lexicalSources.has(rel));
+      const { lm, headroom, content } = meta, role = hcapResolveZeroHopRole(narrowMode, seedSources.has(rel), lexicalSources.has(rel));
       zeroHopMap.set(rel, { path: rel, kind: 'source', role, isSeed: !narrowMode || isPriority(rel), content, effectiveLines: lm.effectiveLines, physicalLines: lm.physicalLines, maxProceduralFnLines: lm.maxProceduralFnLines, headroom });
     } else {
       truncatedFiles.push(rel);
@@ -205,9 +202,10 @@ function partitionZeroHopAssets(projectRoot, target, graph, budget, focusPattern
   const closureSet = computeIntraHopFocusClosure(scopeSet, rawByFile, seedSources, target.stub.facadeFiles, domGraph);
   for (const lx of lexicalSources) closureSet.add(lx);
   const { zeroHopFiles, siblingStubs, truncatedFiles, usedChars } = hcapSelectZeroHopSources(metaByFile, domGraph, { narrowMode, closureSet, seedSources, lexicalSources, zeroHopCharCap });
+  const shardAdvice = adviseCapsuleModularitySplit(target, rawByFile, domGraph, budget, truncatedFiles.length);
   const obHints = (target.obligations || []).map((o) => String(o.command || ''));
   const zeroHopTests = hcapSelectZeroHopTests(projectRoot, candidateTests, { maxEff, narrowMode, lexicalMode, lexicalTerms, seedTests, obHints, closureHints: hcapBuildSeedHints(zeroHopFiles), zeroHopCharCap, usedChars });
-  return { maxEff, focusMode, lexicalMode, lexicalMatches: [...lexicalSources].sort(), cardMaxProcFn, emptyFocusMatch: false, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles };
+  return { maxEff, focusMode, lexicalMode, lexicalMatches: [...lexicalSources].sort(), cardMaxProcFn, emptyFocusMatch: false, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles, shardAdvice };
 }
 
 function renderSiblingStubLines(siblingStubs, maxEff) {
@@ -225,7 +223,7 @@ function renderSiblingStubLines(siblingStubs, maxEff) {
 }
 
 function assembleDynamicBodyWithToc(staticPrefixLines, assets, target, budget) {
-  const { maxEff, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles } = assets;
+  const { maxEff, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles, shardAdvice } = assets;
   const blocks = [];
   for (const f of zeroHopFiles) {
     blocks.push({ category: '0-Hop 源码', path: f.path, effText: `${f.effectiveLines} / ${maxEff}`, physText: `${f.physicalLines}`, procText: `${f.maxProceduralFnLines}`, headroomText: `${f.headroom} 行`, effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines, modeText: f.role, lines: [`### \`${f.path}\``, '```js', ...f.content.trimEnd().split(/\r?\n/), '```'] });
@@ -240,6 +238,7 @@ function assembleDynamicBodyWithToc(staticPrefixLines, assets, target, budget) {
   if (truncatedFiles.length > 0) {
     blocks.push({ isDivider: true, lines: ['', `> ⚠ 预算溢出提示：当前节点超出了 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t 源码上限（剩余 ${truncatedFiles.length} 个文件仅附存根）。`, '### 未全量展开文件的 AST 存根', '```ts', ...target.stub.stubText.trimEnd().split(/\r?\n/), '```'] });
   }
+  if (shardAdvice) blocks.push({ isDivider: true, lines: formatShardAdviceLines(shardAdvice) });
   const tocHeader = ['', '## 4. 0-Hop 本卡全量源码（动态读写施工区）', `> 动态范围统计：0-Hop 展开源码 ${zeroHopFiles.length} 个${siblingStubs.length > 0 ? `（含目标与同卡调用闭包）+ 正交兄弟存根 ${siblingStubs.length} 个` : ''}（全卡有效代码 ${target.stub.effectiveLines} 行 / 非空物理行 ${target.stub.physicalLines} 行） | 关联单测 ${zeroHopTests.length} 个`, '', '### 0-Hop 胶囊精确行号导航目录与单文件行数余量（TOC）', '| 类别 | 路径 | 胶囊行号范围 | 有效代码 / 硬顶 | 非空物理行 | 最大过程函数行 | 剩余行数余量 | 形态 |', '|---|---|---|---|---|---|---|---|'];
   let cursor = staticPrefixLines.length + tocHeader.length + Math.max(1, blocks.filter((b) => !b.isDivider).length) + 2;
   const tocEntries = [], tocRows = [], bodyLines = [''];
@@ -308,7 +307,7 @@ export function cmdSlice(projectRoot, opts = {}) {
   const rawPrefix = [
     `# DoneGate 密封施工胶囊：${target.id}（${target.title}）`, '', ...warnBanner, '## 1. 静态路由规则与阅后即焚收口指令',
     `- **五段配额**：子代理总预算 **${budget.contextWindowTokens.toLocaleString()} × ${utilPct}% = ${budget.totalSessionBudgetTokens.toLocaleString()} Tokens**（L0 路由 ${budget.routerBudgetTokens.toLocaleString()}t | 0-Hop 上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | 1-Hop 存根上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t | 按需展开预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | 多轮思考与微门禁迭代预留 ${budget.multiTurnReserveTokens.toLocaleString()}t）`,
-    `- **门面与隔离约束**：只准修改本节点 \`scope\` 与关联单测；跨节点调用必须经由 1-Hop 门面存根（直连邻居 ${neighbors.length} 个节点），2-Hop+ 节点物理屏蔽（共屏蔽 ${hiddenNodeIds.length} 个节点）。`,
+    `- **门面与隔离约束**：只准修改本节点 \`scope\`（含显式文件同名伴生子模块目录）与关联单测；跨节点调用必须经由 1-Hop 门面存根（直连邻居 ${neighbors.length} 个节点），2-Hop+ 节点物理屏蔽（共屏蔽 ${hiddenNodeIds.length} 个节点）。`,
     `- **阅后即焚收口指令**：局部快检执行 \`${microGateCommand}\`；退出码为 0 后仅将结构化回执（上限 ${budget.receiptBudgetTokens} Tokens）交回总控，随即销毁当前子会话上下文。`, '',
     '## 2. 本卡契约声明（0-Hop Mandate）', `- **节点 ID**：\`${target.id}\``, `- **业务职责**：${target.why || target.title}`,
     `- **允许写入路径 (scope)**：${(target.scope || []).map((s) => `\`${s}\``).join(', ') || '（未声明）'}`,
@@ -332,7 +331,7 @@ export function cmdSlice(projectRoot, opts = {}) {
     effectiveLines: target.stub.effectiveLines, physicalLines: target.stub.physicalLines, maxProceduralFnLines: assets.cardMaxProcFn, budgetProfile: budget,
     focusMode: assets.focusMode, focusPatterns, lexicalMode: assets.lexicalMode, lexicalTerms, lexicalMatches: assets.lexicalMatches, warnings, crossCardFocus: crossCardRoutes,
     capsuleBytes, capsuleTokens, remainingSessionHeadroomTokens: Math.max(0, budget.totalSessionBudgetTokens - capsuleTokens), repoTotalSourceTokens: routerPayload.totalSourceTokens,
-    omittedTwoHopNodes: hiddenNodeIds, oneHopStubs: neighbors, toc: tocEntries, truncatedFiles: assets.truncatedFiles, microGateCommand,
+    omittedTwoHopNodes: hiddenNodeIds, oneHopStubs: neighbors, toc: tocEntries, truncatedFiles: assets.truncatedFiles, shardAdvice: assets.shardAdvice || null, microGateCommand,
     zeroHopFiles: assets.zeroHopFiles.map((f) => ({ path: f.path, role: f.role, tokens: Math.ceil(f.content.length / 4), effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines, headroom: f.headroom })),
     siblingStubFiles: assets.siblingStubs.map((s) => ({ path: s.path, effectiveLines: s.effectiveLines, physicalLines: s.physicalLines, maxProceduralFnLines: s.maxProceduralFnLines, headroom: s.headroom, exportCount: s.exports.length })),
     zeroHopTests: assets.zeroHopTests.map((f) => ({ path: f.path, tokens: Math.ceil(f.content.length / 4), effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines }))

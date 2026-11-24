@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八）及密封契约切片快捷入口
+// DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八）及密封契约切片与微门禁快捷入口
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
 import Module from 'node:module';
@@ -9,12 +9,14 @@ import { fileURLToPath } from 'node:url';
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 
 import { cmdInit, cmdContractNew, cmdContractFreeze, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
-import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode } from './core/commands-b.mjs';
+import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact } from './core/commands-b.mjs';
+import { cmdLintEdit } from '../skill/lint-edit.mjs';
+import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
 const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
-  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node'
+  'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease'
 ]);
 
 const HELP_TEXT = [
@@ -35,9 +37,12 @@ const HELP_TEXT = [
   '  verify apply <packDir> --verdict <verdict.json>   记录门 5 裁决（不过退 1，材料被篡改退 2，材料不全退 3）',
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
-  '密封契约切片与单卡微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
+  '密封契约切片与子代理毫秒级微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
   '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
-  '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]'
+  '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
+  '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
+  '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/导出符号影响面雷达（预检波及单测与跨卡模块）',
+  '· preflight [--stamp-lease] [--expect-branch <b>] [--target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
 function dgConsumeLongFlag(flags, argv, idx) {
@@ -89,6 +94,20 @@ function dgCmdContract(root, sub, pos, flags) {
   return null;
 }
 
+function dgCmdSubagentTools(cmd, root, pos, flags) {
+  if (cmd === 'lint-edit') return cmdLintEdit(root, { files: pos.slice(1), json: Boolean(flags.json) });
+  if (cmd === 'impact') return cmdImpact(root, { targets: pos.slice(1), json: Boolean(flags.json) });
+  if (cmd === 'preflight') {
+    return cmdPreflight(root, {
+      stampLease: Boolean(flags['stamp-lease']),
+      expectBranch: typeof flags['expect-branch'] === 'string' ? flags['expect-branch'] : undefined,
+      nodeId: typeof flags['target-node'] === 'string' ? flags['target-node'] : pos[1],
+      json: Boolean(flags.json)
+    });
+  }
+  return null;
+}
+
 function dgCmdSliceOrGraph(cmd, root, pos, flags) {
   if (cmd === 'slice') {
     return cmdSlice(root, {
@@ -116,7 +135,7 @@ function dgCmdSliceOrGraph(cmd, root, pos, flags) {
     }
     return cmdGraph(root);
   }
-  return null;
+  return dgCmdSubagentTools(cmd, root, pos, flags);
 }
 
 function dgCmdCheckOrTeeth(cmd, root, pos, flags) {
@@ -188,7 +207,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
 
   return {
     exitCode: 3,
-    stderr: '未知命令。十二条命令：init | contract new | contract freeze | check | teeth | status | graph | gaps | handover | verify pack | verify apply | retire（局部切片快捷入口：slice | check-node）'
+    stderr: '未知命令。十二条命令：init | contract new | contract freeze | check | teeth | status | graph | gaps | handover | verify pack | verify apply | retire（快捷入口：slice | check-node | lint-edit | impact | preflight）'
   };
 }
 
