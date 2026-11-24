@@ -101,7 +101,7 @@
 | `install-dsh-web.cmd` | Windows 双击一键安装与环境自动补齐脚本 |
 | `donegate/` · `donegate-judge/` · `donegate-forge/` | 三套核心技能：写方立约施工、双盲独立冷酷裁判、外部开源工具扩展工坊 |
 | `runner/atlas/` · `runner/dsh/` | 无限画布工作台（项目看板 / 工作流 / UI 看板）、DSH Web 插件总装与 Git Worktree 过夜挂机引擎 |
-| `runner/donegate.mjs` | 判定核统一命令行入口（含 `slice` 密封切片与 `check-node` 单卡微门禁） |
+| `runner/donegate.mjs` | 判定核统一命令行入口（含 `brief` / `zoom` 三级变焦驾驶舱、`impact` 波及面雷达、`lint-edit` 微门禁与 `slice` 密封切片） |
 | `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 26 个外部确定性工具适配器 |
 
 若你想在本地随时重跑全套工程健康自检，在仓库根目录执行：
@@ -112,6 +112,20 @@ node skill/check-escapes.mjs --self-check  # 跑全套代码完整性、名词�
 node runner/dsh-fixtures.mjs               # 跑 DSH 插件包、共享依赖池与过夜挂机端到端夹具
 node runner/atlas-fixtures.mjs             # 跑无限画布测绘、自适应模块度分层与 UI 看板夹具
 ```
+
+### 面向开源协作者与 AI 代理的代码寻路入口
+
+如果你是来阅读源码、排查问题或提交 PR 的开发者 / AI 编码代理，**请先阅读根目录 `AGENTS.md`**，无需盲翻全仓 165 个源码模块，直接用内置零依赖三级按需变焦驾驶舱 `O(1)` 定位：
+
+```bash
+node runner/donegate.mjs brief                       # Zoom-0：一屏看清五大业务域、58 条 HTTP 路由、Kneedle 承重接口与四维提交红线
+node runner/donegate.mjs zoom <01..05|rules|tests>   # Zoom-1：展开目标业务域模块树、实时阈值规则字典或全仓单测清单
+node runner/donegate.mjs zoom <相对文件路径>          # Zoom-2：穿透查看单文件导出/内部/内联生成函数签名、CLI 参数与跨脚本路径
+node runner/donegate.mjs impact <符号|路由|文件路径>   # 影响面雷达：自动反查跨文件调用点并推导 1-Hop 必跑回归单测
+node runner/donegate.mjs lint-edit <修改文件路径>      # 毫秒级微门禁：即时检查语法、认知复杂度（<=15 绿灯 / >25 硬拦）与反压行
+```
+
+> **关于「运行时零依赖」与开发期单测的说明**：完结门 CLI 与判定核运行时 **100% 零第三方 npm 依赖**（裸克隆直接 `node runner/donegate.mjs ...` 即可运行）；`tests/*.test.mjs` 单元测试使用可选开发依赖 `vitest`，裸克隆首次运行 `npm test` 前请先执行一次 `npm install`。提交代码须遵守四维预算（净增生产代码 `<= 250` 绿灯 / `> 450` 硬拦，生产文件 `<= 6` 个 / 含测试总文件 `<= 10` 个，单函数认知复杂度 `<= 25`）。
 
 ## 致谢
 

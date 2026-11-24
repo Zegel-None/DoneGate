@@ -4,101 +4,13 @@ import { extname, join, relative, resolve } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { enrichBarrelFacadeExports, extractHttpRouteContracts } from './barrel-stub-enrich.mjs';
+import { maskCommentsAndStrings } from './js-mask-lexer.mjs';
+
+export { maskCommentsAndStrings };
 
 const CODE_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
 const SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
 const FACADE_BASENAMES = new Set(['index.mjs', 'index.js', 'index.ts', 'index.tsx', 'contract.mjs', 'contract.js', 'contract.ts']);
-const REGEX_PREV_KW = new Set(['return', 'case', 'throw', 'typeof', 'void', 'delete', 'in', 'of', 'await', 'yield']);
-
-function canStartRegexLiteral(src, slashIdx) {
-  let p = slashIdx - 1;
-  while (p >= 0 && /\s/.test(src[p])) p--;
-  if (p < 0 || '(,=:[!&|?{};~^%+-*<>'.includes(src[p])) return true;
-  if (/[A-Za-z_$]/.test(src[p])) {
-    const kwEnd = p + 1;
-    while (p >= 0 && /[A-Za-z0-9_$]/.test(src[p])) p--;
-    return REGEX_PREV_KW.has(src.slice(p + 1, kwEnd));
-  }
-  return false;
-}
-
-function scanRegexLiteralEnd(src, slashIdx) {
-  let inCharClass = false;
-  for (let i = slashIdx + 1; i < src.length; i++) {
-    const ch = src[i];
-    if (ch === '\n' || ch === '\r') return -1;
-    if (ch === '\\') { i++; continue; }
-    if (ch === '[') inCharClass = true;
-    else if (ch === ']') inCharClass = false;
-    else if (ch === '/' && !inCharClass) return i + 1;
-  }
-  return -1;
-}
-
-function astStubBlankRange(out, from, to) {
-  for (let k = from; k < to; k++) {
-    if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
-  }
-}
-
-function astStubFindClosingDelim(src, start, delim) {
-  let i = start;
-  while (i < src.length && !src.startsWith(delim, i)) {
-    i += src[i] === '\\' ? 2 : 1;
-  }
-  return Math.min(src.length, i + delim.length);
-}
-
-function astStubMaskComment(src, out, i, isPy) {
-  const n = src.length, c2 = src.slice(i, i + 2);
-  if ((!isPy && c2 === '//') || (isPy && src[i] === '#')) {
-    const nl = src.indexOf('\n', i);
-    const end = nl < 0 ? n : nl;
-    astStubBlankRange(out, i, end);
-    return end;
-  }
-  if (!isPy && c2 === '/*') {
-    const close = src.indexOf('*/', i + 2);
-    const end = close < 0 ? n : close + 2;
-    astStubBlankRange(out, i, end);
-    return end;
-  }
-  return -1;
-}
-
-function astStubMaskString(src, out, i, isPy) {
-  const c = src[i], c3 = src.slice(i, i + 3);
-  if (isPy && (c3 === '"""' || c3 === "'''")) {
-    const end = astStubFindClosingDelim(src, i + 3, c3);
-    astStubBlankRange(out, i, end);
-    return end;
-  }
-  if (c === '"' || c === "'" || (!isPy && c === '`')) {
-    const end = astStubFindClosingDelim(src, i + 1, c);
-    astStubBlankRange(out, i + 1, Math.max(i + 1, end - 1));
-    return end;
-  }
-  return -1;
-}
-
-export function maskCommentsAndStrings(src, ext = '.mjs') {
-  const out = src.split(''), n = src.length, isPy = ext === '.py';
-  let i = 0;
-  while (i < n) {
-    const afterComment = astStubMaskComment(src, out, i, isPy);
-    if (afterComment >= 0) { i = afterComment; continue; }
-    if (!isPy && src[i] === '/' && canStartRegexLiteral(src, i)) {
-      const regEnd = scanRegexLiteralEnd(src, i);
-      if (regEnd > i + 1) astStubBlankRange(out, i + 1, regEnd - 1);
-      i = regEnd > i + 1 ? regEnd : i + 1;
-      continue;
-    }
-    const afterStr = astStubMaskString(src, out, i, isPy);
-    i = afterStr >= 0 ? afterStr : i + 1;
-  }
-  return out.join('');
-}
-
 function findBalancedEnd(masked, startIdx, openCh, closeCh) {
   let depth = 0;
   for (let i = startIdx; i < masked.length; i++) {

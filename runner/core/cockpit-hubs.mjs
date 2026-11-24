@@ -33,17 +33,33 @@ function chFindBalParens(text, openIdx) {
   return -1;
 }
 
+function chSplitTopLevelParams(rawParams, maskedParams) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < maskedParams.length; i++) {
+    const ch = maskedParams[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
+    else if (ch === ',' && depth === 0) {
+      parts.push(rawParams.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(rawParams.slice(start));
+  return parts
+    .map((p) => p.trim().replace(/\s*=[\s\S]*$/, '').trim())
+    .filter(Boolean);
+}
+
 function chExtractFnSignature(raw, symbol) {
-  const fnM = raw.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${symbol}\\s*\\(`));
+  const masked = maskCommentsAndStrings(raw, '.mjs');
+  const fnM = masked.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${symbol}\\s*\\(`));
   if (!fnM) return null;
   const openP = fnM.index + fnM[0].length - 1;
-  const closeP = chFindBalParens(raw, openP);
+  const closeP = chFindBalParens(masked, openP);
   if (closeP <= openP) return null;
-  const params = raw.slice(openP + 1, closeP)
-    .split(',')
-    .map((p) => p.trim().replace(/\s*=[\s\S]*$/, '').trim())
-    .filter(Boolean)
-    .join(', ');
+  const params = chSplitTopLevelParams(raw.slice(openP + 1, closeP), masked.slice(openP + 1, closeP)).join(', ');
   return `${symbol}(${params})`;
 }
 

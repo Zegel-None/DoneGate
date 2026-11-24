@@ -4,7 +4,7 @@
 
 ## 一、五大功能子包清单 (`ATLAS_SUBPACKS`)
 
-| 子包键名 | 职责边界 | 管辖模块 (`runner/atlas/*.mjs`（私有仓）) |
+| 子包键名 | 职责边界 | 管辖模块 (`runner/atlas/*.mjs`) |
 |---|---|---|
 | `@scanner` | 全栈入口盘点、跨语言依赖图谱、Git 支线撞车雷达、看板注水与全景体检四视图 | `contract.mjs`, `index.mjs`, `assemble-atlas.mjs`, `scan-entries.mjs`, `scan-graph.mjs`, `scan-branches.mjs`, `hydrate-workbench.mjs`, `modularity-hierarchy.mjs`, `humanize.mjs`, `serve-atlas.mjs`, `ui-views.mjs` |
 | `@canvas` | 无限画布引擎、样式与 DOM 骨架、卡片/连线/组合框渲染、拓扑自动整理、级联菜单、视口与 100 步撤销栈 | `render-html.mjs`, `wb-style-base.mjs`, `wb-style-canvas.mjs`, `wb-dom.mjs`, `wb-graph-engine.mjs`, `wb-layout-tidy.mjs`, `wb-render-cards.mjs`, `wb-render-wires.mjs`, `wb-snap-rulers.mjs`, `wb-menus-viewport.mjs`, `wb-viewport-ops.mjs`, `wb-events-wheel-drop.mjs`, `wb-events-pointer.mjs`, `wb-inline-rename.mjs`, `wb-events-actions.mjs`, `wb-history.mjs` |

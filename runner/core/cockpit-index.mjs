@@ -1,5 +1,6 @@
-// 零魔法数字主控三级按需变焦索引器（画布双生拓扑 × 作用域 ADR 挂载 × 代码真源实时抽取，<= 350 行）
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+// 零魔法数字主控三级按需变焦索引器（含 tmpdir 指纹缓存 × 画布双生拓扑 × 作用域 ADR 挂载，<= 350 行）
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadHygieneBudgets } from '../../skill/commit-hygiene-metrics.mjs';
@@ -16,9 +17,10 @@ import { computeProjectStatus } from './gates.mjs';
 
 export { kneedleElbowCount };
 
-const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools'];
+const CK_CACHE_SCHEMA = 'cockpit-idx-v4';
+const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools', 'contracts', 'decisions'];
 const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
-const CK_ROOT_CFGS = ['thresholds.json', 'adapters.registry.json', 'ledger.json', 'batches.jsonl', 'package.json'];
+const CK_ROOT_CFGS = ['thresholds.json', 'adapters.registry.json', 'ledger.json', 'batches.jsonl', 'package.json', 'install-dsh-web.cmd'];
 
 const CK_ADR_KEYWORD_HINTS = [
   { test: (r) => r.includes('runner/dsh') || r.includes('DeepSeek-Harness'), dom: '02', cid: 'dsh-orchestrator' },
@@ -27,6 +29,28 @@ const CK_ADR_KEYWORD_HINTS = [
   { test: (r) => r.includes('skill/adapters'), dom: '05', cid: 'masonry-adapters' },
   { test: (r) => r.includes('wiring-baseline') || r.includes('capabilities.json') || r.includes('advisory'), dom: '05', cid: 'brick-observations' }
 ];
+
+function ckComputeQuickRepoFingerprint(root, gitHead) {
+  let count = 0, maxMtime = 0, totalSize = 0;
+  const bump = (abs) => {
+    try {
+      const st = statSync(abs);
+      count++;
+      totalSize += st.size;
+      if (st.mtimeMs > maxMtime) maxMtime = Math.floor(st.mtimeMs);
+    } catch { /* ignore */ }
+  };
+  for (const cfg of [...CK_ROOT_CFGS, 'INTENT.md', 'CONSTRAINTS.md']) {
+    const p = join(root, cfg);
+    if (existsSync(p)) bump(p);
+  }
+  for (const d of [...CK_SCAN_DIRS, 'tests']) {
+    const absD = join(root, d);
+    if (!existsSync(absD)) continue;
+    for (const f of walk(absD, { skipDirs: CK_SKIP_DIRS }).files) bump(f);
+  }
+  return sha256(`${CK_CACHE_SCHEMA}|${root}|${gitHead}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
+}
 
 function ckRegisterPathOwners(rel, graphNodes, allFiles, fileOwners) {
   allFiles.add(rel);
@@ -39,12 +63,11 @@ function ckRegisterPathOwners(rel, graphNodes, allFiles, fileOwners) {
 }
 
 function ckCollectProjectFileOwners(root, graphNodes) {
-  const allFiles = new Set();
-  const fileOwners = new Map();
+  const allFiles = new Set(), fileOwners = new Map();
   for (const n of graphNodes) {
     for (const sf of n.stub?.scopeFiles || []) ckRegisterPathOwners(sf, graphNodes, allFiles, fileOwners);
   }
-  for (const d of CK_SCAN_DIRS) {
+  for (const d of ['runner', 'skill', 'workflows', 'bricks', 'tools']) {
     const absD = join(root, d);
     if (!existsSync(absD)) continue;
     for (const absF of walk(absD, { skipDirs: CK_SKIP_DIRS }).files) {
@@ -110,17 +133,13 @@ function ckParseSingleAdrRecord(adrDir, f, graphNodes, hsNodes) {
     const k = Object.keys(secs).find((h) => h.includes(kw));
     return k ? ckFirstProposition(secs[k]) : '—';
   };
-  return {
-    file: f, domains, contracts,
-    chosenDigest: pick('选了哪个'), whyDigest: pick('为什么'), reopenDigest: pick('什么条件下翻案'), content: raw
-  };
+  return { file: f, domains, contracts, chosenDigest: pick('选了哪个'), whyDigest: pick('为什么'), reopenDigest: pick('什么条件下翻案'), content: raw };
 }
 
 function ckCollectMountedDecisions(root, graphNodes, hsNodes) {
   const adrDir = join(root, 'decisions');
   if (!existsSync(adrDir)) return [];
-  return readdirSync(adrDir).filter((f) => f.endsWith('.md')).sort()
-    .map((f) => ckParseSingleAdrRecord(adrDir, f, graphNodes, hsNodes));
+  return readdirSync(adrDir).filter((f) => f.endsWith('.md')).sort().map((f) => ckParseSingleAdrRecord(adrDir, f, graphNodes, hsNodes));
 }
 
 function ckCollectTestSummaries(root) {
@@ -131,7 +150,8 @@ function ckCollectTestSummaries(root) {
     if (!/\.(?:mjs|js|ts)$/.test(rel) || !existsSync(join(root, rel))) continue;
     const raw = readFileSync(join(root, rel), 'utf8');
     const cases = [...raw.matchAll(/\b(?:describe|test|it)\s*\(\s*['"`]([^'"`]+)['"`]/g)].map((m) => m[1]).slice(0, 10);
-    testSummaries.push({ file: rel, header: extractFullHeaderComment(raw), cases });
+    const header = extractFullHeaderComment(raw) || cases[0] || '自动化单元测试套件';
+    testSummaries.push({ file: rel, header, cases });
   }
   return testSummaries;
 }
@@ -149,11 +169,9 @@ function ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines) {
     annotatedSubpacks[spKey] = files.map((f) => ({ file: f, contractOwner: (fileOwners.get(f) || []).filter(Boolean).join(',') || '未归属' }));
   }
   return {
-    archetypes,
-    newAdapterHeader: extractFullHeaderComment(newAdpRaw),
+    archetypes, newAdapterHeader: extractFullHeaderComment(newAdpRaw),
     declarationProtocolConsts: fileOutlines['skill/check-declarations.mjs']?.constantsPreview || [],
-    workflows,
-    annotatedSubpacks,
+    workflows, annotatedSubpacks,
     sharedPoolLayout: {
       rootDir: 'workflows/.deps/_shared/', binDir: 'workflows/.deps/_shared/.bin/', distsDir: 'workflows/.deps/_shared/dists/',
       npmBinDir: 'workflows/.deps/_shared/npm/node_modules/.bin/', npmCellsDir: 'workflows/.deps/_shared/npm-cells/<id>/',
@@ -179,14 +197,12 @@ function ckCollectUncoveredCodeFiles(root, allFiles, covered) {
 }
 
 function ckBuildRoutesByFile(root, graphNodes, allFiles) {
-  const routesByFile = new Map();
-  const covered = new Set();
+  const routesByFile = new Map(), covered = new Set();
   for (const n of graphNodes || []) {
     for (const sf of n.stub?.scopeFiles || []) covered.add(sf);
     for (const r of n.stub?.httpRoutes || []) ckAppendRouteEntry(routesByFile, r);
   }
-  const uncovRaw = ckCollectUncoveredCodeFiles(root, allFiles, covered);
-  for (const r of extractHttpRouteContracts(uncovRaw)) ckAppendRouteEntry(routesByFile, r);
+  for (const r of extractHttpRouteContracts(ckCollectUncoveredCodeFiles(root, allFiles, covered))) ckAppendRouteEntry(routesByFile, r);
   return routesByFile;
 }
 
@@ -199,18 +215,25 @@ function ckEstimateRepoSourceTokens(root, allFiles) {
   return Math.ceil(bytes / 4);
 }
 
-function ckEnrichDomainTree(nodes, fileOutlines, fileOwners) {
+function ckEnrichDomainTree(nodes, fileOutlines, fileOwners, hasIntentFile) {
   return (nodes || []).map((nd) => ({
     ...nd,
-    subgraph: nd.subgraph ? { ...nd.subgraph, nodes: ckEnrichDomainTree(nd.subgraph.nodes, fileOutlines, fileOwners) } : undefined,
-    modules: (nd.modules || []).map((m) => ({
-      ...m, fullHeader: fileOutlines[m.path]?.header || m.name, ownerContracts: (fileOwners.get(m.path) || []).filter(Boolean)
-    }))
+    subgraph: nd.subgraph ? { ...nd.subgraph, nodes: ckEnrichDomainTree(nd.subgraph.nodes, fileOutlines, fileOwners, hasIntentFile) } : undefined,
+    modules: (nd.modules || []).map((m) => {
+      const isVirtualIntent = m.path === 'INTENT.md' && !hasIntentFile;
+      const fullHeader = isVirtualIntent ? `${m.name}（画布虚拟立约起点，执行 donegate init 后生成实体 INTENT.md）` : (fileOutlines[m.path]?.header || m.name);
+      return { ...m, fullHeader, ownerContracts: (fileOwners.get(m.path) || []).filter(Boolean) };
+    })
   }));
 }
 
 export function buildCockpitGraphIndex(projectRoot) {
   const root = resolve(projectRoot);
+  const gitHead = (spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim() || 'uncommitted';
+  const cacheFile = join(tmpdir(), `dg-${CK_CACHE_SCHEMA}-${ckComputeQuickRepoFingerprint(root, gitHead)}.json`);
+  const cached = existsSync(cacheFile) ? readJsonStrict(cacheFile) : null;
+  if (cached?.ok && cached.value?.root === root) return cached.value;
+
   const atlas = buildProjectAtlas(root);
   const graph = discoverHermeticGraph(root);
   const status = computeProjectStatus(root);
@@ -219,29 +242,32 @@ export function buildCockpitGraphIndex(projectRoot) {
   const gNodes = graph.nodes || [];
   const { allFiles, fileOwners } = ckCollectProjectFileOwners(root, gNodes);
   const routesByFile = ckBuildRoutesByFile(root, gNodes, allFiles);
-
   const fileOutlines = {};
   for (const f of [...allFiles].sort()) {
     const out = buildSingleFileOutline(root, f, fileOwners.get(f) || [], routesByFile.get(f) || []);
     if (out) fileOutlines[f] = out;
   }
-  const intentRaw = readMaybe(join(root, 'INTENT.md')) || '';
-  const constraintsRaw = readMaybe(join(root, 'CONSTRAINTS.md')) || '';
-  const gitOut = spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout;
-
-  return {
-    root, atlas, graph, status, gaps,
-    gitHead: (gitOut || '').trim() || 'uncommitted',
+  const hasIntentFile = existsSync(join(root, 'INTENT.md'));
+  const intentRaw = readMaybe(join(root, 'INTENT.md')) || '', constraintsRaw = readMaybe(join(root, 'CONSTRAINTS.md')) || '';
+  const built = {
+    root, atlas, graph, status, gaps, gitHead,
     hasDecisionsDir: existsSync(join(root, 'decisions')),
-    intentHash: intentRaw ? sha256(intentRaw).slice(0, 12) : '—',
-    constraintsHash: constraintsRaw ? sha256(constraintsRaw).slice(0, 12) : '—',
+    hasThresholdsFile: existsSync(join(root, 'thresholds.json')),
+    intentHash: intentRaw ? sha256(intentRaw).slice(0, 12) : '未初始化（零契约模式）',
+    constraintsHash: constraintsRaw ? sha256(constraintsRaw).slice(0, 12) : '未初始化（零契约模式）',
     intentText: intentRaw, constraintsText: constraintsRaw,
     thresholds: loadHygieneBudgets(root),
     fallbackSourceTokens: ckEstimateRepoSourceTokens(root, allFiles),
-    domains: ckEnrichDomainTree(hsNodes, fileOutlines, fileOwners),
+    domains: ckEnrichDomainTree(hsNodes, fileOutlines, fileOwners, hasIntentFile),
     adrs: ckCollectMountedDecisions(root, gNodes, hsNodes),
     hubs: computeContractKneedleHubs(root, gNodes, allFiles, fileOwners, hsNodes, fileOutlines),
     liveMeta: ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines),
     fileOutlines
   };
+  try {
+    const tmpWrite = `${cacheFile}.${process.pid}.tmp`;
+    writeFileSync(tmpWrite, JSON.stringify(built), 'utf8');
+    renameSync(tmpWrite, cacheFile);
+  } catch { /* ignore tmpdir write contention */ }
+  return built;
 }

@@ -1,50 +1,14 @@
 // 1-Hop 桶门面重导出多跳解引用（真实参数列表 + @param/@returns/@typedef JSDoc）与 HTTP 路由契约提取器
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
+import { stripCommentsKeepStrings } from './js-mask-lexer.mjs';
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'];
 const REEXPORT_SIG_RE = /^export\s+(\*(?:\s+as\s+([A-Za-z_$][\w$]*))?|\{[\s\S]+?\})(?:\s+from\s+['"]([^'"]+)['"])?\s*;?$/;
 const ROUTE_FULL_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)?(\/(?:donegate\/api|api)\/[A-Za-z0-9/_:${}.-]+)\1|\/(\^?\\\/(?:donegate\\\/api|api)\\\/[^\s/;]+)\/[gimsuy]*/g;
-const ROUTE_SUB_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)(\/[A-Za-z0-9/_:${}.-]+)\1|(?:sub|p|rel|subPath|subRoute|routePath|relPath|apiPath|pathname|route|cleanPath)\s*===?\s*(['"`])(\/[A-Za-z0-9/_:${}.-]+)\4/g;
+const ROUTE_SUB_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)(\/[A-Za-z0-9/_:${}.-]+)\1|(?:sub|p|rel|subPath|subRoute|routePath|relPath|apiPath|pathname|route|cleanPath)\s*[!=]==?\s*(['"`])(\/[A-Za-z0-9/_:${}.-]+)\4/g;
 const SERVER_SIGNAL_RE = /\b(?:req\.method|req\.url|res\.writeHead|res\.end|createServer|pathname|router\.|app\.(?:get|post|put|delete))\b/;
 const compactSig = (t) => t.replace(/\s+/g, ' ').replace(/\s*([(),:;])\s*/g, '$1 ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
-
-function bseBlankLineComment(src, out, start) {
-  let i = start;
-  while (i < src.length && src[i] !== '\n') {
-    if (out[i] !== '\r') out[i] = ' ';
-    i++;
-  }
-  return i;
-}
-
-function bseBlankBlockComment(src, out, start) {
-  const end = src.indexOf('*/', start + 2);
-  const limit = end >= 0 ? end + 2 : src.length;
-  for (let k = start; k < limit; k++) {
-    if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
-  }
-  return limit;
-}
-
-function bseSkipQuotedString(src, start) {
-  const q = src[start];
-  let i = start + 1;
-  while (i < src.length && src[i] !== q) i += src[i] === '\\' ? 2 : 1;
-  return i + 1;
-}
-
-function stripCommentsKeepStrings(src) {
-  const out = src.split('');
-  for (let i = 0, n = src.length; i < n;) {
-    const c = src[i], c2 = src.slice(i, i + 2);
-    if (c2 === '//') i = bseBlankLineComment(src, out, i);
-    else if (c2 === '/*') i = bseBlankBlockComment(src, out, i);
-    else if (c === '"' || c === "'" || c === '`') i = bseSkipQuotedString(src, i);
-    else i++;
-  }
-  return out.join('');
-}
 
 function findBal(text, startIdx, openCh, closeCh) {
   for (let i = startIdx, depth = 0; i < text.length; i++) {
@@ -255,8 +219,11 @@ function inferMethods(cleanSrc, matchIdx, nextIdx) {
   const brace = cleanSrc.indexOf('{', matchIdx);
   const hEnd = (brace >= 0 && brace < bLim && brace - matchIdx < 180) ? brace : Math.min(bLim, matchIdx + 140);
   const methodRe = /\b(?:req\.method|method)\s*===?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]|['"](GET|POST|PUT|DELETE|PATCH)['"]\s*===?\s*(?:req\.method|method)|\bmethod\s*:\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/g;
-  const hits = new Set([...cleanSrc.slice(hStart, hEnd).matchAll(methodRe)].map((m) => (m[1] || m[2] || m[3]).toUpperCase()));
+  const hdrSlice = cleanSrc.slice(hStart, hEnd);
+  const hits = new Set([...hdrSlice.matchAll(methodRe)].map((m) => (m[1] || m[2] || m[3]).toUpperCase()));
   if (hits.size > 0) return [...hits];
+  const negHdr = hdrSlice.match(/\b(?:req\.method|method)\s*!==?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/);
+  if (negHdr) return [negHdr[1].toUpperCase()];
   if (brace >= 0 && brace < bLim) {
     const closeB = findBal(cleanSrc, brace, '{', '}');
     const body = cleanSrc.slice(brace, closeB > brace ? Math.min(closeB + 1, bLim) : bLim);

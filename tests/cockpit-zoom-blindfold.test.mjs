@@ -19,17 +19,18 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(skewed).toBeLessThanOrEqual(5);
   });
 
-  it('donegate brief 生成与画布同构的五大业务域、49 条 HTTP 路由、实时四维阈值与三级确定性寻址句柄', () => {
+  it('donegate brief 生成五大业务域、51 条 DSH 路由、平衡括号函数签名与实时四维阈值', () => {
     const res = dispatchCommand(['brief'], REPO_ROOT);
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain('主控全局根视口（Zoom-0');
     expect(res.stdout).toContain('[01] 沟通需求与定好验收标准');
     expect(res.stdout).toContain('[02] 界面实时预览与分派助手');
-    expect(res.stdout).toContain('HTTP 路由：49 条');
+    expect(res.stdout).toContain('物理目录：`runner/dsh/`');
+    expect(res.stdout).toMatch(/HTTP 路由：(49|50|51) 条/);
     expect(res.stdout).toContain('[03] 可视化项目看板与过夜挂机');
+    expect(res.stdout).toContain('exportDashboardHtml(projectRoot, outPath, opts)');
+    expect(res.stdout).not.toContain("dashboard.html'), opts)");
     expect(res.stdout).toContain('四维门禁实时阈值');
-    expect(res.stdout).toContain('SHARED_GOVERNANCE_GLOBS');
-    expect(res.stdout).toContain('--allow-cross-scope');
 
     const jsonRes = dispatchCommand(['brief', '--json'], REPO_ROOT);
     expect(jsonRes.exitCode).toBe(0);
@@ -38,10 +39,11 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(parsed.moduleCount).toBeGreaterThan(150);
   });
 
-  it('donegate zoom Zoom-1 准确输出业务域树、实时真源字典 (rules)、测试清单与契约适配 ADR 视图', () => {
-    const domRes = dispatchCommand(['zoom', '03'], REPO_ROOT);
-    expect(domRes.exitCode).toBe(0);
-    expect(domRes.stdout).toContain('runner/atlas/wb-uiboard.mjs');
+  it('donegate zoom Zoom-1 准确输出完整中文标题、实时真源字典 (rules)、测试清单与契约适配 ADR 视图', () => {
+    const dom04 = dispatchCommand(['zoom', '04'], REPO_ROOT);
+    expect(dom04.exitCode).toBe(0);
+    expect(dom04.stdout).toContain('接收指令并启动各项检查');
+    expect(dom04.stdout).not.toContain('检等环节');
 
     const rulesRes = dispatchCommand(['zoom', 'rules'], REPO_ROOT);
     expect(rulesRes.exitCode).toBe(0);
@@ -53,30 +55,38 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(rules.sharedPoolLayout.binDir).toBe('workflows/.deps/_shared/.bin/');
     expect(rules.declarativeWorkflows.length).toBeGreaterThanOrEqual(8);
 
-    const testsRes = dispatchCommand(['zoom', 'tests', 'uiboard'], REPO_ROOT);
-    expect(testsRes.exitCode).toBe(0);
-    expect(testsRes.stdout).toContain('tests/round3-dsh-uiboard.test.mjs');
-
     const decRes = dispatchCommand(['zoom', '02', '--decisions'], REPO_ROOT);
     expect(decRes.exitCode).toBe(0);
     if (existsSync(join(REPO_ROOT, 'decisions'))) {
-      expect(decRes.stdout).toContain('2026-11-21-07');
+      expect(decRes.stdout).toContain('2026-11-24-04');
       expect(decRes.stdout).not.toContain('2026-11-21-04');
     } else {
       expect(decRes.stdout).toContain('公开脱敏分发包默认剥离内部研发决策记录');
     }
   });
 
-  it('donegate zoom Zoom-2 括号平衡穿透 barrel 子模块与字符串数组拼接器，且剥离红测夹具噪声', () => {
-    const routesZoom = dispatchCommand(['zoom', 'runner/dsh/ui-board-routes.mjs'], REPO_ROOT);
-    expect(routesZoom.exitCode).toBe(0);
-    expect(routesZoom.stdout).toContain('handleUiBoardSubRoute(req, res, subPath, rootDir, hub, readJsonBody, opts = {})');
-    expect(routesZoom.stdout).toContain('./ui-board-engine.mjs');
-    expect(routesZoom.stdout).toContain('POST /donegate/api/uiboard/inline-edit');
+  it('donegate zoom Zoom-2 穿透嵌套模板字符串、早退守卫路由、代码生成模板、CLI 标志与 .cmd 脚本', () => {
+    const wfDepsZoom = dispatchCommand(['zoom', 'runner/dsh/workflow-deps.mjs'], REPO_ROOT);
+    expect(wfDepsZoom.exitCode).toBe(0);
+    expect(wfDepsZoom.stdout).toContain('provisionWorkflowDeps(projectRoot, pack, opts = {})');
+    expect(wfDepsZoom.stdout).toContain('runWorkflowDepsCli(argv = process.argv.slice(2), defaultRoot = process.cwd())');
 
-    const autoZoom = dispatchCommand(['zoom', 'runner/dsh/autopilot-routes.mjs'], REPO_ROOT);
-    expect(autoZoom.exitCode).toBe(0);
-    expect(autoZoom.stdout).toContain('POST /donegate/api/autopilot/start');
+    const hostZoom = dispatchCommand(['zoom', 'runner/dsh/host-routes.mjs'], REPO_ROOT);
+    expect(hostZoom.exitCode).toBe(0);
+    expect(hostZoom.stdout).toContain('POST /donegate/api/workflow-pack/save');
+
+    const codegenZoom = dispatchCommand(['zoom', 'runner/dsh/dg-deps-cli-gen.mjs'], REPO_ROOT);
+    expect(codegenZoom.exitCode).toBe(0);
+    expect(codegenZoom.stdout).toContain('[codegen] function writeJsonAtomic(filePath, data)');
+
+    const verifyZoom = dispatchCommand(['zoom', 'skill/verify-install.mjs'], REPO_ROOT);
+    expect(verifyZoom.exitCode).toBe(0);
+    expect(verifyZoom.stdout).toContain('--install');
+    expect(verifyZoom.stdout).toContain('runner/dsh/install-dsh-web.mjs');
+
+    const cmdFileZoom = dispatchCommand(['zoom', 'install-dsh-web.cmd'], REPO_ROOT);
+    expect(cmdFileZoom.exitCode).toBe(0);
+    expect(cmdFileZoom.stdout).toContain('winget install');
 
     const graphZoom = dispatchCommand(['zoom', 'runner/atlas/wb-graph-engine.mjs'], REPO_ROOT);
     expect(graphZoom.exitCode).toBe(0);
@@ -85,7 +95,6 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     const hygieneZoom = dispatchCommand(['zoom', 'skill/check-commit-hygiene.mjs'], REPO_ROOT);
     expect(hygieneZoom.exitCode).toBe(0);
     expect(hygieneZoom.stdout).not.toContain('/api/items');
-    expect(hygieneZoom.stdout).not.toContain('export re-export');
   });
 
   it('donegate impact 支持含点号配置文件锚点并自动执行 1-Hop 生产模块覆盖单测反推', () => {

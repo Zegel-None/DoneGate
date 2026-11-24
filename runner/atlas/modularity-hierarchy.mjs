@@ -322,7 +322,7 @@ function buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles, allIds =
   const scopeHint = (scopePaths || []).map((s) => s.replace(/^\.?\//, '').replace(/\/+$/, '')).find(Boolean) || '';
   let cand = cleanSecond && cleanFirst.length + cleanSecond.length <= 16
     ? `${cleanFirst}与${cleanSecond}`
-    : `${cleanFirst.slice(0, 10)}等环节`;
+    : `${cleanFirst}等环节`;
   if (usedTitles.has(cand) && scopeHint) cand = `${cleanFirst} (${scopeHint})`;
   return cand;
 }

@@ -7,7 +7,7 @@ import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs
 
 const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
 const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
-const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json']);
+const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json', '.cmd']);
 const IR_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$|^runner\/self-test\.mjs$/i;
 const IR_GENERIC_ANCHORS = new Set(['app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer', 'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false', 'index', 'contract', 'shared']);
 
@@ -78,6 +78,10 @@ function irCollectRepoCandidateFiles(root, selfFiles) {
       const rel = relative(root, f).split(sep).join('/');
       if (!selfFiles.has(rel) && IR_TEXT_EXTS.has(extname(rel).toLowerCase())) out.push({ abs: f, rel });
     }
+  }
+  for (const rc of ['install-dsh-web.cmd']) {
+    const p = join(root, rc);
+    if (!selfFiles.has(rc) && existsSync(p)) out.push({ abs: p, rel: rc });
   }
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }
@@ -188,7 +192,7 @@ export function cmdImpact(projectRoot, opts = {}) {
   lines.push(`\n3. 波及生产与配置模块（${res.affectedProdFiles.length} 个）：`);
   if (res.affectedProdFiles.length === 0) lines.push('   （未检出跨文件生产引用）');
   for (const p of res.affectedProdFiles.slice(0, 20)) {
-    lines.push(`   · ${p.file} (${p.owners.join(',') || '共享'}) [${p.hits.slice(0, 3).map((h) => `${h.token}@L${h.line}`).join(', ')}]`);
+    lines.push(`   · ${p.file} (${p.owners.join(',') || '共享'}) [${p.hits.slice(0, 8).map((h) => `${h.token}@L${h.line}`).join(', ')}]`);
   }
   if (res.suggestedVitestCommand) lines.push(`\n建议提交前联跑单测：${res.suggestedVitestCommand}`);
   for (const fc of res.suggestedFixtureCommands) lines.push(`建议提交前联跑夹具：${fc}`);

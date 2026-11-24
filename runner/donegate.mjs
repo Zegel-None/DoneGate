@@ -2,6 +2,7 @@
 // DoneGate V4 · 十二条命令统一零依赖入口（设计/02-规格.md §八）及主控三级变焦驾驶舱、密封契约切片与微门禁快捷入口
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
+// 快捷入口转发映射：brief & zoom -> runner/core/cockpit-commands.mjs | impact -> runner/core/impact-radar.mjs | slice & check-node -> runner/core/commands-b.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
 import Module from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,7 @@ const BOOLEAN_FLAGS = new Set([
 ]);
 
 const HELP_TEXT = [
-  'DoneGate V4 CLI（十二条命令，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
+  'DoneGate V4 CLI（十二条命令 + 七个驾驶舱与微门禁快捷入口，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
   '',
   '用法：node runner/donegate.mjs <命令> [参数] [--root <项目根>]',
   '  init [dir]                                      初始化项目骨架（已存在退 3）',
