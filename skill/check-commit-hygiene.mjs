@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from './io.mjs';
+import { validateDecisionFiveSections } from './check-decisions.mjs';
 import { analyzeCodeComplexityAndGolfing, auditRepository4D } from './cognitive-complexity.mjs';
 import { DEFAULT_HYGIENE_BUDGETS, computeRelocatedCodeLines, countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 
@@ -265,6 +266,11 @@ function hyAuditFilePathHygiene(f, p, isFixture, projectRoot, allowedRootSet, fa
       if (sameDayPeers.length > 0 && !/^\d{2,3}-/.test(dateMatch[2])) {
         fails.push(`C4 同日（${dateMatch[1]}）已存在决策记录，新记录必须加序号前缀 YYYY-MM-DD-NN-<标题>.md：${p}`);
       }
+    }
+    const decAbs = join(projectRoot, p);
+    if (existsSync(decAbs)) {
+      const dv = validateDecisionFiveSections(readFileSync(decAbs, 'utf8'), base, { ignoreLegacy: true });
+      if (!dv.ok) fails.push(`C4 新决策记录必须包含 §2.5 完整五段非空章节 (${p})：缺 [${dv.missing.join('、')}] 空 [${dv.empty.join('、')}]`);
     }
   }
   const seg0 = p.includes('/') ? p.split('/')[0] : null;

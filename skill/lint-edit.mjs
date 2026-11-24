@@ -14,6 +14,7 @@ import { readJsonStrict } from './io.mjs';
 import { analyzeCodeComplexityAndGolfing } from './cognitive-complexity.mjs';
 import { countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 import { scanTerminologyViolations } from './check-terminology.mjs';
+import { validateDecisionFiveSections } from './check-decisions.mjs';
 
 const JS_LIKE_RE = /\.(mjs|cjs|js|ts|tsx|jsx)$/i;
 const TEST_OR_FIXTURE_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$/i;
@@ -221,6 +222,11 @@ export function lintEditedFiles(projectRoot, targetFiles = []) {
     const fileFailsBefore = fails.length;
     const isTestOrFixture = TEST_OR_FIXTURE_RE.test(rel);
     leCheckSyntax(abs, rel, raw, fails);
+    if (/^decisions\/[^/]+\.md$/.test(rel)) {
+      const dv = validateDecisionFiveSections(raw, rel);
+      if (dv.missing.length > 0) fails.push(`C4d 决策记录缺少 §2.5 必填章节 (${rel})：缺 [${dv.missing.join('、')}]`);
+      if (dv.empty.length > 0) fails.push(`C4d 决策记录存在空壳章节 (${rel})：空 [${dv.empty.join('、')}]`);
+    }
     const lm = leCheckScaleAndComplexity(rel, raw, isTestOrFixture, budgets, warnings, fails);
     if (JS_LIKE_RE.test(rel)) {
       leCheckLineRules(rel, raw, isTestOrFixture, fails);
