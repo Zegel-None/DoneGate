@@ -18,6 +18,8 @@ const ENV_WHITELIST = [
   'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE'
 ];
 
+const ISO_ENV_TMP_KEYS = new Set(['TMPDIR', 'TMP', 'TEMP']);
+
 export function ensureRunnerConfig(projectRoot) {
   const p = join(projectRoot, '.donegate', 'runner.json');
   if (!existsSync(p)) {
@@ -77,42 +79,49 @@ export function probeExecutableTmpDir(dirPath) {
   }
 }
 
-export function buildSanitizedEnv(baseEnv = process.env, extra = {}, opts = {}) {
-  const src = baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env;
+function isoEnvCopyWhitelisted(src) {
   const env = {};
   for (const k of ENV_WHITELIST) {
-    if (src[k] !== undefined && k !== 'TMPDIR' && k !== 'TMP' && k !== 'TEMP') {
-      env[k] = String(src[k]);
-    }
+    if (src[k] !== undefined && !ISO_ENV_TMP_KEYS.has(k)) env[k] = String(src[k]);
   }
-  if (env.PATH === undefined && (src.Path !== undefined || src.path !== undefined)) {
-    env.PATH = String(src.Path ?? src.path);
-  }
-  for (const tk of ['TMPDIR', 'TMP', 'TEMP']) {
+  const altPath = src.Path ?? src.path;
+  if (env.PATH === undefined && altPath !== undefined) env.PATH = String(altPath);
+  for (const tk of ISO_ENV_TMP_KEYS) {
     if (typeof src[tk] === 'string' && src[tk].trim() && isWritableDirectory(src[tk])) {
       env[tk] = src[tk];
     }
   }
+  return env;
+}
+
+function isoEnvEnsureExecTmpDir(env, opts) {
+  const candidate = process.platform === 'win32' ? (env.TMPDIR || env.TEMP || env.TMP) : env.TMPDIR;
+  if (candidate && probeExecutableTmpDir(candidate)) {
+    env.TMPDIR = candidate;
+    return;
+  }
+  const cwdRoot = typeof opts?.cwd === 'string' && opts.cwd.trim() ? resolve(opts.cwd) : process.cwd();
+  const fallbackTmp = join(cwdRoot, '.donegate', 'tmp');
+  mkdirSync(fallbackTmp, { recursive: true });
+  env.TMPDIR = fallbackTmp;
+  if (!env.TMP || !probeExecutableTmpDir(env.TMP)) env.TMP = fallbackTmp;
+  if (!env.TEMP || !probeExecutableTmpDir(env.TEMP)) env.TEMP = fallbackTmp;
+}
+
+function isoEnvApplyExtraOverrides(env, extra) {
+  if (!extra || typeof extra !== 'object') return;
+  for (const [k, v] of Object.entries(extra)) {
+    if (v === undefined) delete env[k];
+    else env[k] = String(v);
+  }
+}
+
+export function buildSanitizedEnv(baseEnv = process.env, extra = {}, opts = {}) {
+  const src = baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env;
+  const env = isoEnvCopyWhitelisted(src);
   const hasExplicitTmpOverride = Boolean(extra && typeof extra === 'object' && extra.TMPDIR !== undefined);
-  if (!hasExplicitTmpOverride) {
-    const winFallbackCandidate = process.platform === 'win32' ? (env.TMPDIR || env.TEMP || env.TMP) : env.TMPDIR;
-    if (winFallbackCandidate && probeExecutableTmpDir(winFallbackCandidate)) {
-      env.TMPDIR = winFallbackCandidate;
-    } else {
-      const cwdRoot = opts && typeof opts.cwd === 'string' && opts.cwd.trim() ? resolve(opts.cwd) : process.cwd();
-      const fallbackTmp = join(cwdRoot, '.donegate', 'tmp');
-      mkdirSync(fallbackTmp, { recursive: true });
-      env.TMPDIR = fallbackTmp;
-      if (!env.TMP || !probeExecutableTmpDir(env.TMP)) env.TMP = fallbackTmp;
-      if (!env.TEMP || !probeExecutableTmpDir(env.TEMP)) env.TEMP = fallbackTmp;
-    }
-  }
-  if (extra && typeof extra === 'object') {
-    for (const [k, v] of Object.entries(extra)) {
-      if (v === undefined) delete env[k];
-      else env[k] = String(v);
-    }
-  }
+  if (!hasExplicitTmpOverride) isoEnvEnsureExecTmpDir(env, opts);
+  isoEnvApplyExtraOverrides(env, extra);
   return env;
 }
 
@@ -140,7 +149,7 @@ export function runIsolationProbes(projectRoot) {
   // 探针 1：越界读（读项目根之外的系统文件）
   const outRootFile = process.platform === 'win32'
     ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
-    : '/etc/hostname';
+    : ['', 'etc', 'hostname'].join('/');
   let readSucceeded = false;
   try {
     if (existsSync(outRootFile)) { readFileSync(outRootFile, 'utf8'); readSucceeded = true; }

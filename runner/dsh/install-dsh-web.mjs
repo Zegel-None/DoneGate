@@ -192,5 +192,5 @@ if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
   console.log(`✓ 已按 DSH 创造模式规范装配并写入 ${res.bundleName}：`);
   console.log(`  · 本地标准 Bundle 目录：${res.bundleDir}（亦可在 DSH「插件 > 添加插件」直接选此目录）`);
   console.log(`  · Profile 落盘目录：${res.targetModDir}`);
-  console.log('  · 打开方式：启动 dsh web 后，点击会话顶栏「完结门」或输入框左下角「⛩ 完结门」即可切换画布并保留底部原生输入框！');
+  console.log('  · 打开方式：启动 dsh web 后，点击主会话顶栏「完结门」视图标签即可切换画布并保留底部原生输入框！');
 }

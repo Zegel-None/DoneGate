@@ -245,39 +245,59 @@ const BUILTIN_MACRO_DEFS = [
   }
 ];
 
+function wfJitReadWorkflowDirPacks(wfDir, target) {
+  if (!existsSync(wfDir)) return;
+  try {
+    const files = readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'));
+    for (const f of files) {
+      const r = readJsonStrict(join(wfDir, f));
+      if (r.ok && r.value?.id && Array.isArray(r.value.nodes)) {
+        target[r.value.id] = r.value;
+      }
+    }
+  } catch (err) {
+    void err;
+  }
+}
+
+function wfJitRegisterExtraMacro(root, id, pk, macros) {
+  if (!pk || !Array.isArray(pk.nodes) || pk.nodes.length === 0) return;
+  const tplIds = pk.nodes.map((n) => n.tplId).filter(Boolean);
+  const dep = inspectWorkflowDeps(root, pk);
+  const mandatoryTplIds = Array.isArray(pk.mandatoryTplIds) && pk.mandatoryTplIds.length
+    ? pk.mandatoryTplIds
+    : ['tpl-anti-slop'];
+  macros.set(id, {
+    ...pk, tplIds, mandatoryTplIds,
+    matchProfile: pk.matchProfile || {},
+    depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing
+  });
+}
+
 export function loadCandidateWorkflowMacros(projectRoot) {
   const root = resolve(projectRoot || process.cwd());
   const brickMap = listAtomicBrickCatalog(root);
   const macros = new Map();
   for (const def of BUILTIN_MACRO_DEFS) {
     const floorSet = new Set(['tpl-anti-slop', ...(def.mandatoryTplIds || [])].filter((id) => brickMap.has(id)));
-    const built = composeBrickChainToPack(brickMap, def.tplIds, { id: def.id, name: def.name, group: def.group, floorSet, matchProfile: def.matchProfile });
+    const built = composeBrickChainToPack(brickMap, def.tplIds, {
+      id: def.id, name: def.name, group: def.group, floorSet, matchProfile: def.matchProfile
+    });
     if (built.ok) {
       const dep = inspectWorkflowDeps(root, built.pack);
-      macros.set(def.id, { ...built.pack, tplIds: def.tplIds, depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing });
+      macros.set(def.id, {
+        ...built.pack, tplIds: def.tplIds, depsReady: dep.ready,
+        missingDepsCount: dep.missingCount, missingDeps: dep.missing
+      });
     }
   }
   const saved = readSavedWorkbenchState(root);
   const extraPacks = { ...(saved.customPacks || {}) };
   for (const base of [DG_ROOT, root]) {
-    const wfDir = join(base, 'workflows');
-    if (!existsSync(wfDir)) continue;
-    try {
-      for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
-        const r = readJsonStrict(join(wfDir, f));
-        if (r.ok && r.value?.id && Array.isArray(r.value.nodes)) extraPacks[r.value.id] = r.value;
-      }
-    } catch (err) { void err; }
+    wfJitReadWorkflowDirPacks(join(base, 'workflows'), extraPacks);
   }
   for (const [id, pk] of Object.entries(extraPacks)) {
-    if (!pk || !Array.isArray(pk.nodes) || pk.nodes.length === 0) continue;
-    const tplIds = pk.nodes.map((n) => n.tplId).filter(Boolean);
-    const dep = inspectWorkflowDeps(root, pk);
-    macros.set(id, {
-      ...pk, tplIds,
-      mandatoryTplIds: Array.isArray(pk.mandatoryTplIds) && pk.mandatoryTplIds.length ? pk.mandatoryTplIds : ['tpl-anti-slop'],
-      matchProfile: pk.matchProfile || {}, depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing
-    });
+    wfJitRegisterExtraMacro(root, id, pk, macros);
   }
   return { macros, brickMap };
 }
@@ -345,6 +365,96 @@ function persistComponentBinding(projectRoot, nodeId, binding, extraPackToSave =
   return st;
 }
 
+function wfJitScoreDomainRoles(domains, roles) {
+  let bonus = 0;
+  if (domains.includes('ui') && roles.has('界面')) bonus += 26;
+  if (domains.includes('api') && (roles.has('接口') || roles.has('安全'))) bonus += 26;
+  if (domains.includes('core') && (roles.has('底座') || roles.has('工具') || roles.has('逻辑'))) bonus += 20;
+  return bonus;
+}
+
+function wfJitScoreMacroMatch(macro, sig) {
+  const mp = macro.matchProfile || {};
+  let score = 0;
+  for (const kw of (mp.keywords || [])) {
+    if (sig.hay.includes(String(kw).toLowerCase())) score += 18;
+  }
+  for (const ext of (mp.exts || [])) {
+    if (sig.paths.some((p) => p.endsWith(ext))) score += 14;
+  }
+  score += wfJitScoreDomainRoles(mp.domains || [], sig.roles);
+  if (macro.depsReady) score += 22;
+  return score;
+}
+
+function wfJitSelectBestMacro(macros, componentNode, opts) {
+  if (opts.preferredMacroId && macros.has(opts.preferredMacroId)) {
+    return { bestMacro: macros.get(opts.preferredMacroId), bestScore: 999 };
+  }
+  if (opts.preferScratchJit) return { bestMacro: null, bestScore: -1 };
+  const sig = extractComponentSignals(componentNode);
+  let bestMacro = null;
+  let bestScore = -1;
+  for (const m of macros.values()) {
+    const score = wfJitScoreMacroMatch(m, sig);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMacro = m;
+    }
+  }
+  return { bestMacro, bestScore };
+}
+
+function wfJitBuildSynthesizedBinding(root, brickMap, componentNode, existing, opts) {
+  const sig = extractComponentSignals(componentNode);
+  const inferred = inferRequirementBrickAdditions(sig.hay, brickMap);
+  const readyPre = inferred.prepend.filter((id) => brickMap.get(id)?.ready);
+  const readyApp = inferred.append.filter((id) => brickMap.get(id)?.ready);
+  const chain = [...new Set([...readyPre, 'tpl-anti-slop', ...readyApp, 'tpl-router-rule'])].filter((id) => brickMap.has(id));
+  const floorSet = new Set(['tpl-anti-slop']);
+  const built = composeBrickChainToPack(brickMap, chain, {
+    id: `jit-${componentNode.id}`,
+    name: `「${componentNode.title}」现场直拼工作流`,
+    floorSet
+  });
+  const dep = inspectWorkflowDeps(root, built.pack);
+  return {
+    nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'jit-synthesized',
+    baseMacroId: null, baseMacroName: '现场直拼工作流', pinnedByHuman: Boolean(opts.pinnedByHuman),
+    mandatoryFloorTplIds: [...floorSet], tplIds: chain, addedTplIds: chain.filter((x) => x !== 'tpl-anti-slop'),
+    deltaCount: Math.max(0, chain.length - 1), depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
+    revision: (existing?.revision || 0) + 1,
+    reason: '未命中高分预置工作流，总控已优先从本地就绪节点池现场直拼专属工作流',
+    pack: built.pack, updatedAt: new Date().toISOString()
+  };
+}
+
+function wfJitBuildMatchedMacroBinding(root, brickMap, bestMacro, bestScore, componentNode, existing, opts) {
+  const tplIds = Array.isArray(bestMacro.tplIds) && bestMacro.tplIds.length
+    ? bestMacro.tplIds
+    : bestMacro.nodes.map((n) => n.tplId).filter(Boolean);
+  const floorCandidates = ['tpl-anti-slop', ...(bestMacro.mandatoryTplIds || [])];
+  const floorSet = new Set(floorCandidates.filter((id) => tplIds.includes(id) || id === 'tpl-anti-slop'));
+  const chain = tplIds.includes('tpl-anti-slop') ? tplIds : ['tpl-anti-slop', ...tplIds];
+  const built = composeBrickChainToPack(brickMap, chain, {
+    id: bestMacro.id, name: bestMacro.name, group: bestMacro.group, floorSet, matchProfile: bestMacro.matchProfile
+  });
+  const packToUse = built.ok ? built.pack : bestMacro;
+  const dep = inspectWorkflowDeps(root, packToUse);
+  const reason = bestMacro.depsReady
+    ? `匹配预置工作流「${bestMacro.name}」（环境依赖已就绪，0 规划延迟复用）`
+    : `匹配预置工作流「${bestMacro.name}」（待补齐 ${dep.missingCount} 项依赖）`;
+  return {
+    nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'macro',
+    baseMacroId: bestMacro.id, baseMacroName: bestMacro.name, score: bestScore,
+    pinnedByHuman: Boolean(opts.pinnedByHuman), mandatoryFloorTplIds: [...floorSet],
+    tplIds: chain, addedTplIds: [], deltaCount: 0,
+    depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
+    revision: (existing?.revision || 0) + 1, reason,
+    pack: packToUse, updatedAt: new Date().toISOString()
+  };
+}
+
 export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
   const auth = assertPlannerAuthority(opts.actorRole);
   if (!auth.ok) return auth;
@@ -356,65 +466,10 @@ export function assignComponentWorkflow(projectRoot, componentNode, opts = {}) {
     return { ok: true, skippedPinned: true, binding: existing };
   }
 
-  let bestMacro = null;
-  let bestScore = -1;
-  if (opts.preferredMacroId && macros.has(opts.preferredMacroId)) {
-    bestMacro = macros.get(opts.preferredMacroId);
-    bestScore = 999;
-  } else if (!opts.preferScratchJit) {
-    const sig = extractComponentSignals(componentNode);
-    for (const m of macros.values()) {
-      const mp = m.matchProfile || {};
-      let score = 0;
-      for (const kw of (mp.keywords || [])) if (sig.hay.includes(String(kw).toLowerCase())) score += 18;
-      for (const ext of (mp.exts || [])) if (sig.paths.some((p) => p.endsWith(ext))) score += 14;
-      if ((mp.domains || []).includes('ui') && sig.roles.has('界面')) score += 26;
-      if ((mp.domains || []).includes('api') && (sig.roles.has('接口') || sig.roles.has('安全'))) score += 26;
-      if ((mp.domains || []).includes('core') && (sig.roles.has('底座') || sig.roles.has('工具') || sig.roles.has('逻辑'))) score += 20;
-      if (m.depsReady) score += 22;
-      if (score > bestScore) { bestScore = score; bestMacro = m; }
-    }
-  }
-
-  if (!bestMacro || bestScore < 15) {
-    const readyTpls = ['tpl-anti-slop'];
-    const sig = extractComponentSignals(componentNode);
-    const inferred = inferRequirementBrickAdditions(sig.hay, brickMap);
-    const chain = [...new Set([...inferred.prepend.filter((id) => brickMap.get(id)?.ready), ...readyTpls, ...inferred.append.filter((id) => brickMap.get(id)?.ready), 'tpl-router-rule'])].filter((id) => brickMap.has(id));
-    const floorSet = new Set(['tpl-anti-slop']);
-    const built = composeBrickChainToPack(brickMap, chain, { id: `jit-${componentNode.id}`, name: `「${componentNode.title}」现场直拼工作流`, floorSet });
-    const dep = inspectWorkflowDeps(root, built.pack);
-    const binding = {
-      nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'jit-synthesized',
-      baseMacroId: null, baseMacroName: '现场直拼工作流', pinnedByHuman: Boolean(opts.pinnedByHuman),
-      mandatoryFloorTplIds: [...floorSet], tplIds: chain, addedTplIds: chain.filter((x) => x !== 'tpl-anti-slop'),
-      deltaCount: Math.max(0, chain.length - 1), depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
-      revision: (existing?.revision || 0) + 1,
-      reason: '未命中高分预置工作流，总控已优先从本地就绪节点池现场直拼专属工作流',
-      pack: built.pack, updatedAt: new Date().toISOString()
-    };
-    if (opts.persist !== false) persistComponentBinding(root, componentNode.id, binding);
-    return { ok: true, binding };
-  }
-
-  const tplIds = Array.isArray(bestMacro.tplIds) && bestMacro.tplIds.length ? bestMacro.tplIds : bestMacro.nodes.map((n) => n.tplId).filter(Boolean);
-  const floorSet = new Set(['tpl-anti-slop', ...(bestMacro.mandatoryTplIds || [])].filter((id) => tplIds.includes(id) || id === 'tpl-anti-slop'));
-  const chain = tplIds.includes('tpl-anti-slop') ? tplIds : ['tpl-anti-slop', ...tplIds];
-  const built = composeBrickChainToPack(brickMap, chain, { id: bestMacro.id, name: bestMacro.name, group: bestMacro.group, floorSet, matchProfile: bestMacro.matchProfile });
-  const packToUse = built.ok ? built.pack : bestMacro;
-  const dep = inspectWorkflowDeps(root, packToUse);
-  const binding = {
-    nodeId: componentNode.id, nodeTitle: componentNode.title, mode: 'macro',
-    baseMacroId: bestMacro.id, baseMacroName: bestMacro.name, score: bestScore,
-    pinnedByHuman: Boolean(opts.pinnedByHuman), mandatoryFloorTplIds: [...floorSet],
-    tplIds: chain, addedTplIds: [], deltaCount: 0,
-    depsReady: dep.ready, missingDepsCount: dep.missingCount, missingDeps: dep.missing,
-    revision: (existing?.revision || 0) + 1,
-    reason: bestMacro.depsReady
-      ? `匹配预置工作流「${bestMacro.name}」（环境依赖已就绪，0 规划延迟复用）`
-      : `匹配预置工作流「${bestMacro.name}」（待补齐 ${dep.missingCount} 项依赖）`,
-    pack: packToUse, updatedAt: new Date().toISOString()
-  };
+  const { bestMacro, bestScore } = wfJitSelectBestMacro(macros, componentNode, opts);
+  const binding = (!bestMacro || bestScore < 15)
+    ? wfJitBuildSynthesizedBinding(root, brickMap, componentNode, existing, opts)
+    : wfJitBuildMatchedMacroBinding(root, brickMap, bestMacro, bestScore, componentNode, existing, opts);
   if (opts.persist !== false) persistComponentBinding(root, componentNode.id, binding);
   return { ok: true, binding };
 }

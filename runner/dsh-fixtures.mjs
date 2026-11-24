@@ -264,7 +264,15 @@ async function verifyClientSandboxAndRunner(check) {
         slots: { inject(_slot, cb) { cb(); }, register(opts, comp) { registeredSlots.push({ opts, comp }); return () => {}; } },
         get(svc) {
           if (svc === 'uiConversation') {
-            return { binding(sid) { if (sid === 'throw-sid') throw new Error('boom'); return { store: { getSnapshot: () => ({ view: mockViewMode }) } }; } };
+            return {
+              binding(sid) {
+                if (sid === 'throw-sid') throw new Error('boom');
+                return {
+                  store: { getSnapshot: () => ({ view: mockViewMode }) },
+                  activate(nextV) { mockViewMode = nextV; }
+                };
+              }
+            };
           }
           return null;
         }
@@ -272,7 +280,7 @@ async function verifyClientSandboxAndRunner(check) {
       const slotNames = registeredSlots.map((s) => `${s.opts.name}:${s.opts.id}`);
       assert.ok(slotNames.includes('conversation.view:donegate'));
       assert.ok(slotNames.includes('conversation.input.dock:donegate-dock'));
-      assert.ok(slotNames.includes('conversation.input.left:donegate-switch'));
+      assert.ok(!slotNames.includes('conversation.input.left:donegate-switch'));
       const viewEntry = registeredSlots.find((s) => s.opts.id === 'donegate');
       assert.equal(viewEntry.opts.order, 85, '完结门视图 order 必须后置为 85，严禁抢占默认聊天视图');
       assert.ok(clientCode.includes('data-conversation-composer-overlay'), '必须启用 DSH 全屏覆盖模式使工作台铺满输入框底部区域');

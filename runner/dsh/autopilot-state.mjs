@@ -178,18 +178,30 @@ export function tripAutopilotBreaker(projectRoot, cp, { code, nodeId = null, rea
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
-  const pull = (k, d = null) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d; };
+  const pull = (k, d = null) => {
+    const i = argv.indexOf(k);
+    if (i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+      return argv[i + 1];
+    }
+    return d;
+  };
   const root = resolve(pull('--root', process.cwd()));
   const runId = pull('--run-id', null);
   if (argv.includes('--approve')) {
     const nodeId = pull('--approve', null);
     const r = approveAutopilotHumanGate(root, { runId, nodeId, by: pull('--by', '业主') });
-    if (!r.ok) { console.error(r.reason); process.exit(r.exitCode); }
+    if (!r.ok) {
+      console.error(r.reason);
+      process.exit(r.exitCode);
+    }
     console.log(`已批准人工闸门 ${r.approvedNodeId}（runId=${r.runId}），可继续从断点续跑。`);
     process.exit(0);
   }
   const cp = loadAutopilotCheckpoint(root, runId);
-  if (!cp) { console.log('当前无挂机长跑记录。'); process.exit(0); }
+  if (!cp) {
+    console.log('当前无挂机长跑记录。');
+    process.exit(0);
+  }
   console.log(cp.briefMarkdown);
   process.exit(0);
 }

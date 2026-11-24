@@ -265,13 +265,14 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
     }
   });
 
-  it('100% 自举验证：母仓全部 7 张契约卡均零截断装入 160k 胶囊且零红线/零越界门面私引，公开精简仓支持画布零契约切片', () => {
+  it('100% 自举验证：母仓全部 8 张契约卡均零截断装入 160k 胶囊且零红线/零越界门面私引，公开精简仓支持画布零契约切片', () => {
     if (existsSync(join(REPO_ROOT, 'contracts/gate-tooling/contract.json'))) {
       const res = dispatchCommand(['slice', '--router-only', '--json'], REPO_ROOT);
       expect(res.exitCode).toBe(0);
-      expect(res.router.nodes.length).toBe(7);
+      expect(res.router.nodes.length).toBe(8);
       expect(res.router.budgetProfile.totalSessionBudgetTokens).toBe(400000);
       expect(res.router.topoOrder).toContain('atlas-workbench');
+      expect(res.router.topoOrder).toContain('atlas-canvas');
       expect(res.router.topoOrder).toContain('dsh-orchestrator');
       expect(res.router.redImports).toEqual([]);
       expect(res.router.facadeViolations).toEqual([]);

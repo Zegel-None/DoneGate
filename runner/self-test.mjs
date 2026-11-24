@@ -14,7 +14,11 @@ const node = process.execPath;
 const Q = (s) => '"' + s + '"';
 const nodeRun = (script) => Q(node) + ' ' + Q(join(dir, script));
 
-const w = (name, body) => { const p = join(dir, name); writeFileSync(p, body); return p; };
+const w = (name, body) => {
+  const p = join(dir, name);
+  writeFileSync(p, body);
+  return p;
+};
 
 w('pass.mjs', 'console.log("ok"); process.exit(0);\n');
 w('fail.mjs', 'console.log("bad"); process.exit(1);\n');

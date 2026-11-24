@@ -8,6 +8,10 @@ const MANIFEST_META_KEYS = new Set([
   'schema', 'schemaVersion', 'packId', 'workflowId', 'label', 'packName', 'updatedAt', 'generatedAt',
   'seq', 'refreshedAt', 'installed', 'deps', 'entries', 'items', 'tools', 'packages', 'note', 'version', 'summary'
 ]);
+const SPP_CONTAINER_KEYS = ['tools', 'packages', 'items', 'entries', 'deps', 'installed'];
+const SPP_ENTRY_SIGNAL_FIELDS = ['ready', 'status', 'state', 'bin', 'pkg', 'repo', 'dist', 'ref', 'sharedPool', 'detectedVersion', 'verified'];
+const SPP_FALSE_STATUSES = new Set(['pending', 'missing-on-disk', 'version-mismatch', 'failed', 'error']);
+const SPP_TRUE_STATUSES = new Set(['ready', 'ok', 'installed', 'verified', 'pass']);
 const sanitizePoolId = (s) => String(s || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'default';
 const normDepVer = (v) => String(v ?? '').trim().replace(/^v/i, '');
 
@@ -59,76 +63,127 @@ export function verifyInstalledNpmPackage(projectRoot, pkgName, packId = null) {
   return { ok: false, reason: 'not-found' };
 }
 
+function sppNormSlashTail(val) {
+  const parts = normalizeSlashes(val).replace(/\.(?:exe|cmd|bat|com|ps1|sh)$/i, '').split('/').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : '';
+}
+
+function sppRegisterAlias(aliasIndex, token, entry) {
+  const clean = String(token || '').trim().toLowerCase();
+  if (!clean) return;
+  if (!aliasIndex.has(clean)) aliasIndex.set(clean, entry);
+  const slashTail = sppNormSlashTail(clean);
+  if (slashTail && !aliasIndex.has(slashTail)) aliasIndex.set(slashTail, entry);
+}
+
+function sppDetectVersionMismatch(rawVal, wantVer, hasDet, detVer, rawStatus) {
+  if (rawStatus === 'version-mismatch') return true;
+  if (wantVer && hasDet && wantVer !== detVer) return true;
+  return /version\s*mismatch/i.test(String(rawVal.note || ''));
+}
+
+function sppResolveManifestStatus(rawVal) {
+  const wantVer = normDepVer(rawVal.version || rawVal.expectedVersion || rawVal.pinnedVersion || '');
+  const rawDet = rawVal.detectedVersion;
+  const hasDet = rawDet !== undefined && rawDet !== null && String(rawDet).trim() !== '';
+  const detVer = hasDet ? normDepVer(rawDet) : '';
+  const rawStatus = String(rawVal.status || rawVal.state || '').trim().toLowerCase();
+  const verMismatch = sppDetectVersionMismatch(rawVal, wantVer, hasDet, detVer, rawStatus);
+  const explicitFalse = rawVal.ready === false || SPP_FALSE_STATUSES.has(rawStatus);
+  const explicitTrue = rawVal.ready === true || SPP_TRUE_STATUSES.has(rawStatus);
+  const ready = !verMismatch && !explicitFalse && explicitTrue;
+  let fallbackStatus = 'pending';
+  if (ready) fallbackStatus = 'ready';
+  return {
+    ready,
+    verMismatch,
+    status: verMismatch ? 'version-mismatch' : (rawStatus || fallbackStatus),
+    version: wantVer || detVer || '',
+    detectedVersion: detVer || (ready ? wantVer : '')
+  };
+}
+
+function sppResolveSharedPoolFlag(rawVal) {
+  if (rawVal.sharedPool === true || rawVal.sharedManifest) return true;
+  let refStr = '';
+  if (typeof rawVal.ref === 'string') refStr = rawVal.ref;
+  else if (typeof rawVal.sharedRef === 'string') refStr = rawVal.sharedRef;
+  return refStr.includes('_shared');
+}
+
+function sppIngestManifestEntry(hintKey, rawVal, entriesById, aliasIndex) {
+  if (!rawVal || typeof rawVal !== 'object' || Array.isArray(rawVal)) return;
+  const id = String(rawVal.id || rawVal.tool || rawVal.name || hintKey || '').trim();
+  if (!id) return;
+  const st = sppResolveManifestStatus(rawVal);
+  const binRel = rawVal.bin ? normalizeSlashes(rawVal.bin) : '';
+  const distRel = rawVal.dist ? normalizeSlashes(rawVal.dist) : '';
+  const repoStr = rawVal.repo ? normalizeSlashes(rawVal.repo) : '';
+  const pkgStr = String(rawVal.pkg || rawVal.package || '').trim();
+  const verifyPath = rawVal.verifyPath ? normalizeSlashes(rawVal.verifyPath) : '';
+  const entry = {
+    ...rawVal,
+    id,
+    ready: st.ready,
+    status: st.status,
+    version: st.version,
+    detectedVersion: st.detectedVersion,
+    bin: binRel,
+    dist: distRel,
+    repo: repoStr,
+    verifyPath,
+    sharedPool: sppResolveSharedPoolFlag(rawVal),
+    versionMismatch: st.verMismatch
+  };
+  if (pkgStr) entry.pkg = pkgStr;
+  entriesById[id] = entry;
+  for (const k of [id, hintKey, rawVal.tool, rawVal.binName, pkgStr, binRel, repoStr]) {
+    sppRegisterAlias(aliasIndex, k, entry);
+  }
+}
+
+function sppIngestContainer(container, entriesById, aliasIndex) {
+  if (!container || typeof container !== 'object') return;
+  if (Array.isArray(container)) {
+    for (const item of container) sppIngestManifestEntry('', item, entriesById, aliasIndex);
+    return;
+  }
+  for (const [k, v] of Object.entries(container)) {
+    sppIngestManifestEntry(k, v, entriesById, aliasIndex);
+  }
+}
+
+function sppLookupAlias(aliasIndex, candidates = []) {
+  for (const c of candidates) {
+    const clean = String(c || '').trim().toLowerCase();
+    if (!clean) continue;
+    if (aliasIndex.has(clean)) return aliasIndex.get(clean);
+    const tail = sppNormSlashTail(clean);
+    if (tail && aliasIndex.has(tail)) return aliasIndex.get(tail);
+  }
+  return null;
+}
+
 export function parseFlexibleDepsManifest(rawDoc) {
-  const entriesById = {}, aliasIndex = new Map();
-  if (!rawDoc || typeof rawDoc !== 'object') return { entriesById, topLabel: '', lookup: () => null };
-
-  const normSlashTail = (val) => {
-    const parts = normalizeSlashes(val).replace(/\.(?:exe|cmd|bat|com|ps1|sh)$/i, '').split('/').filter(Boolean);
-    return parts.length > 0 ? parts[parts.length - 1] : '';
-  };
-  const registerAlias = (token, entry) => {
-    const clean = String(token || '').trim().toLowerCase();
-    if (!clean) return;
-    if (!aliasIndex.has(clean)) aliasIndex.set(clean, entry);
-    const slashTail = normSlashTail(clean);
-    if (slashTail && !aliasIndex.has(slashTail)) aliasIndex.set(slashTail, entry);
-  };
-
-  const ingestOne = (hintKey, rawVal) => {
-    if (!rawVal || typeof rawVal !== 'object' || Array.isArray(rawVal)) return;
-    const id = String(rawVal.id || rawVal.tool || rawVal.name || hintKey || '').trim();
-    if (!id) return;
-    const wantVer = normDepVer(rawVal.version || rawVal.expectedVersion || rawVal.pinnedVersion || '');
-    const hasDet = rawVal.detectedVersion !== undefined && rawVal.detectedVersion !== null && String(rawVal.detectedVersion).trim() !== '';
-    const detVer = hasDet ? normDepVer(rawVal.detectedVersion) : '';
-    const rawStatus = String(rawVal.status || rawVal.state || '').trim().toLowerCase();
-    const verMismatch = rawStatus === 'version-mismatch' || Boolean(wantVer && hasDet && (!detVer || wantVer !== detVer)) || /version\s*mismatch/i.test(String(rawVal.note || ''));
-    const explicitFalse = rawVal.ready === false || ['pending', 'missing-on-disk', 'version-mismatch', 'failed', 'error'].includes(rawStatus);
-    const explicitTrue = rawVal.ready === true || ['ready', 'ok', 'installed', 'verified', 'pass'].includes(rawStatus);
-    const ready = !verMismatch && !explicitFalse && explicitTrue;
-    const refStr = typeof rawVal.ref === 'string' ? rawVal.ref : (typeof rawVal.sharedRef === 'string' ? rawVal.sharedRef : '');
-    const sharedPool = Boolean(rawVal.sharedPool === true || rawVal.sharedManifest || refStr.includes('_shared'));
-    const binRel = rawVal.bin ? normalizeSlashes(rawVal.bin) : '';
-    const distRel = rawVal.dist ? normalizeSlashes(rawVal.dist) : '';
-    const repoStr = rawVal.repo ? normalizeSlashes(rawVal.repo) : '';
-    const pkgStr = String(rawVal.pkg || rawVal.package || '').trim();
-    const entry = {
-      ...rawVal, id, ready,
-      status: verMismatch ? 'version-mismatch' : (rawStatus || (ready ? 'ready' : 'pending')),
-      version: wantVer || detVer || '',
-      detectedVersion: detVer || (ready ? wantVer : ''),
-      bin: binRel, dist: distRel, repo: repoStr, ...(pkgStr ? { pkg: pkgStr } : {}),
-      verifyPath: rawVal.verifyPath ? normalizeSlashes(rawVal.verifyPath) : '',
-      sharedPool, versionMismatch: verMismatch
-    };
-    entriesById[id] = entry;
-    for (const k of [id, hintKey, rawVal.tool, rawVal.binName, pkgStr, binRel, repoStr]) registerAlias(k, entry);
-  };
-
-  const ingestContainer = (container) => {
-    if (!container) return;
-    if (Array.isArray(container)) { for (const item of container) ingestOne('', item); }
-    else if (typeof container === 'object') { for (const [k, v] of Object.entries(container)) ingestOne(k, v); }
-  };
-
-  for (const key of ['tools', 'packages', 'items', 'entries', 'deps', 'installed']) ingestContainer(rawDoc[key]);
+  const entriesById = {};
+  const aliasIndex = new Map();
+  if (!rawDoc || typeof rawDoc !== 'object') {
+    return { entriesById, topLabel: '', lookup: () => null };
+  }
+  for (const key of SPP_CONTAINER_KEYS) {
+    sppIngestContainer(rawDoc[key], entriesById, aliasIndex);
+  }
   for (const [k, v] of Object.entries(rawDoc)) {
     if (MANIFEST_META_KEYS.has(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue;
-    if (['ready', 'status', 'state', 'bin', 'pkg', 'repo', 'dist', 'ref', 'sharedPool', 'detectedVersion', 'verified'].some((f) => f in v)) ingestOne(k, v);
-  }
-
-  const lookup = (candidates = []) => {
-    for (const c of candidates) {
-      const clean = String(c || '').trim().toLowerCase();
-      if (!clean) continue;
-      if (aliasIndex.has(clean)) return aliasIndex.get(clean);
-      const tail = normSlashTail(clean);
-      if (tail && aliasIndex.has(tail)) return aliasIndex.get(tail);
+    if (SPP_ENTRY_SIGNAL_FIELDS.some((f) => f in v)) {
+      sppIngestManifestEntry(k, v, entriesById, aliasIndex);
     }
-    return null;
+  }
+  return {
+    entriesById,
+    topLabel: String(rawDoc.label || '').trim(),
+    lookup: (candidates = []) => sppLookupAlias(aliasIndex, candidates)
   };
-  return { entriesById, topLabel: String(rawDoc.label || '').trim(), lookup };
 }
 
 export function scanSharedPoolDiskInventory(projectRoot, platform = process.platform) {

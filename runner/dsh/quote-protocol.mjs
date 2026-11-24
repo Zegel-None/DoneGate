@@ -97,6 +97,58 @@ export function formatQuoteCapsule(elem = {}) {
   return `[DG-TARGET ${metaParts.join(' | ')}]`;
 }
 
+const QP_CAPSULE_FIELD_HANDLERS = {
+  uri: (item, val) => { item.uri = val; },
+  kind: (item, val) => { item.kind = normalizeTargetKind(val); },
+  id: (item, val, st) => {
+    if (val) {
+      item.id = val;
+      st.hasExplicitId = true;
+    }
+  },
+  board: (item, val) => { item.board = val === 'flow' ? 'flow' : 'kanban'; },
+  name: (item, val) => {
+    item.name = val;
+    if (!item.label) item.label = val;
+  },
+  label: (item, val) => {
+    item.label = val;
+    if (!item.name) item.name = val;
+  },
+  contracts: (item, val) => { item.contracts = normalizeListField(val); },
+  scopes: (item, val) => { item.scopes = normalizeListField(val, (p) => normalizeSlashes(p)); },
+  uiOwner: (item, val) => { item.uiOwner = normalizeUiOwner(val); },
+  sliceCmd: (item, val) => { item.sliceCmd = (val && val !== '-') ? val : null; },
+  note: (item, val) => { item.note = val; }
+};
+
+function qpApplyCapsuleSegments(segs, item) {
+  const st = { hasExplicitId: false };
+  for (const seg of segs) {
+    const eq = seg.indexOf('=');
+    if (eq <= 0) continue;
+    const k = seg.slice(0, eq).trim();
+    const handler = Object.prototype.hasOwnProperty.call(QP_CAPSULE_FIELD_HANDLERS, k)
+      ? QP_CAPSULE_FIELD_HANDLERS[k]
+      : null;
+    if (handler) handler(item, unquoteCapsuleVal(seg.slice(eq + 1).trim()), st);
+  }
+  return st.hasExplicitId;
+}
+
+function qpFinalizeCapsuleItem(item, hasExplicitId) {
+  if (!item.uri && item.id) item.uri = `dg://${item.kind}/${item.id}`;
+  if (!item.uri || !item.uri.startsWith('dg://')) return null;
+  if (!hasExplicitId) {
+    const parts = item.uri.slice(5).split('/');
+    item.id = decodeURIComponent(parts.slice(1).join('/')) || item.id;
+  }
+  if (!item.sliceCmd && item.uiOwner) {
+    item.sliceCmd = deriveSliceCmdFromUiOwner(item.uiOwner);
+  }
+  return item;
+}
+
 export function parseQuoteCapsule(rawCapsule) {
   const clean = normalizeLf(String(rawCapsule ?? ''));
   const m = clean.match(/\[DG-TARGET\s+([^\]]+)\]/);
@@ -116,45 +168,8 @@ export function parseQuoteCapsule(rawCapsule) {
     sliceCmd: null,
     note: ''
   };
-  let hasExplicitId = false;
-
-  for (const seg of segs) {
-    const eq = seg.indexOf('=');
-    if (eq <= 0) continue;
-    const k = seg.slice(0, eq).trim();
-    const v = seg.slice(eq + 1).trim();
-    if (k === 'uri') item.uri = unquoteCapsuleVal(v);
-    else if (k === 'kind') item.kind = normalizeTargetKind(unquoteCapsuleVal(v));
-    else if (k === 'id') {
-      const parsedId = unquoteCapsuleVal(v);
-      if (parsedId) { item.id = parsedId; hasExplicitId = true; }
-    } else if (k === 'board') item.board = unquoteCapsuleVal(v) === 'flow' ? 'flow' : 'kanban';
-    else if (k === 'name') {
-      item.name = unquoteCapsuleVal(v);
-      if (!item.label) item.label = item.name;
-    } else if (k === 'label') {
-      item.label = unquoteCapsuleVal(v);
-      if (!item.name) item.name = item.label;
-    } else if (k === 'contracts') item.contracts = normalizeListField(unquoteCapsuleVal(v));
-    else if (k === 'scopes') item.scopes = normalizeListField(unquoteCapsuleVal(v), (p) => normalizeSlashes(p));
-    else if (k === 'uiOwner') item.uiOwner = normalizeUiOwner(unquoteCapsuleVal(v));
-    else if (k === 'sliceCmd') {
-      const cmd = unquoteCapsuleVal(v);
-      item.sliceCmd = (cmd && cmd !== '-') ? cmd : null;
-    } else if (k === 'note') item.note = unquoteCapsuleVal(v);
-  }
-
-  if (!item.uri && item.id) item.uri = `dg://${item.kind}/${item.id}`;
-  if (!item.uri || !item.uri.startsWith('dg://')) return null;
-
-  if (!hasExplicitId) {
-    const parts = item.uri.slice(5).split('/');
-    item.id = decodeURIComponent(parts.slice(1).join('/')) || item.id;
-  }
-  if (!item.sliceCmd && item.uiOwner) {
-    item.sliceCmd = deriveSliceCmdFromUiOwner(item.uiOwner);
-  }
-  return item;
+  const hasExplicitId = qpApplyCapsuleSegments(segs, item);
+  return qpFinalizeCapsuleItem(item, hasExplicitId);
 }
 
 export function buildElementQuotePayload(elem = {}) {

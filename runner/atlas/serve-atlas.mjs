@@ -29,6 +29,10 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function srvAtlasCloseQuietly(srv) {
+  try { srv.close(); } catch (err) { void err; }
+}
+
 function readReqJson(req, maxBytes = 2 * 1024 * 1024) {
   return new Promise((resolveBody, rejectBody) => {
     const chunks = [];
@@ -44,7 +48,10 @@ function readReqJson(req, maxBytes = 2 * 1024 * 1024) {
     });
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8').trim();
-      if (!raw) { resolveBody({}); return; }
+      if (!raw) {
+        resolveBody({});
+        return;
+      }
       try { resolveBody(JSON.parse(raw)); } catch (e) { rejectBody(e); }
     });
     req.on('error', rejectBody);
@@ -55,7 +62,10 @@ async function handleImportLegacyProject(req, res, root) {
   try {
     const body = await readReqJson(req);
     const rawDir = String((body && (body.dir || body.projectDir || body.path)) || '').trim();
-    if (!rawDir) { sendJson(res, 400, { ok: false, reason: '请填写要导入的外部项目文件夹路径' }); return; }
+    if (!rawDir) {
+      sendJson(res, 400, { ok: false, reason: '请填写要导入的外部项目文件夹路径' });
+      return;
+    }
     const absDir = resolve(root, rawDir);
     if (!existsSync(absDir) || !statSync(absDir).isDirectory()) {
       sendJson(res, 400, { ok: false, reason: '目标路径不存在或不是文件夹：' + rawDir });
@@ -66,12 +76,8 @@ async function handleImportLegacyProject(req, res, root) {
     const impId = 'imp-' + sha256(absDir).slice(0, 8);
     const sandbox = {
       ...(extAtlas.workbench?.hostSandbox || {}),
-      id: impId,
-      name: `导入：${projName}`,
-      repoSlug: `imported/${projName}`,
-      isHost: false,
-      readonly: true,
-      importedPath: absDir,
+      id: impId, name: `导入：${projName}`, repoSlug: `imported/${projName}`,
+      isHost: false, readonly: true, importedPath: absDir,
       tip: `外部陈旧项目导入（${absDir}）· 共 ${(extAtlas.modules || []).length} 个模块`
     };
     const cur = readSavedWorkbenchState(root);
@@ -86,6 +92,126 @@ async function handleImportLegacyProject(req, res, root) {
   }
 }
 
+async function srvAtlasSaveWorkbenchState(req, res, root) {
+  try {
+    const body = await readReqJson(req);
+    const cur = readSavedWorkbenchState(root);
+    const next = { ...cur, ...(body && typeof body === 'object' ? body : {}), updatedAt: new Date().toISOString() };
+    const dgDir = join(root, '.donegate');
+    mkdirSync(dgDir, { recursive: true });
+    writeFileSync(join(dgDir, 'workbench-state.json'), JSON.stringify(next, null, 2) + '\n', 'utf8');
+    exportDashboardHtml(root, join(dgDir, 'dashboard.html'));
+    sendJson(res, 200, { ok: true, savedAt: next.updatedAt });
+  } catch (e) {
+    sendJson(res, 400, { ok: false, reason: e.message });
+  }
+}
+
+async function srvAtlasOpenWorkspaceFolder(req, res, root) {
+  try {
+    const body = await readReqJson(req);
+    const resolved = resolveSafeWorkspaceFolders(root, body.paths);
+    let openedCount = 0;
+    if (body.openOs === true) {
+      for (const item of resolved) {
+        if (item.exists && item.absPath && openInSystemBrowser(item.absPath)) openedCount++;
+      }
+    }
+    sendJson(res, 200, { ok: true, root, openedCount, resolved });
+  } catch (e) {
+    sendJson(res, 400, { ok: false, reason: e.message });
+  }
+}
+
+function srvAtlasRefreshJson(res, root, isRefresh) {
+  if (isRefresh) reconcileSharedPoolOnRefresh(root, null, { trigger: 'atlas-refresh' });
+  const r = exportDashboardHtml(root, join(root, '.donegate', 'dashboard.html'));
+  if (!r.ok) {
+    sendJson(res, 500, { ok: false, reason: r.reason });
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true, refreshedAt: new Date().toISOString(),
+    sharedPool: r.atlas?.workbench?.sharedPool,
+    packDepReports: r.atlas?.workbench?.packDepReports,
+    uiboardToolchain: r.atlas?.workbench?.uiboardToolchain,
+    atlas: r.atlas
+  });
+}
+
+function srvAtlasServeDashboardHtml(res, root) {
+  const r = exportDashboardHtml(root, join(root, '.donegate', 'dashboard.html'));
+  if (!r.ok) {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('生成工作台失败：' + r.reason);
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(r.html);
+}
+
+async function srvAtlasDispatchWorkbenchApi(req, res, root, url) {
+  if ((url === '/api/workbench/import-project' || url === '/api/atlas/import-project') && req.method === 'POST') {
+    await handleImportLegacyProject(req, res, root);
+    return true;
+  }
+  if (url === '/api/workbench/state' && req.method === 'GET') {
+    sendJson(res, 200, { ok: true, state: readSavedWorkbenchState(root) });
+    return true;
+  }
+  if (url === '/api/workbench/state' && req.method === 'POST') {
+    await srvAtlasSaveWorkbenchState(req, res, root);
+    return true;
+  }
+  if (url === '/api/workbench/open-folder' && req.method === 'POST') {
+    await srvAtlasOpenWorkspaceFolder(req, res, root);
+    return true;
+  }
+  if (url === '/api/atlas' || url === '/api/atlas/refresh') {
+    srvAtlasRefreshJson(res, root, url === '/api/atlas/refresh');
+    return true;
+  }
+  return false;
+}
+
+async function srvAtlasDispatchRequest(req, res, ctx) {
+  const { root, server, handleDshRoute } = ctx;
+  setCors(res);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+  const url = (req.url || '/').split('?')[0];
+  if (url.startsWith('/donegate/api/')) {
+    const subPath = '/' + url.slice('/donegate/api/'.length);
+    if (!(await handleDshRoute(req, res, subPath))) sendJson(res, 404, { ok: false, reason: '未知完结门接口: ' + subPath });
+    return;
+  }
+  if (url === '/api/ping') {
+    sendJson(res, 200, { ok: true, pid: process.pid, root });
+    return;
+  }
+  if (url === '/api/shutdown' && req.method === 'POST') {
+    sendJson(res, 200, { ok: true });
+    setTimeout(() => srvAtlasCloseQuietly(server), 30);
+    return;
+  }
+  if (await srvAtlasDispatchWorkbenchApi(req, res, root, url)) return;
+  srvAtlasServeDashboardHtml(res, root);
+}
+
+function srvAtlasWriteServerMeta(root, actualPort) {
+  const dgDir = join(root, '.donegate');
+  if (!existsSync(dgDir)) return;
+  try {
+    const meta = { pid: process.pid, port: actualPort, url: `http://127.0.0.1:${actualPort}/`, startedAt: new Date().toISOString() };
+    writeFileSync(join(dgDir, 'atlas-server.json'), JSON.stringify(meta, null, 2) + '\n', 'utf8');
+  } catch (err) {
+    void err;
+  }
+}
+
 export function startAtlasHttpServer(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const targetPort = opts.port ?? computeLivePort(root);
@@ -96,100 +222,13 @@ export function startAtlasHttpServer(projectRoot, opts = {}) {
   const touchIdle = (srv) => {
     if (idleMs <= 0) return;
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { try { srv.close(); } catch (err) { void err; } }, idleMs);
+    idleTimer = setTimeout(() => srvAtlasCloseQuietly(srv), idleMs);
     if (idleTimer.unref) idleTimer.unref();
   };
 
   const server = createServer(async (req, res) => {
     touchIdle(server);
-    setCors(res);
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-
-    const url = (req.url || '/').split('?')[0];
-    if (url.startsWith('/donegate/api/')) {
-      const subPath = '/' + url.slice('/donegate/api/'.length);
-      const ok = await handleDshRoute(req, res, subPath);
-      if (!ok) sendJson(res, 404, { ok: false, reason: '未知完结门接口: ' + subPath });
-      return;
-    }
-    if (url === '/api/ping') {
-      sendJson(res, 200, { ok: true, pid: process.pid, root });
-      return;
-    }
-
-    if (url === '/api/shutdown' && req.method === 'POST') {
-      sendJson(res, 200, { ok: true });
-      setTimeout(() => { try { server.close(); } catch (err) { void err; } }, 30);
-      return;
-    }
-
-    if ((url === '/api/workbench/import-project' || url === '/api/atlas/import-project') && req.method === 'POST') {
-      await handleImportLegacyProject(req, res, root);
-      return;
-    }
-
-    if (url === '/api/workbench/state' && req.method === 'GET') {
-      sendJson(res, 200, { ok: true, state: readSavedWorkbenchState(root) });
-      return;
-    }
-
-    if (url === '/api/workbench/state' && req.method === 'POST') {
-      try {
-        const body = await readReqJson(req);
-        const cur = readSavedWorkbenchState(root);
-        const next = { ...cur, ...(body && typeof body === 'object' ? body : {}), updatedAt: new Date().toISOString() };
-        const dgDir = join(root, '.donegate');
-        mkdirSync(dgDir, { recursive: true });
-        writeFileSync(join(dgDir, 'workbench-state.json'), JSON.stringify(next, null, 2) + '\n', 'utf8');
-        exportDashboardHtml(root, join(dgDir, 'dashboard.html'));
-        sendJson(res, 200, { ok: true, savedAt: next.updatedAt });
-      } catch (e) {
-        sendJson(res, 400, { ok: false, reason: e.message });
-      }
-      return;
-    }
-
-    if (url === '/api/workbench/open-folder' && req.method === 'POST') {
-      try {
-        const body = await readReqJson(req);
-        const resolved = resolveSafeWorkspaceFolders(root, body.paths);
-        let openedCount = 0;
-        if (body.openOs === true) {
-          for (const item of resolved) {
-            if (item.exists && item.absPath && openInSystemBrowser(item.absPath)) openedCount++;
-          }
-        }
-        sendJson(res, 200, { ok: true, root, openedCount, resolved });
-      } catch (e) {
-        sendJson(res, 400, { ok: false, reason: e.message });
-      }
-      return;
-    }
-
-    if (url === '/api/atlas' || url === '/api/atlas/refresh') {
-      if (url === '/api/atlas/refresh') reconcileSharedPoolOnRefresh(root, null, { trigger: 'atlas-refresh' });
-      const outHtml = join(root, '.donegate', 'dashboard.html');
-      const r = exportDashboardHtml(root, outHtml);
-      if (!r.ok) { sendJson(res, 500, { ok: false, reason: r.reason }); return; }
-      sendJson(res, 200, {
-        ok: true, refreshedAt: new Date().toISOString(),
-        sharedPool: r.atlas?.workbench?.sharedPool,
-        packDepReports: r.atlas?.workbench?.packDepReports,
-        uiboardToolchain: r.atlas?.workbench?.uiboardToolchain,
-        atlas: r.atlas
-      });
-      return;
-    }
-
-    const outHtml = join(root, '.donegate', 'dashboard.html');
-    const r = exportDashboardHtml(root, outHtml);
-    if (!r.ok) {
-      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('生成工作台失败：' + r.reason);
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(r.html);
+    await srvAtlasDispatchRequest(req, res, { root, server, handleDshRoute });
   });
 
   return new Promise((resolvePromise, rejectPromise) => {
@@ -198,14 +237,7 @@ export function startAtlasHttpServer(projectRoot, opts = {}) {
       touchIdle(server);
       const addr = server.address();
       const actualPort = typeof addr === 'object' && addr ? addr.port : targetPort;
-      const dgDir = join(root, '.donegate');
-      if (existsSync(dgDir)) {
-        try {
-          writeFileSync(join(dgDir, 'atlas-server.json'), JSON.stringify({
-            pid: process.pid, port: actualPort, url: `http://127.0.0.1:${actualPort}/`, startedAt: new Date().toISOString()
-          }, null, 2) + '\n', 'utf8');
-        } catch (err) { void err; }
-      }
+      srvAtlasWriteServerMeta(root, actualPort);
       resolvePromise({ server, port: actualPort, url: `http://127.0.0.1:${actualPort}/` });
     });
   });
@@ -221,7 +253,10 @@ export async function ensureBackgroundAtlasServer(projectRoot) {
       if (!r.ok) return false;
       const j = await r.json();
       return Boolean(j && j.ok);
-    } catch (err) { void err; return false; }
+    } catch (err) {
+      void err;
+      return false;
+    }
   };
   if (await isUp()) return { ok: true, port, url: `http://127.0.0.1:${port}/`, reused: true };
   try {
@@ -232,15 +267,21 @@ export async function ensureBackgroundAtlasServer(projectRoot) {
       await new Promise((r) => setTimeout(r, 75));
       if (await isUp()) return { ok: true, port, url: `http://127.0.0.1:${port}/`, reused: false };
     }
-  } catch (err) { void err; }
+  } catch (err) {
+    void err;
+  }
   return { ok: false, port, url: null };
+}
+
+function srvAtlasReadCliArg(argv, key, fallback = null) {
+  const idx = argv.indexOf(key);
+  return idx >= 0 && argv[idx + 1] ? argv[idx + 1] : fallback;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === THIS_FILE) {
   const argv = process.argv.slice(2);
-  const arg = (k, d = null) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-  const root = resolve(arg('--root', process.cwd()));
-  const port = Number(arg('--port', computeLivePort(root)));
+  const root = resolve(srvAtlasReadCliArg(argv, '--root', process.cwd()));
+  const port = Number(srvAtlasReadCliArg(argv, '--port', computeLivePort(root)));
   if (argv.includes('--stop')) {
     fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST', signal: AbortSignal.timeout(1000) })
       .catch((err) => { void err; })

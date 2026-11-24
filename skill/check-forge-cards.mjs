@@ -137,7 +137,13 @@ export function auditForge(dir) {
 function runRedSelfTest() {
   const tmp = mkdtempSync(join(tmpdir(), 'forge-cards-'));
   let bad = 0;
-  const t = (name, cond, extra = '') => { if (cond) console.log('  ✓ ' + name); else { bad++; console.log('  ✗ ' + name + (extra ? ' → ' + extra : '')); } };
+  const t = (name, cond, extra = '') => {
+    if (cond) console.log('  ✓ ' + name);
+    else {
+      bad++;
+      console.log('  ✗ ' + name + (extra ? ' → ' + extra : ''));
+    }
+  };
   const body = (secs) => secs.join('\n\n') + '\n\n' + '这是一段足够长的正文，用来满足工坊卡的三百汉字下限。'.repeat(16) + '\n';
   const build = (mutate = () => {}) => {
     const d = join(tmp, 'case-' + Math.random().toString(36).slice(2, 8), SKILL_NAME);

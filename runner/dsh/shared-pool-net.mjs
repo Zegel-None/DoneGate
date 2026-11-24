@@ -135,7 +135,9 @@ async function fetchFollowingRedirects(fetchFn, startUrl, headers, maxRedirects 
       if (!loc) throw new Error(`HTTP ${res.status} redirect missing Location header`);
       const nextUrl = new URL(loc, curUrl).href;
       if (new URL(nextUrl).origin !== new URL(curUrl).origin) delete curHeaders.Authorization;
-      curUrl = nextUrl; hops++; continue;
+      curUrl = nextUrl;
+      hops++;
+      continue;
     }
     const resolvedUrl = (res.url && String(res.url).startsWith('http')) ? res.url : curUrl;
     return { res, finalUrl: resolvedUrl, hops };
@@ -164,13 +166,23 @@ export async function downloadWithRangeResume(url, destPath, opts = {}) {
       try {
         const rangeEnd = totalBytes !== null ? Math.min(offset + chunkSize - 1, totalBytes - 1) : offset + chunkSize - 1;
         const { res, finalUrl, hops } = await fetchFollowingRedirects(fetchFn, activeUrl, { ...(opts.headers || {}), Range: `bytes=${offset}-${rangeEnd}` });
-        activeUrl = finalUrl; redirectsFollowed += hops;
+        activeUrl = finalUrl;
+        redirectsFollowed += hops;
 
         if (res.status === 416 && offset > 0) {
           const cr416 = parseContentRangeHeader(res.headers?.get?.('content-range'));
           if (cr416 && typeof cr416.total === 'number') {
-            if (offset === cr416.total) { totalBytes = cr416.total; chunkDone = true; break; }
-            if (offset > cr416.total) { writeFileSync(partPath, Buffer.alloc(0)); offset = 0; totalBytes = cr416.total; continue; }
+            if (offset === cr416.total) {
+              totalBytes = cr416.total;
+              chunkDone = true;
+              break;
+            }
+            if (offset > cr416.total) {
+              writeFileSync(partPath, Buffer.alloc(0));
+              offset = 0;
+              totalBytes = cr416.total;
+              continue;
+            }
           }
         }
         if (res.status === 200) {
@@ -180,7 +192,12 @@ export async function downloadWithRangeResume(url, destPath, opts = {}) {
             throw new Error(`HTTP 200 incomplete body: got ${buf.byteLength}, expected ${cl}`);
           }
           writeFileSync(partPath, buf);
-          offset = buf.byteLength; totalBytes = buf.byteLength; chunksDownloaded = 1; mode = 'stream-200'; chunkDone = true; break;
+          offset = buf.byteLength;
+          totalBytes = buf.byteLength;
+          chunksDownloaded = 1;
+          mode = 'stream-200';
+          chunkDone = true;
+          break;
         }
         if (res.status === 206) {
           const cr = parseContentRangeHeader(res.headers?.get?.('content-range'));
@@ -192,7 +209,12 @@ export async function downloadWithRangeResume(url, destPath, opts = {}) {
           if (buf.byteLength !== expectedLen) throw new Error(`Chunk byte length mismatch at ${offset}: got ${buf.byteLength}, expected ${expectedLen}`);
           if (offset === 0 && !existsSync(partPath)) writeFileSync(partPath, buf);
           else appendFileSync(partPath, buf);
-          offset += buf.byteLength; totalBytes = cr.total; chunksDownloaded++; mode = 'range-206'; chunkDone = true; break;
+          offset += buf.byteLength;
+          totalBytes = cr.total;
+          chunksDownloaded++;
+          mode = 'range-206';
+          chunkDone = true;
+          break;
         }
         throw new Error(`Unexpected HTTP status ${res.status}`);
       } catch (err) {
@@ -223,7 +245,10 @@ export async function downloadWithRangeResume(url, destPath, opts = {}) {
 export function extractArchiveToDir(archivePath, targetDir, opts = {}) {
   const absArchive = resolve(archivePath), absTarget = resolve(targetDir);
   mkdirSync(absTarget, { recursive: true });
-  if (typeof opts.extractFn === 'function') { opts.extractFn(absArchive, absTarget); return { ok: true, targetDir: absTarget }; }
+  if (typeof opts.extractFn === 'function') {
+    opts.extractFn(absArchive, absTarget);
+    return { ok: true, targetDir: absTarget };
+  }
   const strip = Number(opts.stripComponents ?? 0);
   const flag = /\.(?:tar\.gz|tgz)$/i.test(absArchive) ? '-xzf' : '-xf';
   const tarArgs = [flag, absArchive, ...(strip > 0 ? [`--strip-components=${strip}`] : []), '-C', absTarget];

@@ -38,39 +38,42 @@ function resolveBranchMergeBase(projectRoot, headSha, explicitBase) {
   return fallbackSha;
 }
 
+function nmgReadDirtyFiles(projectRoot) {
+  const st = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], { encoding: 'utf8' });
+  if (st.status !== 0) return [];
+  const rawDirtyFiles = [];
+  for (const rawLine of (st.stdout || '').split(/\r?\n/)) {
+    if (rawLine.length < 4) continue;
+    const rel = normalizeGitRelPath(rawLine.slice(3));
+    if (rel) rawDirtyFiles.push(rel);
+  }
+  return rawDirtyFiles;
+}
+
+function nmgReadCommittedSinceBase(projectRoot, explicitBase) {
+  const headRes = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' });
+  const headSha = headRes.status === 0 ? headRes.stdout.trim() : '';
+  if (!headSha) return { baseRef: null, committedFiles: [] };
+  const baseRef = resolveBranchMergeBase(projectRoot, headSha, explicitBase);
+  if (!baseRef || baseRef === headSha) return { baseRef, committedFiles: [] };
+  const df = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--name-only', `${baseRef}..HEAD`], { encoding: 'utf8' });
+  if (df.status !== 0) return { baseRef, committedFiles: [] };
+  const committedSet = new Set();
+  for (const line of (df.stdout || '').split(/\r?\n/)) {
+    const rel = normalizeGitRelPath(line);
+    if (isNonMetaFile(rel)) committedSet.add(rel);
+  }
+  return { baseRef, committedFiles: [...committedSet].sort() };
+}
+
 export function collectGitNodeChanges(projectRoot, explicitBase) {
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
   if (inside.status !== 0 || (inside.stdout || '').trim() !== 'true') {
     return { isGit: false, baseRef: null, rawDirtyFiles: [], uncommittedFiles: [], committedFiles: [], touchedFiles: [] };
   }
-  const rawDirtyFiles = [];
-  const st = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], { encoding: 'utf8' });
-  if (st.status === 0) {
-    for (const rawLine of (st.stdout || '').split(/\r?\n/)) {
-      if (rawLine.length < 4) continue;
-      const rel = normalizeGitRelPath(rawLine.slice(3));
-      if (rel) rawDirtyFiles.push(rel);
-    }
-  }
+  const rawDirtyFiles = nmgReadDirtyFiles(projectRoot);
   const uncommittedFiles = [...new Set(rawDirtyFiles.filter(isNonMetaFile))].sort();
-
-  let baseRef = null;
-  const committedSet = new Set();
-  const headRes = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' });
-  if (headRes.status === 0 && headRes.stdout.trim()) {
-    const headSha = headRes.stdout.trim();
-    baseRef = resolveBranchMergeBase(projectRoot, headSha, explicitBase);
-    if (baseRef && baseRef !== headSha) {
-      const df = spawnSync('git', ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--name-only', `${baseRef}..HEAD`], { encoding: 'utf8' });
-      if (df.status === 0) {
-        for (const line of (df.stdout || '').split(/\r?\n/)) {
-          const rel = normalizeGitRelPath(line);
-          if (isNonMetaFile(rel)) committedSet.add(rel);
-        }
-      }
-    }
-  }
-  const committedFiles = [...committedSet].sort();
+  const { baseRef, committedFiles } = nmgReadCommittedSinceBase(projectRoot, explicitBase);
   const touchedFiles = [...new Set([...committedFiles, ...uncommittedFiles])].sort();
   return { isGit: true, baseRef, rawDirtyFiles, uncommittedFiles, committedFiles, touchedFiles };
 }

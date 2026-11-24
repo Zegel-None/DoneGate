@@ -1,29 +1,19 @@
 // L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算与共享治理资产声明）
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize } from 'node:path';
-import { readJsonStrict } from '../../skill/io.mjs';
+import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { buildNodeInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
 import { DEFAULT_SUBAGENT_BUDGET } from './project-loader.mjs';
 import { collectCodeFilesForCoverage } from './graph-edges.mjs';
 
 export const SHARED_GOVERNANCE_GLOBS = [
-  'workflows/',
-  'AGENTS.md',
-  'HANDOFF.md',
-  'README.md',
-  'CONSTRAINTS.md',
-  'INTENT.md',
-  'VERSION',
-  'thresholds.json',
-  'donegate/',
-  'donegate-forge/',
-  'donegate-judge/',
-  'bricks/',
-  'docs/'
+  'workflows/', 'AGENTS.md', 'HANDOFF.md', 'README.md', 'CONSTRAINTS.md', 'INTENT.md',
+  'VERSION', 'thresholds.json', 'donegate/', 'donegate-forge/', 'donegate-judge/', 'bricks/', 'docs/'
 ];
 
 const normalizeScopePrefix = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '');
+const CTX_RTR_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
 
 export function fileBelongsToScopes(relFile, scopes = []) {
   const rf = normalizeScopePrefix(relFile);
@@ -153,6 +143,59 @@ function sortNodesTopologically(nodes, providerMap) {
   return ordered;
 }
 
+function ctxRtrResolveRelativeImport(cf, spec, allScopedFiles) {
+  if (!spec.startsWith('.')) return null;
+  const raw = normalize(join(dirname(cf), spec)).replace(/\\/g, '/');
+  const cands = [raw, `${raw}.mjs`, `${raw}.js`, `${raw}.ts`, `${raw}.tsx`, `${raw}/index.mjs`, `${raw}/index.js`, `${raw}/index.ts`];
+  return cands.find((cand) => allScopedFiles.has(cand)) || null;
+}
+
+function ctxRtrRecordCrossNodeEdge(cf, hit, srcOwners, dstOwners, edgeCtx) {
+  const { declaredDeps, providerMap, consumerMap, stubByNode, redImports, facadeViolations } = edgeCtx;
+  for (const dstOwner of dstOwners) {
+    for (const srcOwner of srcOwners) {
+      if (srcOwner === dstOwner) continue;
+      providerMap.get(srcOwner)?.add(dstOwner);
+      consumerMap.get(dstOwner)?.add(srcOwner);
+      if (!declaredDeps.get(srcOwner)?.has(dstOwner)) {
+        redImports.push({ fromNode: srcOwner, fromFile: cf, toNode: dstOwner, toFile: hit });
+      }
+      const dstStub = stubByNode.get(dstOwner);
+      if (dstStub && dstStub.facadeMode === 'barrel' && !dstStub.facadeFiles.includes(hit)) {
+        facadeViolations.push({ fromNode: srcOwner, fromFile: cf, toNode: dstOwner, toFile: hit, expectedFacades: dstStub.facadeFiles });
+      }
+    }
+  }
+}
+
+function ctxRtrScanScopedImports(projectRoot, allScopedFiles, ownersOf, edgeCtx) {
+  for (const cf of [...allScopedFiles].sort()) {
+    const srcOwners = ownersOf(cf);
+    if (srcOwners.length === 0) continue;
+    const body = readMaybe(join(projectRoot, cf));
+    if (body === null) continue;
+    const masked = maskCommentsAndStrings(body, extname(cf).toLowerCase());
+    for (const m of body.matchAll(CTX_RTR_IMPORT_RE)) {
+      if (masked[m.index] === ' ') continue;
+      const hit = ctxRtrResolveRelativeImport(cf, m[1].split(/[?#]/)[0], allScopedFiles);
+      if (hit) ctxRtrRecordCrossNodeEdge(cf, hit, srcOwners, ownersOf(hit), edgeCtx);
+    }
+  }
+}
+
+function ctxRtrBuildEnrichedNode(n, stubByNode, declaredDeps, providerMap, consumerMap) {
+  return {
+    id: n.id, title: n.title || n.id, why: n.why || '', sourceKind: n.sourceKind, scope: n.scope || [],
+    declaredDependsOn: [...(declaredDeps.get(n.id) || [])].sort(),
+    dependsOnIds: [...(providerMap.get(n.id) || [])].sort(),
+    dependedByIds: [...(consumerMap.get(n.id) || [])].sort(),
+    isFrozenContract: Boolean(n.frozenHash && !n.provisional),
+    frozenHash: n.frozenHash || null,
+    obligations: Array.isArray(n.obligations) ? n.obligations : [],
+    stub: stubByNode.get(n.id)
+  };
+}
+
 export function discoverHermeticGraph(projectRoot) {
   const thresholds = loadThresholds(projectRoot);
   const { contracts, errors } = loadContracts(projectRoot);
@@ -182,49 +225,12 @@ export function discoverHermeticGraph(projectRoot) {
   for (const [nid, deps] of providerMap.entries()) for (const dep of deps) consumerMap.get(dep)?.add(nid);
 
   const redImports = [], facadeViolations = [];
-  const importRe = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
-  for (const cf of [...allScopedFiles].sort()) {
-    const srcOwners = ownersOf(cf);
-    if (srcOwners.length === 0) continue;
-    let body = '';
-    try { body = readFileSync(join(projectRoot, cf), 'utf8'); } catch (err) { void err; continue; }
-    const masked = maskCommentsAndStrings(body, extname(cf).toLowerCase());
-    for (const m of body.matchAll(importRe)) {
-      if (masked[m.index] === ' ') continue;
-      const spec = m[1].split(/[?#]/)[0];
-      if (!spec.startsWith('.')) continue;
-      const rawTarget = normalize(join(dirname(cf), spec)).replace(/\\/g, '/');
-      const hit = [rawTarget, `${rawTarget}.mjs`, `${rawTarget}.js`, `${rawTarget}.ts`, `${rawTarget}.tsx`, `${rawTarget}/index.mjs`, `${rawTarget}/index.js`, `${rawTarget}/index.ts`].find((cand) => allScopedFiles.has(cand));
-      if (!hit) continue;
-      for (const dstOwner of ownersOf(hit)) {
-        for (const srcOwner of srcOwners) {
-          if (srcOwner === dstOwner) continue;
-          providerMap.get(srcOwner)?.add(dstOwner);
-          consumerMap.get(dstOwner)?.add(srcOwner);
-          if (!declaredDeps.get(srcOwner)?.has(dstOwner)) redImports.push({ fromNode: srcOwner, fromFile: cf, toNode: dstOwner, toFile: hit });
-          const dstStub = stubByNode.get(dstOwner);
-          if (dstStub && dstStub.facadeMode === 'barrel' && !dstStub.facadeFiles.includes(hit)) {
-            facadeViolations.push({ fromNode: srcOwner, fromFile: cf, toNode: dstOwner, toFile: hit, expectedFacades: dstStub.facadeFiles });
-          }
-        }
-      }
-    }
-  }
+  ctxRtrScanScopedImports(projectRoot, allScopedFiles, ownersOf, {
+    declaredDeps, providerMap, consumerMap, stubByNode, redImports, facadeViolations
+  });
 
   const topoOrder = sortNodesTopologically(allNodes, providerMap);
-  const enrichedNodes = allNodes.map((n) => {
-    const stub = stubByNode.get(n.id);
-    return {
-      id: n.id, title: n.title || n.id, why: n.why || '', sourceKind: n.sourceKind, scope: n.scope || [],
-      declaredDependsOn: [...(declaredDeps.get(n.id) || [])].sort(),
-      dependsOnIds: [...(providerMap.get(n.id) || [])].sort(),
-      dependedByIds: [...(consumerMap.get(n.id) || [])].sort(),
-      isFrozenContract: Boolean(n.frozenHash && !n.provisional),
-      frozenHash: n.frozenHash || null,
-      obligations: Array.isArray(n.obligations) ? n.obligations : [],
-      stub
-    };
-  });
+  const enrichedNodes = allNodes.map((n) => ctxRtrBuildEnrichedNode(n, stubByNode, declaredDeps, providerMap, consumerMap));
   return { ok: true, errors: [], thresholds, testFiles: coverageScan.testFiles, topoOrder, nodes: enrichedNodes, redImports, facadeViolations };
 }
 

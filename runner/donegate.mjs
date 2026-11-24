@@ -40,48 +40,56 @@ const HELP_TEXT = [
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]'
 ].join('\n');
 
+function dgConsumeLongFlag(flags, argv, idx) {
+  const k = argv[idx].slice(2);
+  if (BOOLEAN_FLAGS.has(k)) {
+    flags[k] = true;
+    return idx;
+  }
+  const next = argv[idx + 1];
+  if (next === undefined || next.startsWith('--')) {
+    flags[k] = true;
+    return idx;
+  }
+  const isListFlag = k === 'focus' || k === 'lexical';
+  flags[k] = (isListFlag && flags[k]) ? `${flags[k]},${next}` : next;
+  return idx + 1;
+}
+
 function parseCliArgs(argv) {
   const flags = {};
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '-h') { flags.help = true; continue; }
-    if (a.startsWith('--')) {
-      const k = a.slice(2);
-      if (BOOLEAN_FLAGS.has(k)) { flags[k] = true; continue; }
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('--')) {
-        flags[k] = ((k === 'focus' || k === 'lexical') && flags[k]) ? `${flags[k]},${next}` : next;
-        i++;
-      } else flags[k] = true;
-    } else pos.push(a);
+    if (a === '-h') {
+      flags.help = true;
+    } else if (a.startsWith('--')) {
+      i = dgConsumeLongFlag(flags, argv, i);
+    } else {
+      pos.push(a);
+    }
   }
   return { flags, pos };
 }
 
-export function dispatchCommand(argv, defaultRoot = process.cwd()) {
-  const { flags, pos } = parseCliArgs(argv);
-  if (flags.help || pos[0] === 'help' || pos.length === 0) {
-    return { exitCode: pos.length === 0 && !flags.help ? 3 : 0, stdout: HELP_TEXT };
-  }
-  const root = resolve(typeof flags.root === 'string' ? flags.root : defaultRoot);
-  const cmd = pos[0];
-  const sub = pos[1];
-
-  if (cmd === 'init') return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root);
-  if (cmd === 'contract' && sub === 'new') {
+function dgCmdContract(root, sub, pos, flags) {
+  if (sub === 'new') {
     return cmdContractNew(root, {
       id: pos[2], title: flags.title, why: flags.why, scope: flags.scope,
       owner: flags.owner, dependsOn: flags['depends-on']
     });
   }
-  if (cmd === 'contract' && sub === 'freeze') {
+  if (sub === 'freeze') {
     return cmdContractFreeze(root, {
       id: pos[2], by: flags.by, signoff: Boolean(flags.signoff),
       attest: flags.attest, openedAt: flags['opened-at'],
       forceBatch: Boolean(flags['force-batch']), legacy: Boolean(flags['legacy'])
     });
   }
+  return null;
+}
+
+function dgCmdSliceOrGraph(cmd, root, pos, flags) {
   if (cmd === 'slice') {
     return cmdSlice(root, {
       id: pos[1],
@@ -96,6 +104,22 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
       out: flags.out
     });
   }
+  if (cmd === 'graph') {
+    if (flags.router) {
+      return cmdSlice(root, {
+        routerOnly: true,
+        contextWindow: flags['context-window'],
+        utilization: flags.utilization,
+        json: Boolean(flags.json),
+        out: flags.out
+      });
+    }
+    return cmdGraph(root);
+  }
+  return null;
+}
+
+function dgCmdCheckOrTeeth(cmd, root, pos, flags) {
   if (cmd === 'check-node' || (cmd === 'check' && flags.node)) {
     return cmdCheckNode(root, {
       id: pos[1],
@@ -121,27 +145,46 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   if (cmd === 'teeth') {
     return cmdTeeth(root, { id: pos[1], criterionId: pos[2], tier: flags.tier || 'A', claim: flags.claim });
   }
+  return null;
+}
+
+function dgCmdStatusAndGovernance(cmd, sub, root, pos, flags) {
   if (cmd === 'status') {
     const pendingSet = typeof flags.pending === 'string' ? new Set(flags.pending.split(',').filter(Boolean)) : new Set();
-    return cmdStatus(root, { tree: Boolean(flags.tree), flow: Boolean(flags.flow), html: flags.html, open: Boolean(flags.open), serve: Boolean(flags.serve), pendingContracts: pendingSet });
-  }
-  if (cmd === 'graph') {
-    if (flags.router) {
-      return cmdSlice(root, {
-        routerOnly: true,
-        contextWindow: flags['context-window'],
-        utilization: flags.utilization,
-        json: Boolean(flags.json),
-        out: flags.out
-      });
-    }
-    return cmdGraph(root);
+    return cmdStatus(root, {
+      tree: Boolean(flags.tree), flow: Boolean(flags.flow), html: flags.html,
+      open: Boolean(flags.open), serve: Boolean(flags.serve), pendingContracts: pendingSet
+    });
   }
   if (cmd === 'gaps') return cmdGaps(root, { json: Boolean(flags.json) });
-  if (cmd === 'handover') return cmdHandover(root, { out: flags.out, receiver: flags.receiver, ranCommand: flags['ran-command'], observedOutput: flags['observed-output'], stuckAt: flags['stuck-at'] });
+  if (cmd === 'handover') {
+    return cmdHandover(root, {
+      out: flags.out, receiver: flags.receiver, ranCommand: flags['ran-command'],
+      observedOutput: flags['observed-output'], stuckAt: flags['stuck-at']
+    });
+  }
   if (cmd === 'verify' && sub === 'pack') return cmdVerifyPack(root, { id: pos[2], base: flags.base, head: flags.head, out: flags.out });
   if (cmd === 'verify' && sub === 'apply') return cmdVerifyApply(root, { packDir: pos[2], verdict: flags.verdict });
   if (cmd === 'retire') return cmdRetire(root, { id: pos[1], reason: flags.reason });
+  return null;
+}
+
+export function dispatchCommand(argv, defaultRoot = process.cwd()) {
+  const { flags, pos } = parseCliArgs(argv);
+  if (flags.help || pos[0] === 'help' || pos.length === 0) {
+    return { exitCode: pos.length === 0 && !flags.help ? 3 : 0, stdout: HELP_TEXT };
+  }
+  const root = resolve(typeof flags.root === 'string' ? flags.root : defaultRoot);
+  const cmd = pos[0];
+  if (cmd === 'init') {
+    return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root);
+  }
+  const sub = pos[1];
+  const routed = (cmd === 'contract' ? dgCmdContract(root, sub, pos, flags) : null)
+    || dgCmdSliceOrGraph(cmd, root, pos, flags)
+    || dgCmdCheckOrTeeth(cmd, root, pos, flags)
+    || dgCmdStatusAndGovernance(cmd, sub, root, pos, flags);
+  if (routed) return routed;
 
   return {
     exitCode: 3,

@@ -78,8 +78,18 @@ const runCheck = (root) => {
 
 if (argv.includes('--self-test')) {
   let bad = 0;
-  const t = (name, cond, extra = '') => { if (cond) console.log('  ✓ ' + name); else { bad++; console.log('  ✗ ' + name + (extra ? ' → ' + extra : '')); } };
-  const mk = (fn) => { const d = mkdtempSync(join(tmpdir(), 'check-skills-')); fn(d); return d; };
+  const t = (name, cond, extra = '') => {
+    if (cond) console.log('  ✓ ' + name);
+    else {
+      bad++;
+      console.log('  ✗ ' + name + (extra ? ' → ' + extra : ''));
+    }
+  };
+  const mk = (fn) => {
+    const d = mkdtempSync(join(tmpdir(), 'check-skills-'));
+    fn(d);
+    return d;
+  };
   // 好样本
   const good = mk((d) => {
     for (const n of EXPECTED) {

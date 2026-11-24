@@ -23,49 +23,84 @@ const ROOT = resolve(HERE, '..');
 
 const 四节 = ['## 为什么做', '## 服务谁', '## 什么算成功', '## 明确不做什么'];
 
+function cinSectionHasBody(lines, startIdx) {
+  for (let j = startIdx; j < lines.length && !/^##\s/.test(lines[j]); j++) {
+    if (lines[j].trim() !== '') return true;
+  }
+  return false;
+}
+
+function cinFindEmptySection(intent) {
+  const lines = intent.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const title = lines[i].trim();
+    if (!四节.includes(title)) continue;
+    if (!cinSectionHasBody(lines, i + 1)) return title;
+  }
+  return '';
+}
+
+function cinAuditIntentDoc(intent, rows, why) {
+  if (!intent) {
+    rows['①INTENT 在场'] = false;
+    why['①INTENT 在场'] = '没有 INTENT.md';
+    return;
+  }
+  rows['①INTENT 在场'] = true;
+  const headings = intent.split(/\r?\n/).filter((l) => /^##\s/.test(l)).map((l) => l.trim());
+  const sameOrder = headings.length === 4 && 四节.every((h, i) => headings[i] === h);
+  if (!sameOrder) {
+    rows['②四节逐字'] = false;
+    why['②四节逐字'] = '二级标题为 ' + JSON.stringify(headings) + '，不是骨架那四个（少/多/改名/换序均算）';
+  } else {
+    rows['②四节逐字'] = true;
+    // 空节：某节标题与下一标题之间除空行外无实字
+    const emptyHit = cinFindEmptySection(intent);
+    if (emptyHit) {
+      rows['③无空节'] = false;
+      why['③无空节'] = '「' + emptyHit + '」整节无实字';
+    } else {
+      rows['③无空节'] = true;
+    }
+  }
+  // 冒烟行（G-08）：非标题、存在且非空
+  if (/^冒烟命令：\s*\S/m.test(intent)) {
+    rows['④冒烟行'] = true;
+  } else {
+    rows['④冒烟行'] = false;
+    why['④冒烟行'] = '没有「冒烟命令：<单条命令>」固定行（或在标题里，不算）';
+  }
+}
+
+function cinAuditConstraintsDoc(cons, rows, why) {
+  if (!cons) {
+    rows['⑤约束条目'] = false;
+    why['⑤约束条目'] = '没有 CONSTRAINTS.md';
+    return;
+  }
+  // 条目行 = 非标题、非空、非说明行；严格字面：行首必须是不许/必须
+  const lines = cons.split(/\r?\n/).filter((l) => l.trim() !== '' && !/^#/.test(l));
+  const entries = lines.filter((l) => !/^(说明|注)[:：]/.test(l.trim()));
+  const invalid = entries.filter((l) => !/^(不许|必须)/.test(l.trim()));
+  if (entries.length === 0) {
+    rows['⑤约束条目'] = false;
+    why['⑤约束条目'] = '一条有效条目都没有（全为标题/空行/说明行）';
+  } else if (invalid.length > 0) {
+    rows['⑤约束条目'] = false;
+    why['⑤约束条目'] = '行首不是「不许/必须」的条目 ' + invalid.length + ' 条，如「' + invalid[0].trim().slice(0, 24) + '」——列表序号不算行首';
+  } else {
+    rows['⑤约束条目'] = true;
+  }
+}
+
 // 审一个项目根的 INTENT / CONSTRAINTS（门 0.1 的机器可判部分）
 function auditIntent(projectRoot) {
   const intent = readMaybe(join(projectRoot, 'INTENT.md'));
   const cons = readMaybe(join(projectRoot, 'CONSTRAINTS.md'));
-  const rows = {}; const why = {};
-  const markFail = (k, w) => { rows[k] = false; why[k] = w; };
-  const pass = (k) => { rows[k] = true; };
-
-  if (!intent) { markFail('①INTENT 在场', '没有 INTENT.md'); }
-  else {
-    const headings = intent.split(/\r?\n/).filter((l) => /^##\s/.test(l)).map((l) => l.trim());
-    const sameOrder = headings.length === 4 && 四节.every((h, i) => headings[i] === h);
-    pass('①INTENT 在场');
-    if (!sameOrder) markFail('②四节逐字', '二级标题为 ' + JSON.stringify(headings) + '，不是骨架那四个（少/多/改名/换序均算）');
-    else {
-      pass('②四节逐字');
-      // 空节：某节标题与下一标题之间除空行外无实字
-      const lines = intent.split(/\r?\n/);
-      let emptyHit = '';
-      for (let i = 0; i < lines.length; i++) {
-        if (!四节.includes(lines[i].trim())) continue;
-        let j = i + 1, hasReal = false;
-        while (j < lines.length && !/^##\s/.test(lines[j])) { if (lines[j].trim() !== '') hasReal = true; j++; }
-        if (!hasReal) { emptyHit = lines[i].trim(); break; }
-      }
-      if (emptyHit) markFail('③无空节', '「' + emptyHit + '」整节无实字');
-      else pass('③无空节');
-    }
-    // 冒烟行（G-08）：非标题、存在且非空
-    if (/^冒烟命令：\s*\S/m.test(intent)) pass('④冒烟行');
-    else markFail('④冒烟行', '没有「冒烟命令：<单条命令>」固定行（或在标题里，不算）');
-  }
-
-  if (!cons) { markFail('⑤约束条目', '没有 CONSTRAINTS.md'); }
-  else {
-    // 条目行 = 非标题、非空、非说明行；严格字面：行首必须是不许/必须
-    const lines = cons.split(/\r?\n/).filter((l) => l.trim() !== '' && !/^#/.test(l));
-    const entries = lines.filter((l) => !/^(说明|注)[:：]/.test(l.trim()));
-    const bad = entries.filter((l) => !/^(不许|必须)/.test(l.trim()));
-    if (entries.length === 0) markFail('⑤约束条目', '一条有效条目都没有（全为标题/空行/说明行）');
-    else if (bad.length > 0) markFail('⑤约束条目', '行首不是「不许/必须」的条目 ' + bad.length + ' 条，如「' + bad[0].trim().slice(0, 24) + '」——列表序号不算行首');
-    else pass('⑤约束条目');
-  }
+  const rows = {};
+  const why = {};
+  cinAuditIntentDoc(intent, rows, why);
+  cinAuditConstraintsDoc(cons, rows, why);
   const order = ['①INTENT 在场', '②四节逐字', '③无空节', '④冒烟行', '⑤约束条目'];
   const fails = order.filter((k) => rows[k] === false).map((k) => k + '：' + why[k]);
   return { rows, why, fails, order };

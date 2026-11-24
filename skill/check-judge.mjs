@@ -20,65 +20,85 @@ import { readMaybe } from './io.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 
-
-// 判一个复核包 + 判定书：四行布尔
-function auditVerdict(packRoot, verdictText) {
-  const rows = {}; const why = {};
-
-  // 五项各一行、只许三值
+function cjdParseVerdictItems(verdictText) {
   const itemLines = verdictText.split(/\r?\n/).filter((l) => /^V[1-5]/.test(l.trim()));
   const fourth = itemLines.filter((l) => /(差不多|建议再看看|大概|基本)/.test(l));
   const noValue = itemLines.filter((l) => !/(pass|fail|unknown)/i.test(l));
-  rows['①五项三值'] = itemLines.length === 5 && fourth.length === 0 && noValue.length === 0;
-  if (!rows['①五项三值']) why['①五项三值'] = '五项行 ' + itemLines.length + '/5，第四值 ' + fourth.length + ' 条，无值 ' + noValue.length + ' 条';
-
-  // unknown 必须点名缺哪份材料（§7.3 invalid-abstain）；矛盾类的点名=说清哪两份材料矛盾
   const unkLines = itemLines.filter((l) => /unknown/i.test(l));
   const unnamed = unkLines.filter((l) => !/(缺|scope|why|文件|材料|矛盾|声称|diff)/i.test(l));
-  rows['②unknown 举证'] = unkLines.length === 0 || unnamed.length === 0;
-  if (!rows['②unknown 举证']) why['②unknown 举证'] = unnamed.length + ' 条 unknown 没写缺哪份材料';
-
   const vals = itemLines.map((l) => ((l.match(/(pass|fail|unknown)/i) || [])[1] || '').toLowerCase());
   const allPass = vals.length === 5 && vals.every((v) => v === 'pass');
   const anyFail = vals.some((v) => v === 'fail');
   const anyUnk = vals.some((v) => v === 'unknown');
   const exitM = verdictText.match(/(总|结论|RESULT)[^\n]{0,40}?退出码[^0-9]{0,8}([0-3])|(退出码|exit\s*code)[^0-9]{0,8}([0-3])/i);
-  // 注意捕获组：第一分支的数字在组 2，第二分支在组 4（组 3 是「退出码」标签本身）——
-  // 首版取了组 3，把标签当数字，exit 全 NaN（首跑全红的根因）
   const exit = exitM ? Number(exitM[2] ?? exitM[4]) : null;
+  return { itemLines, fourth, noValue, unkLines, unnamed, allPass, anyFail, anyUnk, exit };
+}
 
-  // 材料自相矛盾检测（G-02 现场：完成声称 vs diff 文件数）
-  // **按内容找材料，不按文件名猜**：旧实现写死 `完成声称.md` / `05-完成声称.md` / `base-head.txt` /
-  // `02-base-head.txt`，包里的名字一换（例：`03-完成声称.md`）就 `readMaybe` 读空 → 认成「没有矛盾」
-  // → ④ 静默判过、③ 的期望值也跟着错。这是「拿文件名代理内容」（adr/013），本轮夹具 g02-renamed 抓到的。
-  let contradiction = false;
-  const names = (() => {
-    try { return readdirSync(packRoot, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name); }
-    catch { return []; }
-  })();
-  const pickName = (re) => names.find((n) => re.test(n)) || null;
-  const claimName = pickName(/完成声称|claim/i);
-  const diffName = pickName(/base.*head|diff|patch/i);
+function cjdDetectPackContradiction(packRoot) {
+  let names = [];
+  try {
+    names = readdirSync(packRoot, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name);
+  } catch {
+    names = [];
+  }
+  const claimName = names.find((n) => /完成声称|claim/i.test(n)) || null;
+  const diffName = names.find((n) => /base.*head|diff|patch/i.test(n)) || null;
   const claim = claimName ? readMaybe(join(packRoot, claimName)) : null;
   const diff = diffName ? readMaybe(join(packRoot, diffName)) : null;
   const 可判矛盾 = claim !== null && diff !== null;
   const diffCount = diff === null ? 0 : (diff.match(/diff --git/g) || []).length;
   const claimM = claim === null ? null : claim.match(/改了\s*(\d+)\s*个文件/);
-  if (claimM && diffCount > 0 && Number(claimM[1]) !== diffCount) contradiction = true;
+  const contradiction = Boolean(claimM && diffCount > 0 && Number(claimM[1]) !== diffCount);
+  return { claimName, diffName, 可判矛盾, diffCount, claimM, contradiction };
+}
 
-  // 退出码与作答对应（§7.1）；矛盾在场时按 G-02 取 2
-  const expect = contradiction ? 2 : allPass ? 0 : anyFail ? 1 : 3;
-  rows['③退出码对应'] = exit === expect;
-  if (!rows['③退出码对应']) why['③退出码对应'] = '作答推出 ' + expect + '（' + (contradiction ? 'G-02 矛盾→2' : allPass ? '全 pass→0' : anyFail ? '有 fail→1' : '有 unknown→3') + '），判定书写 ' + exit;
+function cjdExpectedExitInfo(contradiction, allPass, anyFail) {
+  if (contradiction) return { code: 2, reason: 'G-02 矛盾→2' };
+  if (allPass) return { code: 0, reason: '全 pass→0' };
+  if (anyFail) return { code: 1, reason: '有 fail→1' };
+  return { code: 3, reason: '有 unknown→3' };
+}
 
-  rows['④G-02 矛盾处置'] = 可判矛盾 && (!contradiction || (anyUnk && exit === 2));
-  if (!rows['④G-02 矛盾处置']) why['④G-02 矛盾处置'] = 可判矛盾
-    ? '材料自相矛盾（声称 ' + (claimM ? claimM[1] : '?') + ' 文件 vs diff ' + diffCount + ' 文件）却 ' + (anyUnk ? '退 ' + exit : '没有 unknown') + '——按 §八 与 INV-10 该项 unknown、总结论退 2'
-    : '包里找不到「完成声称」或「base..head」材料（按内容找：' + (claimName || '无') + ' / ' + (diffName || '无') + '），**无法判断**有没有矛盾——按 §八 记 3，不许当成「没有矛盾」判过';
+function cjdFormatG02Why(packInfo, anyUnk, exit) {
+  if (packInfo.可判矛盾) {
+    const claimedCount = packInfo.claimM ? packInfo.claimM[1] : '?';
+    const actionDesc = anyUnk ? '退 ' + exit : '没有 unknown';
+    return '材料自相矛盾（声称 ' + claimedCount + ' 文件 vs diff ' + packInfo.diffCount + ' 文件）却 ' + actionDesc + '——按 §八 与 INV-10 该项 unknown、总结论退 2';
+  }
+  const cLabel = packInfo.claimName || '无';
+  const dLabel = packInfo.diffName || '无';
+  return '包里找不到「完成声称」或「base..head」材料（按内容找：' + cLabel + ' / ' + dLabel + '），**无法判断**有没有矛盾——按 §八 记 3，不许当成「没有矛盾」判过';
+}
+
+// 判一个复核包 + 判定书：四行布尔
+function auditVerdict(packRoot, verdictText) {
+  const rows = {};
+  const why = {};
+  const v = cjdParseVerdictItems(verdictText);
+
+  rows['①五项三值'] = v.itemLines.length === 5 && v.fourth.length === 0 && v.noValue.length === 0;
+  if (!rows['①五项三值']) {
+    why['①五项三值'] = '五项行 ' + v.itemLines.length + '/5，第四值 ' + v.fourth.length + ' 条，无值 ' + v.noValue.length + ' 条';
+  }
+
+  rows['②unknown 举证'] = v.unkLines.length === 0 || v.unnamed.length === 0;
+  if (!rows['②unknown 举证']) why['②unknown 举证'] = v.unnamed.length + ' 条 unknown 没写缺哪份材料';
+
+  // 按内容找材料检测矛盾（G-02 现场：完成声称 vs diff 文件数）
+  const packInfo = cjdDetectPackContradiction(packRoot);
+  const { contradiction } = packInfo;
+  const exp = cjdExpectedExitInfo(contradiction, v.allPass, v.anyFail);
+
+  rows['③退出码对应'] = v.exit === exp.code;
+  if (!rows['③退出码对应']) why['③退出码对应'] = '作答推出 ' + exp.code + '（' + exp.reason + '），判定书写 ' + v.exit;
+
+  rows['④G-02 矛盾处置'] = packInfo.可判矛盾 && (!contradiction || (v.anyUnk && v.exit === 2));
+  if (!rows['④G-02 矛盾处置']) why['④G-02 矛盾处置'] = cjdFormatG02Why(packInfo, v.anyUnk, v.exit);
 
   const order = ['①五项三值', '②unknown 举证', '③退出码对应', '④G-02 矛盾处置'];
   const fails = order.filter((k) => rows[k] === false).map((k) => k + '：' + why[k]);
-  return { rows, why, fails, order, exit, contradiction };
+  return { rows, why, fails, order, exit: v.exit, contradiction };
 }
 
 // —— 夹具：两个包（干净 / 矛盾）× 判定书六种形态 ——
@@ -107,8 +127,7 @@ const cases = [
   { name: 'g02-3', contradiction: true, pack: packFiles(2, diff3), hits: ['③退出码对应', '④G-02 矛盾处置'],
     verdict: verdict(['V1 范围：unknown（完成声称与 diff 矛盾）', 'V2 可定位：pass', 'V3 无放水：pass', 'V4 无未覆盖：pass', 'V5 无越界：pass'], 3, '材料不足'),
     note: 'G-02 违例：矛盾包退 3——③（码不符）④（INV-10 不许 2 降 3）双红' },
-  // 材料照样齐、只是文件名不叫那两个默认名：旧实现读空 → 认成「没有矛盾」→ ④ 静默绿、③ 期望值错。
-  // 这一格是「文件名代内容」的现场（adr/013），必须能红。
+  // 材料照样齐、只是文件名不叫那两个默认名：按内容找，不按文件名猜（adr/013）
   { name: 'g02-renamed', contradiction: true,
     pack: { '03-完成声称.md': packClaim(2), 'base..head.diff': diff3 }, hits: [],
     verdict: verdict(['V1 范围：unknown（完成声称与 diff 的文件数矛盾：声称 2、diff 3）', 'V2 可定位：pass', 'V3 无放水：pass', 'V4 无未覆盖：pass', 'V5 无越界：pass'], 2, '材料自相矛盾，按 §八 与 INV-10 退 2'),

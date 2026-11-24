@@ -87,43 +87,73 @@ export const ARCHETYPE_CSS = [
   '.ch-entry::before { content: ""; position: absolute; left: -29px; top: 22px; width: 10px; height: 10px; border-radius: 999px; background: var(--ui-primary); border: 2px solid var(--ui-bg); }'
 ].join('\n');
 
-export function resolveProposalArchetype(proposalId) {
+const UI_ARCHETYPE_BY_PROPOSAL = {
+  'bento-craft': 'tactile-bento',
+  'industrial-dark': 'cockpit-split',
+  'obsidian-terminal': 'cockpit-split',
+  'graphite-ops': 'cockpit-split',
+  'neo-brutal': 'brutal-poster',
+  'enterprise-dense': 'ledger-workbench',
+  'fin-ledger': 'ledger-workbench',
+  'ehs-command': 'ledger-workbench',
+  'warm-paper': 'chronicle-cascade',
+  'editorial-serif': 'chronicle-cascade'
+};
+
+function uiArchLookupProposal(proposalId) {
   const id = String(proposalId || 'swiss-minimal');
-  if (id === 'bento-craft') return 'tactile-bento';
-  if (id === 'industrial-dark' || id === 'obsidian-terminal' || id === 'graphite-ops') return 'cockpit-split';
-  if (id === 'neo-brutal') return 'brutal-poster';
-  if (id === 'enterprise-dense' || id === 'fin-ledger' || id === 'ehs-command') return 'ledger-workbench';
-  if (id === 'warm-paper' || id === 'editorial-serif') return 'chronicle-cascade';
-  return 'editorial-asymmetric';
+  return Object.prototype.hasOwnProperty.call(UI_ARCHETYPE_BY_PROPOSAL, id)
+    ? UI_ARCHETYPE_BY_PROPOSAL[id]
+    : 'editorial-asymmetric';
+}
+
+export function resolveProposalArchetype(proposalId) {
+  return uiArchLookupProposal(proposalId);
 }
 
 export function renderProposalArchetypeBody(proposalId, rawModel) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const m = rawModel || {};
-  const hero = m.hero || { id: 'blk-hero', brand: '业务工作台', headline: '智能协作与全流程数据中枢', subline: '直接点击体验原生交互，按住 Alt+单击拾取任意元素源码', ctaLabel: '新建业务单据', ctaActionId: 'act-create-order', ctaWiring: 'mock' };
-  const kpi = m.kpi || { id: 'blk-kpi', item1Title: '今日待处理', item1Val: '18', item2Title: '本周已完成', item2Val: '142', item3Title: '合规达标率', item3Val: '99.2%' };
-  const form = m.form || { id: 'blk-form', title: '快速录入与审批发起', field1: '事项标题', field2: '负责人 / 部门', submitLabel: '提交并触发流转', submitActionId: 'act-submit-form', submitWiring: 'mock' };
-  const table = m.table || { id: 'blk-table', title: '实时业务流水列表', exportLabel: '导出筛选报表', exportActionId: 'act-export-report', exportWiring: 'mock' };
+  const uiArchOr = (v, fb) => (v ? v : fb);
+  const m = uiArchOr(rawModel, {});
+  const hero = uiArchOr(m.hero, { id: 'blk-hero', brand: '业务工作台', headline: '智能协作与全流程数据中枢', subline: '直接点击体验原生交互，按住 Alt+单击拾取任意元素源码', ctaLabel: '新建业务单据', ctaActionId: 'act-create-order', ctaWiring: 'mock' });
+  const kpi = uiArchOr(m.kpi, { id: 'blk-kpi', item1Title: '今日待处理', item1Val: '18', item2Title: '本周已完成', item2Val: '142', item3Title: '合规达标率', item3Val: '99.2%' });
+  const form = uiArchOr(m.form, { id: 'blk-form', title: '快速录入与审批发起', field1: '事项标题', field2: '负责人 / 部门', submitLabel: '提交并触发流转', submitActionId: 'act-submit-form', submitWiring: 'mock' });
+  const table = uiArchOr(m.table, { id: 'blk-table', title: '实时业务流水列表', exportLabel: '导出筛选报表', exportActionId: 'act-export-report', exportWiring: 'mock' });
   const extras = Array.isArray(m.extraBlocks) ? m.extraBlocks : [];
-  const srcFile = m.sourceFile || '.donegate/ui-prototype/index.html';
-  const pid = String(proposalId || 'swiss-minimal');
-  const arch = pid === 'bento-craft' ? 'tactile-bento'
-    : ((pid === 'industrial-dark' || pid === 'obsidian-terminal' || pid === 'graphite-ops') ? 'cockpit-split'
-      : (pid === 'neo-brutal' ? 'brutal-poster'
-        : ((pid === 'enterprise-dense' || pid === 'fin-ledger' || pid === 'ehs-command') ? 'ledger-workbench'
-          : ((pid === 'warm-paper' || pid === 'editorial-serif') ? 'chronicle-cascade' : 'editorial-asymmetric'))));
+  const srcFile = uiArchOr(m.sourceFile, '.donegate/ui-prototype/index.html');
+  const pid = String(uiArchOr(proposalId, 'swiss-minimal'));
+  const archMap = {
+    'bento-craft': 'tactile-bento',
+    'industrial-dark': 'cockpit-split',
+    'obsidian-terminal': 'cockpit-split',
+    'graphite-ops': 'cockpit-split',
+    'neo-brutal': 'brutal-poster',
+    'enterprise-dense': 'ledger-workbench',
+    'fin-ledger': 'ledger-workbench',
+    'ehs-command': 'ledger-workbench',
+    'warm-paper': 'chronicle-cascade',
+    'editorial-serif': 'chronicle-cascade'
+  };
+  const arch = Object.prototype.hasOwnProperty.call(archMap, pid) ? archMap[pid] : 'editorial-asymmetric';
 
-  const extraHtml = extras.length ? ('<div class="ui-extra-stack">' + extras.map((b, i) => {
-    const bp = b.props || {};
+  const uiArchRenderExtra = (b, i) => {
+    const bp = uiArchOr(b.props, {});
     const ln = 120 + i * 16;
     if (b.type === 'confirm_modal_trigger') {
-      return '<section data-dg-block="' + esc(b.id) + '" data-dg-source="' + srcFile + ':' + ln + ':1" class="ui-surface-card ck-panel bt-card ep-panel"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;"><div><strong>' + esc(bp.title || '关键变更确认') + '</strong><div style="font-size:12px;color:var(--ui-muted);">点击按钮打开二次确认弹窗</div></div><button type="button" class="ui-btn ui-btn-primary" data-dg-action="' + esc(bp.actionId || 'act-publish-sync') + '" data-dg-wiring="' + esc(b.wiring || 'mock') + '" onclick="window.__openConfirmModal && window.__openConfirmModal(\'' + esc(bp.actionId || 'act-publish-sync') + '\', \'' + esc(bp.btnLabel || '确认发布') + '\')" data-dg-source="' + srcFile + ':' + (ln + 3) + ':5">' + esc(bp.btnLabel || '发布并同步下游系统') + '</button></div></section>';
+      const actId = esc(uiArchOr(bp.actionId, 'act-publish-sync'));
+      const wiring = esc(uiArchOr(b.wiring, 'mock'));
+      const modalTitle = esc(uiArchOr(bp.btnLabel, '确认发布'));
+      const btnText = esc(uiArchOr(bp.btnLabel, '发布并同步下游系统'));
+      const secTitle = esc(uiArchOr(bp.title, '关键变更确认'));
+      return '<section data-dg-block="' + esc(b.id) + '" data-dg-source="' + srcFile + ':' + ln + ':1" class="ui-surface-card ck-panel bt-card ep-panel"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;"><div><strong>' + secTitle + '</strong><div style="font-size:12px;color:var(--ui-muted);">点击按钮打开二次确认弹窗</div></div><button type="button" class="ui-btn ui-btn-primary" data-dg-action="' + actId + '" data-dg-wiring="' + wiring + '" onclick="window.__openConfirmModal && window.__openConfirmModal(\'' + actId + '\', \'' + modalTitle + '\')" data-dg-source="' + srcFile + ':' + (ln + 3) + ':5">' + btnText + '</button></div></section>';
     }
-    return '<section data-dg-block="' + esc(b.id) + '" data-dg-source="' + srcFile + ':' + ln + ':1" class="ui-surface-card ck-panel bt-card ep-panel"><strong>' + esc(bp.title || bp.headline || b.type) + '</strong></section>';
-  }).join('') + '</div>') : '';
+    const heading = uiArchOr(uiArchOr(bp.title, bp.headline), b.type);
+    return '<section data-dg-block="' + esc(b.id) + '" data-dg-source="' + srcFile + ':' + ln + ':1" class="ui-surface-card ck-panel bt-card ep-panel"><strong>' + esc(heading) + '</strong></section>';
+  };
+  const extraHtml = extras.length ? ('<div class="ui-extra-stack">' + extras.map(uiArchRenderExtra).join('') + '</div>') : '';
 
-  if (arch === 'editorial-asymmetric') {
-    return '<div class="arch-root arch-editorial" data-ui-archetype="editorial-asymmetric">'
+  const uiArchDispatch = {
+    'editorial-asymmetric': () => '<div class="arch-root arch-editorial" data-ui-archetype="editorial-asymmetric">'
       + '<header class="ed-masthead" data-dg-block="' + esc(hero.id) + '" data-dg-source="' + srcFile + ':24:1">'
       + '<div><div class="ed-serial">EDITION 04 / SWISS EDITORIAL</div><strong style="font-size:16px;" data-dg-source="' + srcFile + ':26:5">' + esc(hero.brand) + '</strong></div>'
       + '<nav class="ed-nav-links" aria-label="章节导航"><span class="is-cur">01 概览</span><span>02 录入单据</span><span>03 归档索引</span></nav>'
@@ -133,11 +163,9 @@ export function renderProposalArchetypeBody(proposalId, rawModel) {
       + '<aside class="ui-surface-card ed-zone" data-dg-block="' + esc(kpi.id) + '" data-dg-source="' + srcFile + ':38:1"><div class="ed-idx">01 / MANIFESTO &amp; KEY FIGURES</div><h1 class="ed-h1" data-dg-source="' + srcFile + ':40:3">' + esc(hero.headline) + '</h1><p class="ed-lead" data-dg-source="' + srcFile + ':42:3">' + esc(hero.subline) + '</p>'
       + '<div class="ed-metrics"><div class="ed-metric-row"><span>' + esc(kpi.item1Title) + '</span><span class="ed-metric-num">' + esc(kpi.item1Val) + '</span></div><div class="ed-metric-row"><span>' + esc(kpi.item2Title) + '</span><span class="ed-metric-num">' + esc(kpi.item2Val) + '</span></div><div class="ed-metric-row"><span>' + esc(kpi.item3Title) + '</span><span class="ed-metric-num">' + esc(kpi.item3Val) + '</span></div></div></aside>'
       + '<div><section class="ui-surface-card ed-zone" data-dg-block="' + esc(form.id) + '" data-dg-source="' + srcFile + ':58:1"><div class="ed-idx">02 / DISPATCH ENTRY</div><h2 style="margin:0 0 14px;font-size:18px;font-weight:500;">' + esc(form.title) + '</h2><form onsubmit="event.preventDefault(); window.__runMockAction && window.__runMockAction(\'' + esc(form.submitActionId) + '\', \'' + esc(form.submitLabel) + '\');"><input class="ed-line-input" type="text" placeholder="' + esc(form.field1) + '" required data-dg-source="' + srcFile + ':62:5"><input class="ed-line-input" type="text" placeholder="' + esc(form.field2) + '" data-dg-source="' + srcFile + ':64:5"><button type="submit" class="ui-btn ui-btn-primary" data-dg-action="' + esc(form.submitActionId) + '" data-dg-wiring="' + esc(form.submitWiring) + '" data-dg-source="' + srcFile + ':66:5">' + esc(form.submitLabel) + '</button></form></section>'
-      + '<section class="ui-surface-card ed-zone" data-dg-block="' + esc(table.id) + '" data-dg-source="' + srcFile + ':76:1"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;"><div><div class="ed-idx">03 / CHRONOLOGICAL LEDGER</div><h2 style="margin:0;font-size:18px;font-weight:500;">' + esc(table.title) + '</h2></div><button type="button" class="ui-btn ui-btn-ghost" data-dg-action="' + esc(table.exportActionId) + '" data-dg-wiring="' + esc(table.exportWiring) + '" data-dg-source="' + srcFile + ':80:5">' + esc(table.exportLabel) + '</button></div><div class="ed-ledger-row"><span>#1024</span><span>核心网关限流策略升级</span><span class="ui-pill">进行中</span></div><div class="ed-ledger-row"><span>#1025</span><span>季度安全合规巡检复核</span><span class="ui-pill">已就绪</span></div></section>' + extraHtml + '</div></div></div>';
-  }
+      + '<section class="ui-surface-card ed-zone" data-dg-block="' + esc(table.id) + '" data-dg-source="' + srcFile + ':76:1"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;"><div><div class="ed-idx">03 / CHRONOLOGICAL LEDGER</div><h2 style="margin:0;font-size:18px;font-weight:500;">' + esc(table.title) + '</h2></div><button type="button" class="ui-btn ui-btn-ghost" data-dg-action="' + esc(table.exportActionId) + '" data-dg-wiring="' + esc(table.exportWiring) + '" data-dg-source="' + srcFile + ':80:5">' + esc(table.exportLabel) + '</button></div><div class="ed-ledger-row"><span>#1024</span><span>核心网关限流策略升级</span><span class="ui-pill">进行中</span></div><div class="ed-ledger-row"><span>#1025</span><span>季度安全合规巡检复核</span><span class="ui-pill">已就绪</span></div></section>' + extraHtml + '</div></div></div>',
 
-  if (arch === 'tactile-bento') {
-    return '<div class="arch-root arch-bento" data-ui-archetype="tactile-bento">'
+    'tactile-bento': () => '<div class="arch-root arch-bento" data-ui-archetype="tactile-bento">'
       + '<nav class="bt-pill-island" data-dg-block="' + esc(hero.id) + '" data-dg-source="' + srcFile + ':24:1"><strong style="font-size:15px;" data-dg-source="' + srcFile + ':26:5">' + esc(hero.brand) + '</strong><div class="bt-tabs"><span class="is-cur">便当盒总览</span><span>协作看板</span><span>数据报表</span></div><button type="button" class="ui-btn ui-btn-primary" style="border-radius:999px;" data-dg-action="' + esc(hero.ctaActionId) + '" data-dg-wiring="' + esc(hero.ctaWiring) + '" data-dg-source="' + srcFile + ':29:5">' + esc(hero.ctaLabel) + '</button></nav>'
       + '<main class="bt-grid">'
       + '<section class="ui-surface-card bt-card bt-span-7"><span class="ui-pill">Tactile Bento · 模块工作区</span><h1 class="bt-h1" data-dg-source="' + srcFile + ':36:3">' + esc(hero.headline) + '</h1><p style="margin:0;font-size:13.5px;color:var(--ui-muted);line-height:1.6;">' + esc(hero.subline) + '</p></section>'
@@ -146,11 +174,9 @@ export function renderProposalArchetypeBody(proposalId, rawModel) {
       + '<section class="ui-surface-card bt-card bt-span-4"><div style="font-size:12.5px;color:var(--ui-muted);">' + esc(kpi.item3Title) + '</div><div class="bt-big-num" style="font-size:34px;color:var(--ui-accent);">' + esc(kpi.item3Val) + '</div><span class="ui-pill">全链路受控</span></section>'
       + '<section class="ui-surface-card bt-card bt-span-4" data-dg-block="' + esc(form.id) + '" data-dg-source="' + srcFile + ':62:1"><strong style="font-size:14.5px;margin-bottom:8px;">' + esc(form.title) + '</strong><form style="display:flex;flex-direction:column;gap:8px;" onsubmit="event.preventDefault(); window.__runMockAction && window.__runMockAction(\'' + esc(form.submitActionId) + '\', \'' + esc(form.submitLabel) + '\');"><input class="ui-input" style="border-radius:999px;" type="text" placeholder="' + esc(form.field1) + '" required data-dg-source="' + srcFile + ':65:5"><input class="ui-input" style="border-radius:999px;" type="text" placeholder="' + esc(form.field2) + '" data-dg-source="' + srcFile + ':66:5"><button type="submit" class="ui-btn ui-btn-primary" style="border-radius:999px;" data-dg-action="' + esc(form.submitActionId) + '" data-dg-wiring="' + esc(form.submitWiring) + '" data-dg-source="' + srcFile + ':68:5">' + esc(form.submitLabel) + '</button></form></section>'
       + '<section class="ui-surface-card bt-card bt-span-12" data-dg-block="' + esc(table.id) + '" data-dg-source="' + srcFile + ':78:1"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><strong style="font-size:15px;">' + esc(table.title) + '</strong><button type="button" class="ui-btn ui-btn-ghost" style="border-radius:999px;" data-dg-action="' + esc(table.exportActionId) + '" data-dg-wiring="' + esc(table.exportWiring) + '" data-dg-source="' + srcFile + ':81:5">' + esc(table.exportLabel) + '</button></div><div class="bt-feed"><div class="bt-feed-item"><span>#1024 核心网关限流策略升级</span><span class="ui-pill">进行中</span></div><div class="bt-feed-item"><span>#1025 季度安全合规巡检复核</span><span class="ui-pill">已就绪</span></div><div class="bt-feed-item"><span>#1026 多端库存锁并发对账</span><span class="ui-pill">待排期</span></div></div></section>'
-      + '</main>' + extraHtml + '</div>';
-  }
+      + '</main>' + extraHtml + '</div>',
 
-  if (arch === 'cockpit-split') {
-    return '<div class="arch-root arch-cockpit" data-ui-archetype="cockpit-split">'
+    'cockpit-split': () => '<div class="arch-root arch-cockpit" data-ui-archetype="cockpit-split">'
       + '<aside class="ck-icon-rail" aria-label="控制台侧轨"><span class="ck-rail-dot is-cur">CMD</span><span class="ck-rail-dot">LOG</span><span class="ck-rail-dot">NET</span><span class="ck-rail-dot">CFG</span></aside>'
       + '<div class="ck-main"><header class="ck-telemetry-bar" data-dg-block="' + esc(hero.id) + '" data-dg-source="' + srcFile + ':24:1"><div><strong data-dg-source="' + srcFile + ':25:5">' + esc(hero.brand) + '</strong> <span style="color:var(--ui-muted);">// LIVE TELEMETRY · 12.4ms</span></div><button type="button" class="ui-btn ui-btn-primary" style="padding:4px 11px;font-size:11.5px;" data-dg-action="' + esc(hero.ctaActionId) + '" data-dg-wiring="' + esc(hero.ctaWiring) + '" data-dg-source="' + srcFile + ':28:5">' + esc(hero.ctaLabel) + '</button></header>'
       + '<div class="ck-workspace">'
@@ -166,11 +192,9 @@ export function renderProposalArchetypeBody(proposalId, rawModel) {
       + '<section class="ui-surface-card ck-panel" data-dg-block="' + esc(form.id) + '" data-dg-source="' + srcFile + ':76:1"><strong>' + esc(form.title) + '</strong><form style="display:flex;flex-direction:column;gap:8px;margin-top:8px;" onsubmit="event.preventDefault(); window.__runMockAction && window.__runMockAction(\'' + esc(form.submitActionId) + '\', \'' + esc(form.submitLabel) + '\');"><input class="ui-input" type="text" placeholder="&gt; ' + esc(form.field1) + '" required data-dg-source="' + srcFile + ':79:5"><input class="ui-input" type="text" placeholder="&gt; ' + esc(form.field2) + '" data-dg-source="' + srcFile + ':80:5"><button type="submit" class="ui-btn ui-btn-primary" data-dg-action="' + esc(form.submitActionId) + '" data-dg-wiring="' + esc(form.submitWiring) + '" data-dg-source="' + srcFile + ':82:5">' + esc(form.submitLabel) + '</button></form></section>'
       + '<section class="ui-surface-card ck-panel"><div style="font-family:var(--ui-font-mono,monospace);font-size:11px;color:var(--ui-muted);">[STREAM] ' + esc(hero.subline) + '</div></section>'
       + '<section class="ui-surface-card ck-panel"><div style="display:flex;justify-content:space-between;font-family:var(--ui-font-mono,monospace);font-size:11px;"><span>WATCHDOG: ARMED</span><span style="color:var(--ui-accent);">4/4 NODES HEALTHY</span></div></section>'
-      + '</div></div>' + extraHtml + '</div></div></div>';
-  }
+      + '</div></div>' + extraHtml + '</div></div></div>',
 
-  if (arch === 'brutal-poster') {
-    return '<div class="arch-root arch-brutal" data-ui-archetype="brutal-poster">'
+    'brutal-poster': () => '<div class="arch-root arch-brutal" data-ui-archetype="brutal-poster">'
       + '<header class="nb-topbar" data-dg-block="' + esc(hero.id) + '" data-dg-source="' + srcFile + ':24:1"><strong>[RAW STUDIO] ' + esc(hero.brand) + '</strong><button type="button" class="ui-btn ui-btn-primary" style="border:2px solid var(--ui-border);box-shadow:3px 3px 0 var(--ui-border);" data-dg-action="' + esc(hero.ctaActionId) + '" data-dg-wiring="' + esc(hero.ctaWiring) + '" data-dg-source="' + srcFile + ':27:5">' + esc(hero.ctaLabel) + '</button></header>'
       + '<main class="nb-collage">'
       + '<section class="ui-surface-card nb-box nb-s4"><div class="nb-h1">' + esc(hero.headline) + '</div><p style="margin:0;font-size:13.5px;">' + esc(hero.subline) + '</p></section>'
@@ -178,18 +202,20 @@ export function renderProposalArchetypeBody(proposalId, rawModel) {
       + '<section class="ui-surface-card nb-box nb-s3" data-dg-block="' + esc(form.id) + '" data-dg-source="' + srcFile + ':48:1"><strong>' + esc(form.title) + '</strong><form style="display:flex;flex-direction:column;gap:8px;margin-top:10px;" onsubmit="event.preventDefault(); window.__runMockAction && window.__runMockAction(\'' + esc(form.submitActionId) + '\', \'' + esc(form.submitLabel) + '\');"><input class="ui-input" type="text" placeholder="' + esc(form.field1) + '" required><input class="ui-input" type="text" placeholder="' + esc(form.field2) + '"><button type="submit" class="ui-btn ui-btn-primary" data-dg-action="' + esc(form.submitActionId) + '" data-dg-wiring="' + esc(form.submitWiring) + '">' + esc(form.submitLabel) + '</button></form></section>'
       + '<section class="ui-surface-card nb-box nb-s3" data-dg-block="' + esc(table.id) + '" data-dg-source="' + srcFile + ':62:1"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>' + esc(table.title) + '</strong><button type="button" class="ui-btn ui-btn-ghost" data-dg-action="' + esc(table.exportActionId) + '" data-dg-wiring="' + esc(table.exportWiring) + '">' + esc(table.exportLabel) + '</button></div><div style="margin-top:10px;font-weight:700;">#1024 核心网关限流策略升级 [ACTIVE]</div><div style="margin-top:6px;">#1025 季度安全合规巡检复核 [READY]</div></section>'
       + '<section class="ui-surface-card nb-box nb-s4" style="grid-column:span 6;display:flex;justify-content:space-between;"><span>累计交付：' + esc(kpi.item2Val) + '</span><span>BOLD NEO-BRUTALIST GRID</span></section>'
-      + '</main>' + extraHtml + '</div>';
-  }
+      + '</main>' + extraHtml + '</div>',
 
-  if (arch === 'ledger-workbench') {
-    return '<div class="arch-root arch-ledger" data-ui-archetype="ledger-workbench">'
+    'ledger-workbench': () => '<div class="arch-root arch-ledger" data-ui-archetype="ledger-workbench">'
       + '<header class="ep-govbar" data-dg-block="' + esc(hero.id) + '" data-dg-source="' + srcFile + ':24:1"><span>' + esc(hero.brand) + ' · 合规内控与台账管理中心</span><button type="button" class="ui-btn ui-btn-ghost" style="padding:4px 12px;font-size:12px;" data-dg-action="' + esc(hero.ctaActionId) + '" data-dg-wiring="' + esc(hero.ctaWiring) + '" data-dg-source="' + srcFile + ':26:5">' + esc(hero.ctaLabel) + '</button></header>'
       + '<div class="ep-subbar"><span>首页 / 台账复核 / ' + esc(hero.headline) + '</span><span>数据口径：实时核对</span></div>'
       + '<div class="ep-body"><aside class="ep-sidebar"><div class="ep-tree-item is-cur">全部业务台账</div><div class="ep-tree-item">待复核单据</div><div class="ep-tree-item">已归档记录</div><div class="ep-tree-item">审计导出历史</div></aside>'
       + '<main class="ep-main"><div class="ep-kpis" data-dg-block="' + esc(kpi.id) + '" data-dg-source="' + srcFile + ':38:1"><div class="ui-surface-card ep-panel"><div>' + esc(kpi.item1Title) + '</div><strong style="font-size:22px;color:var(--ui-primary);">' + esc(kpi.item1Val) + '</strong></div><div class="ui-surface-card ep-panel"><div>' + esc(kpi.item2Title) + '</div><strong style="font-size:22px;">' + esc(kpi.item2Val) + '</strong></div><div class="ui-surface-card ep-panel"><div>' + esc(kpi.item3Title) + '</div><strong style="font-size:22px;color:var(--ui-accent);">' + esc(kpi.item3Val) + '</strong></div><div class="ui-surface-card ep-panel"><div>复核退回率</div><strong style="font-size:22px;">0.4%</strong></div></div>'
       + '<section class="ui-surface-card ep-panel" data-dg-block="' + esc(form.id) + '" data-dg-source="' + srcFile + ':52:1"><form style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;" onsubmit="event.preventDefault(); window.__runMockAction && window.__runMockAction(\'' + esc(form.submitActionId) + '\', \'' + esc(form.submitLabel) + '\');"><strong style="margin-right:8px;">' + esc(form.title) + '：</strong><input class="ui-input" style="flex:1 1 180px;" type="text" placeholder="' + esc(form.field1) + '" required><input class="ui-input" style="flex:1 1 160px;" type="text" placeholder="' + esc(form.field2) + '"><button type="submit" class="ui-btn ui-btn-primary" data-dg-action="' + esc(form.submitActionId) + '" data-dg-wiring="' + esc(form.submitWiring) + '">' + esc(form.submitLabel) + '</button></form></section>'
       + '<section class="ui-surface-card ep-panel" data-dg-block="' + esc(table.id) + '" data-dg-source="' + srcFile + ':66:1"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>' + esc(table.title) + '</strong><button type="button" class="ui-btn ui-btn-ghost" data-dg-action="' + esc(table.exportActionId) + '" data-dg-wiring="' + esc(table.exportWiring) + '">' + esc(table.exportLabel) + '</button></div><table class="ck-table"><thead><tr><th>单据编号</th><th>业务事项</th><th>责任部门</th><th>复核状态</th></tr></thead><tbody><tr><td>#1024</td><td>核心网关限流策略升级</td><td>基础架构组</td><td><span class="ui-pill">进行中</span></td></tr><tr><td>#1025</td><td>季度安全合规巡检复核</td><td>安全内控办</td><td><span class="ui-pill">已就绪</span></td></tr></tbody></table></section>'
-      + '<section class="ui-surface-card ep-panel" style="font-size:12px;color:var(--ui-muted);">' + esc(hero.subline) + '</section>' + extraHtml + '</main></div></div>';
+      + '<section class="ui-surface-card ep-panel" style="font-size:12px;color:var(--ui-muted);">' + esc(hero.subline) + '</section>' + extraHtml + '</main></div></div>'
+  };
+
+  if (Object.prototype.hasOwnProperty.call(uiArchDispatch, arch)) {
+    return uiArchDispatch[arch]();
   }
 
   return '<div class="arch-root arch-chronicle" data-ui-archetype="chronicle-cascade">'

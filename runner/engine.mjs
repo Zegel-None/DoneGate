@@ -52,6 +52,15 @@ const DEFAULT_CLASSIFICATION_ROWS = [
   { order: 4, subclass: 'A3', label: '未做实验', counts: false, when: { run: 'pass', pendingRecheck: false, teeth: null } }
 ];
 
+function engMatchClassificationRow(row, obsState) {
+  const w = row.when || {};
+  if (w.run !== obsState.run) return false;
+  if (w.pendingRecheck !== Boolean(obsState.pendingRecheck)) return false;
+  if (w.teeth === undefined) return true;
+  if (w.teeth === null) return obsState.teeth === null || obsState.teeth === undefined;
+  return Array.isArray(w.teeth) && w.teeth.includes(obsState.teeth);
+}
+
 export function classifyBySpecTable(obsState, tablePath) {
   const defaultPath = join(ENGINE_REPO, 'tools', 'classification.json');
   const targetPath = tablePath !== undefined ? tablePath : defaultPath;
@@ -65,102 +74,108 @@ export function classifyBySpecTable(obsState, tablePath) {
   }
   if (obsState.teeth === 'ignored') return { subclass: null, label: '已忽略', counts: false };
   if (obsState.run !== 'pass') return { subclass: null, label: obsState.run === 'fail' ? '未通过' : '无法判断', counts: false };
-  for (const row of rows) {
-    const w = row.when || {};
-    if (w.run !== obsState.run) continue;
-    if (w.pendingRecheck !== !!obsState.pendingRecheck) continue;
-    if (w.teeth === undefined) return { subclass: row.subclass, label: row.label, counts: row.counts };
-    if (w.teeth === null && (obsState.teeth === null || obsState.teeth === undefined)) {
-      return { subclass: row.subclass, label: row.label, counts: row.counts };
-    }
-    if (Array.isArray(w.teeth) && w.teeth.includes(obsState.teeth)) {
-      return { subclass: row.subclass, label: row.label, counts: row.counts };
-    }
-  }
+  const hit = rows.find((row) => engMatchClassificationRow(row, obsState));
+  if (hit) return { subclass: hit.subclass, label: hit.label, counts: hit.counts };
   return { error: '出现规格 §3.4.1 未定义的状态组合：' + JSON.stringify(obsState) };
 }
 
-export function loadProjectGraph(projectRoot) {
+function engReadContractsDir(cDir) {
   const contracts = [];
-  const cDir = join(projectRoot, 'contracts');
-  if (existsSync(cDir)) {
-    for (const e of readdirSync(cDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const p = join(cDir, e.name, 'contract.json');
-      if (!existsSync(p)) continue;
-      const r = readJsonStrict(p);
-      if (!r.ok) return { error: (r.error === 'parse' ? 'parse' : 'unreadable'), path: p };
-      contracts.push(r.value);
-    }
+  if (!existsSync(cDir)) return { contracts };
+  for (const e of readdirSync(cDir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const p = join(cDir, e.name, 'contract.json');
+    if (!existsSync(p)) continue;
+    const r = readJsonStrict(p);
+    if (!r.ok) return { error: r.error === 'parse' ? 'parse' : 'unreadable', path: p };
+    contracts.push(r.value);
   }
-  const functions = [];
-  const fDir = join(projectRoot, 'functions');
-  if (existsSync(fDir)) {
-    for (const e of readdirSync(fDir, { withFileTypes: true })) {
-      if (!e.isFile() || !e.name.endsWith('.json')) continue;
-      const p = join(fDir, e.name);
-      const r = readJsonStrict(p);
-      if (!r.ok) return { error: (r.error === 'parse' ? 'parse' : 'unreadable'), path: p };
-      functions.push(r.value);
-    }
-  }
-  return { contracts, functions };
+  return { contracts };
 }
 
-export function propagateImpact({ contracts = [], functions = [], changedFiles = [], impactedFiles = [], existingStates = {}, materialRecords = null }) {
-  const changed = changedFiles.map(normRelPath).filter(Boolean);
-  const impacted = impactedFiles.map(normRelPath).filter(Boolean);
-  const activeContracts = contracts.filter((c) => c && c.id && !c.retired);
-  const byId = new Map(activeContracts.map((c) => [c.id, c]));
+function engReadFunctionsDir(fDir) {
+  const functions = [];
+  if (!existsSync(fDir)) return { functions };
+  for (const e of readdirSync(fDir, { withFileTypes: true })) {
+    if (!e.isFile() || !e.name.endsWith('.json')) continue;
+    const p = join(fDir, e.name);
+    const r = readJsonStrict(p);
+    if (!r.ok) return { error: r.error === 'parse' ? 'parse' : 'unreadable', path: p };
+    functions.push(r.value);
+  }
+  return { functions };
+}
 
+export function loadProjectGraph(projectRoot) {
+  const cRes = engReadContractsDir(join(projectRoot, 'contracts'));
+  if (cRes.error) return cRes;
+  const fRes = engReadFunctionsDir(join(projectRoot, 'functions'));
+  if (fRes.error) return fRes;
+  return { contracts: cRes.contracts, functions: fRes.functions };
+}
+
+function engBuildReverseDeps(activeContracts) {
+  const byId = new Map(activeContracts.map((c) => [c.id, c]));
   const revDeps = new Map();
   for (const c of activeContracts) {
-    for (const dep of (Array.isArray(c.dependsOn) ? c.dependsOn : [])) {
+    const deps = Array.isArray(c.dependsOn) ? c.dependsOn : [];
+    for (const dep of deps) {
       if (!byId.has(dep)) continue;
       if (!revDeps.has(dep)) revDeps.set(dep, []);
       revDeps.get(dep).push(c.id);
     }
   }
+  return revDeps;
+}
 
-  const effects = new Map();
+function engMakeExpiredEffect(contractId, reason, existingStates) {
+  const prev = existingStates[contractId] || {};
+  return {
+    contractId,
+    effect: 'expired',
+    reason,
+    pendingRecheck: false,
+    status: '过期',
+    preservedStatus: prev.status || null,
+    countsInPassCount: false,
+    historicalEvidencePreserved: true
+  };
+}
 
+function engMakePendingEffect(contractId, reason, existingStates) {
+  const prev = existingStates[contractId] || { status: '通过', run: 'pass', teeth: 'killed' };
+  const cls = classifyBySpecTable({ run: prev.run || 'pass', pendingRecheck: true, teeth: prev.teeth ?? 'killed' });
+  return {
+    contractId,
+    effect: 'pending-recheck',
+    reason,
+    pendingRecheck: true,
+    status: prev.status || '通过',
+    subclass: cls.subclass || 'A4',
+    countsInPassCount: Boolean(cls.counts),
+    historicalEvidencePreserved: true
+  };
+}
+
+function engMarkOwnAndDirectExpired(activeContracts, changed, revDeps, existingStates, effects) {
   const ownIds = [];
   for (const c of activeContracts) {
-    if (changed.some((f) => scopeMatchesFile(c.scope, f))) {
-      ownIds.push(c.id);
-      const prev = existingStates[c.id] || {};
-      effects.set(c.id, {
-        contractId: c.id,
-        effect: 'expired',
-        reason: 'own-code',
-        pendingRecheck: false,
-        status: '过期',
-        preservedStatus: prev.status || null,
-        countsInPassCount: false,
-        historicalEvidencePreserved: true
-      });
-    }
+    if (!changed.some((f) => scopeMatchesFile(c.scope, f))) continue;
+    ownIds.push(c.id);
+    effects.set(c.id, engMakeExpiredEffect(c.id, 'own-code', existingStates));
   }
-
   const directDependIds = [];
   for (const id of ownIds) {
     for (const childId of (revDeps.get(id) || [])) {
       if (effects.has(childId)) continue;
       directDependIds.push(childId);
-      const prev = existingStates[childId] || {};
-      effects.set(childId, {
-        contractId: childId,
-        effect: 'expired',
-        reason: 'direct-depend',
-        pendingRecheck: false,
-        status: '过期',
-        preservedStatus: prev.status || null,
-        countsInPassCount: false,
-        historicalEvidencePreserved: true
-      });
+      effects.set(childId, engMakeExpiredEffect(childId, 'direct-depend', existingStates));
     }
   }
+  return { ownIds, directDependIds };
+}
 
+function engMarkTransitivePending(ownIds, directDependIds, revDeps, existingStates, effects) {
   const queue = [...directDependIds];
   const visited = new Set([...ownIds, ...directDependIds]);
   while (queue.length > 0) {
@@ -169,49 +184,48 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
       if (visited.has(nextId)) continue;
       visited.add(nextId);
       queue.push(nextId);
-      if (effects.has(nextId)) continue;
-      const prev = existingStates[nextId] || { status: '通过', run: 'pass', teeth: 'killed' };
-      const cls = classifyBySpecTable({ run: prev.run || 'pass', pendingRecheck: true, teeth: prev.teeth ?? 'killed' });
-      effects.set(nextId, {
-        contractId: nextId,
-        effect: 'pending-recheck',
-        reason: 'transitive-depend',
-        pendingRecheck: true,
-        status: prev.status || '通过',
-        subclass: cls.subclass || 'A4',
-        countsInPassCount: Boolean(cls.counts),
-        historicalEvidencePreserved: true
-      });
+      if (!effects.has(nextId)) {
+        effects.set(nextId, engMakePendingEffect(nextId, 'transitive-depend', existingStates));
+      }
     }
   }
+}
 
+function engMarkCodegraphPending(activeContracts, impacted, existingStates, effects) {
   for (const c of activeContracts) {
     if (effects.has(c.id)) continue;
     if (impacted.some((f) => scopeMatchesFile(c.scope, f))) {
-      const prev = existingStates[c.id] || { status: '通过', run: 'pass', teeth: 'killed' };
-      const cls = classifyBySpecTable({ run: prev.run || 'pass', pendingRecheck: true, teeth: prev.teeth ?? 'killed' });
-      effects.set(c.id, {
-        contractId: c.id,
-        effect: 'pending-recheck',
-        reason: 'codegraph-impact',
-        pendingRecheck: true,
-        status: prev.status || '通过',
-        subclass: cls.subclass || 'A4',
-        countsInPassCount: Boolean(cls.counts),
-        historicalEvidencePreserved: true
-      });
+      effects.set(c.id, engMakePendingEffect(c.id, 'codegraph-impact', existingStates));
     }
   }
+}
+
+function engCollectAffectedScenarios(functions, affectedSet) {
+  const out = [];
+  for (const fn of functions) {
+    if (!fn || !Array.isArray(fn.contracts)) continue;
+    const matched = fn.contracts.filter((cid) => affectedSet.has(cid));
+    if (matched.length > 0) out.push({ id: fn.id, title: fn.title || fn.id, contracts: matched });
+  }
+  return out;
+}
+
+export function propagateImpact({ contracts = [], functions = [], changedFiles = [], impactedFiles = [], existingStates = {}, materialRecords = null }) {
+  const changed = changedFiles.map(normRelPath).filter(Boolean);
+  const impacted = impactedFiles.map(normRelPath).filter(Boolean);
+  const activeContracts = contracts.filter((c) => c && c.id && !c.retired);
+  const revDeps = engBuildReverseDeps(activeContracts);
+  const effects = new Map();
+
+  const { ownIds, directDependIds } = engMarkOwnAndDirectExpired(activeContracts, changed, revDeps, existingStates, effects);
+  engMarkTransitivePending(ownIds, directDependIds, revDeps, existingStates, effects);
+  engMarkCodegraphPending(activeContracts, impacted, existingStates, effects);
 
   const affectedContracts = [...effects.values()];
   const affectedSet = new Set(affectedContracts.map((x) => x.contractId));
   const pendingRecheckIds = affectedContracts.filter((x) => x.pendingRecheck).map((x) => x.contractId);
   const expiredIds = affectedContracts.filter((x) => x.effect === 'expired').map((x) => x.contractId);
-
-  const affectedScenarios = functions
-    .filter((fn) => fn && Array.isArray(fn.contracts) && fn.contracts.some((cid) => affectedSet.has(cid)))
-    .map((fn) => ({ id: fn.id, title: fn.title || fn.id, contracts: fn.contracts.filter((cid) => affectedSet.has(cid)) }));
-
+  const affectedScenarios = engCollectAffectedScenarios(functions, affectedSet);
   const smokeRequired = affectedContracts.length >= 2;
   const materialFingerprint = materialRecords ? materialFingerprintOf(materialRecords) : null;
 
@@ -230,7 +244,9 @@ export function propagateImpact({ contracts = [], functions = [], changedFiles =
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const opts = {};
-  for (let i = 0; i < argv.length; i++) if (argv[i].startsWith('--') && argv[i + 1] && !argv[i + 1].startsWith('--')) opts[argv[i]] = argv[++i];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith('--') && argv[i + 1] && !argv[i + 1].startsWith('--')) opts[argv[i]] = argv[++i];
+  }
   const rootArg = opts['--root'];
   if (!rootArg) {
     console.error('用法：node runner/engine.mjs --root <项目根> [--changed a.mjs,b.mjs] [--observation observation.json] [--json]');
@@ -238,8 +254,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   const projectRoot = resolve(rootArg);
   let dirOk = false;
-  try { dirOk = statSync(projectRoot).isDirectory(); } catch { dirOk = false; }
-  if (!dirOk) { console.error('RESULT: 无法判断 项目根目录不存在：' + projectRoot); process.exit(3); }
+  try { dirOk = statSync(projectRoot).isDirectory(); } catch (err) { void err; dirOk = false; }
+  if (!dirOk) {
+    console.error('RESULT: 无法判断 项目根目录不存在：' + projectRoot);
+    process.exit(3);
+  }
 
   const loaded = loadProjectGraph(projectRoot);
   if (loaded.error) {

@@ -1,11 +1,13 @@
 // 工作台活体数据注水层：将全仓扫描的模块/入口/契约 scope[] 与适配器注册表映射为「项目看板 + 工作流」交互模型
 import { existsSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
+import { WB_PRESET_TEMPLATE_TRAITS } from './wb-catalog.mjs';
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const SMALL_PROJECT_MODULE_LIMIT = 18;
 
 const UPSTREAM_GITHUB_MAP = {
   stryker: ['stryker-mutator/stryker-js', 'v8.7.1', 'v8.8.0'], gitleaks: ['gitleaks/gitleaks', 'v8.18.4', 'v8.21.2'],
@@ -49,6 +51,29 @@ const ADAPTER_HUMAN_META = {
   actionlint: { title: '流水线配置语法检查', inName: '自动化流水线配置', outSig: '配置语法是否合规', outObs: '配置报错行号清单', slots: ['自动化部署脚本零语法错误', '按错误类别汇总修复提示'] }
 };
 
+const HYD_WB_SUBUNIT_RULES = [
+  { match: (p) => !p.includes('/'), key: 'root', title: '根级入口与工程配置', scope: './', tier: 0 },
+  { match: (p) => /^runner\/[^/]+$/.test(p), key: 'runner', title: 'CLI 总控与运行入口', scope: 'runner/', tier: 1 },
+  { match: (p) => p.startsWith('runner/core/') && /\/(?:cmd-|commands-|progress\.|dashboard\.)/.test(p), key: 'core-cmds', title: '阶段门禁与进度命令', scope: 'runner/core/', tier: 2 },
+  { match: (p) => p.startsWith('runner/core/') && /\/(?:ast-stub|barrel-stub|context-router|hermetic-capsule|dom-wiring|graph-edges|node-micro-gate)/.test(p), key: 'core-slice', title: '契约切片与图谱路由', scope: 'runner/core/', tier: 3 },
+  { match: (p) => p.startsWith('runner/core/'), key: 'core-verdict', title: '12令判定与证据链核', scope: 'runner/core/', tier: 4 },
+  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:scan-|assemble-atlas|hydrate-workbench|humanize|contract\.|index\.)/.test(p), key: 'atlas-scanner', title: '全栈测绘与工作台水合', scope: 'runner/atlas/', tier: 3 },
+  { match: (p) => p.startsWith('runner/atlas/') && /\/(?:serve-atlas|ui-|wb-catalog|wb-jit-|wb-subagent|wb-uiboard|wb-dsh-)/.test(p), key: 'atlas-shell', title: '实时服务与宿主壳层', scope: 'runner/atlas/', tier: 2 },
+  { match: (p) => p.startsWith('runner/atlas/'), key: 'atlas-canvas', title: '无限画布与连线标尺渲染', scope: 'runner/atlas/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/') && /\/(?:shared-pool-|workflow-deps|dg-deps-|workflow-jit)/.test(p), key: 'dsh-deps', title: '共享依赖池与节点派生', scope: 'runner/dsh/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/') && /\/ui-/.test(p), key: 'dsh-uiboard', title: 'UI 看板与美学原型引擎', scope: 'runner/dsh/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/'), key: 'dsh-host', title: '宿主桥接与过夜挂机编排', scope: 'runner/dsh/', tier: 2 },
+  { match: (p) => p.startsWith('skill/adapters/'), key: 'skill-adapters', title: '外部工具适配器套件', scope: 'skill/adapters/', tier: 5 },
+  { match: (p) => p.startsWith('skill/') && /\/(?:check-|cognitive-complexity|commit-hygiene|schema-lite)/.test(p), key: 'skill-gates', title: '四维硬门禁与合规套件', scope: 'skill/', tier: 5 },
+  { match: (p) => p.startsWith('skill/'), key: 'skill-kit', title: '公共原语与构建脚手架', scope: 'skill/', tier: 5 },
+  { match: (p) => p.startsWith('tools/'), key: 'tools', title: '规格一致性与腐化核验', scope: 'tools/', tier: 6 }
+];
+
+const LANE_RANK = { ui: 0, api: 1, tool: 2 };
+const LANE_ROLE_LABEL = { ui: '界面', api: '接口', tool: '工具' };
+const SEC_ADAPTER_TOOLS = new Set(['gitleaks', 'osv-scanner', 'semgrep', 'syft', 'trivy', 'vuln-merge']);
+const E2E_ADAPTER_TOOLS = new Set(['playwright', 'maestro', 'vitest']);
+
 function defaultSavedState() {
   return {
     schemaVersion: '1.0', hostLayoutVer: 2, customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
@@ -66,7 +91,12 @@ export function readSavedWorkbenchState(projectRoot) {
   if (r.value.hostLayoutVer !== 2 && merged.hostNodeLayouts && typeof merged.hostNodeLayouts === 'object') {
     const cleaned = {};
     for (const [k, v] of Object.entries(merged.hostNodeLayouts)) {
-      if (v && typeof v === 'object') { const { x: _x, y: _y, ...rest } = v; void _x; void _y; cleaned[k] = rest; }
+      if (v && typeof v === 'object') {
+        const { x: _x, y: _y, ...rest } = v;
+        void _x;
+        void _y;
+        cleaned[k] = rest;
+      }
     }
     merged.hostNodeLayouts = cleaned;
     merged.hostLayoutVer = 2;
@@ -75,14 +105,11 @@ export function readSavedWorkbenchState(projectRoot) {
 }
 
 function laneOrderRank(lane) {
-  return lane === 'ui' ? 0 : (lane === 'api' ? 1 : (lane === 'tool' ? 2 : 3));
+  return LANE_RANK[lane] ?? 3;
 }
 
 function mapModRoleLabel(mod) {
-  if (mod.lane === 'ui') return '界面';
-  if (mod.lane === 'api') return '接口';
-  if (mod.lane === 'tool') return '工具';
-  return '底座';
+  return LANE_ROLE_LABEL[mod.lane] || '底座';
 }
 
 function mapModState(mod) {
@@ -91,154 +118,325 @@ function mapModState(mod) {
   return 'ok';
 }
 
-function buildAcyclicDomainTopology(rawDomains, modules, edges) {
-  const modById = new Map(modules.map((m) => [m.id, m]));
-  const weightMap = new Map(), countMap = new Map(), reverseNotes = new Map();
+function hydWbPickPrimaryLane(lanes) {
+  for (const lane of ['ui', 'api', 'tool']) {
+    if (lanes.has(lane)) return lane;
+  }
+  return 'core';
+}
+
+function hydWbBuildSingleModuleUnits(modules) {
+  const titleCounts = new Map();
+  const rawTitles = modules.map((m) => m.entrypoints?.[0]?.humanTitle || m.humanTitle || basename(m.path));
+  for (const t of rawTitles) titleCounts.set(t, (titleCounts.get(t) || 0) + 1);
+
+  return modules.map((m, i) => {
+    const baseTitle = rawTitles[i];
+    const humanTitle = (titleCounts.get(baseTitle) || 0) > 1 ? `${baseTitle} (${basename(m.path)})` : baseTitle;
+    const isRoot = m.domainKey === 'root';
+    const dirScope = isRoot ? './' : `${m.domainKey}/`;
+    return {
+      id: m.id,
+      nodeId: `host-mod-${m.path.replace(/[^A-Za-z0-9_-]/g, '-')}`,
+      key: m.path,
+      isRoot,
+      archTier: isRoot ? 0 : laneOrderRank(m.lane) + 1,
+      primaryLane: m.lane || 'core',
+      humanTitle,
+      sublinePath: m.path,
+      baseScopes: [m.path, dirScope],
+      mods: [m],
+      wildCount: m.isWild ? 1 : 0,
+      activeBranches: m.touchedByBranches || []
+    };
+  });
+}
+
+function hydWbInferGenericSubunit(mod, domTitleByKey) {
+  const matched = HYD_WB_SUBUNIT_RULES.find((r) => r.match(mod.path));
+  if (matched) return matched;
+  const parts = mod.path.split('/').filter(Boolean);
+  let subKey = parts[0] || 'root';
+  if (['apps', 'packages', 'services', 'modules'].includes(parts[0]) && parts.length >= 4) {
+    subKey = `${parts[0]}/${parts[1]}/${parts[2]}`;
+  } else if (parts.length >= 3) {
+    subKey = `${parts[0]}/${parts[1]}`;
+  }
+  return {
+    key: subKey,
+    title: domTitleByKey.get(subKey) || domTitleByKey.get(mod.domainKey) || subKey,
+    scope: `${subKey}/`,
+    tier: laneOrderRank(mod.lane) + 1
+  };
+}
+
+function hydWbBuildLargeProjectUnits(modules, rawDomains) {
+  const domTitleByKey = new Map((rawDomains || []).map((d) => [d.key, d.humanTitle]));
+  const bucketMap = new Map();
+  for (const m of modules) {
+    const spec = hydWbInferGenericSubunit(m, domTitleByKey);
+    if (!bucketMap.has(spec.key)) {
+      bucketMap.set(spec.key, {
+        id: `unit:${spec.key}`,
+        nodeId: `host-dom-${spec.key.replace(/[^A-Za-z0-9_-]/g, '-')}`,
+        key: spec.key,
+        isRoot: spec.key === 'root',
+        archTier: spec.tier,
+        humanTitle: spec.title,
+        sublinePath: spec.scope,
+        baseScopes: [spec.scope],
+        mods: [],
+        lanes: new Set(),
+        branches: new Set(),
+        wildCount: 0
+      });
+    }
+    const u = bucketMap.get(spec.key);
+    u.mods.push(m);
+    u.lanes.add(m.lane || 'core');
+    if (m.isWild) u.wildCount++;
+    for (const b of (m.touchedByBranches || [])) u.branches.add(b);
+  }
+  return [...bucketMap.values()].map((u) => ({
+    ...u,
+    primaryLane: hydWbPickPrimaryLane(u.lanes),
+    activeBranches: [...u.branches]
+  }));
+}
+
+function hydWbResolveUnitsFromAtlas(baseAtlas) {
+  const modules = baseAtlas.modules || [];
+  if (modules.length > 0 && modules.length <= SMALL_PROJECT_MODULE_LIMIT) {
+    return hydWbBuildSingleModuleUnits(modules);
+  }
+  if (modules.length > SMALL_PROJECT_MODULE_LIMIT) {
+    return hydWbBuildLargeProjectUnits(modules, baseAtlas.domains || []);
+  }
+  return (baseAtlas.domains || []).map((d) => ({
+    id: d.id,
+    nodeId: `host-dom-${d.key.replace(/[^A-Za-z0-9_-]/g, '-')}`,
+    key: d.key,
+    isRoot: d.key === 'root',
+    archTier: d.key === 'root' ? 0 : laneOrderRank(d.primaryLane) + 1,
+    primaryLane: d.primaryLane || 'core',
+    humanTitle: d.humanTitle || d.key,
+    sublinePath: d.key === 'root' ? './' : `${d.key}/`,
+    baseScopes: [d.key === 'root' ? './' : `${d.key}/`],
+    mods: [],
+    wildCount: d.wildCount || 0,
+    activeBranches: d.activeBranches || []
+  }));
+}
+
+function hydWbComputeEdgeWeight(srcMod, isRootSrc, edgeKind) {
+  if (isRootSrc) return 8;
+  const isAuxCheck = /(?:^|\/)(?:tests?|__tests__|e2e|check-|self-test|fixtures?|progress-note)[^/]*\.|\.(?:test|spec)\./i.test(srcMod.path);
+  if (isAuxCheck) return 1;
+  return edgeKind === 'script-ref' ? 2 : 4;
+}
+
+function hydWbAccumulateUnitEdgeWeights(units, edges) {
+  const unitByModId = new Map();
+  const modById = new Map();
+  for (const u of units) {
+    for (const m of u.mods) {
+      unitByModId.set(m.id, u);
+      modById.set(m.id, m);
+    }
+  }
+  const weightMap = new Map();
+  const countMap = new Map();
+  const reverseNotes = new Map();
   for (const e of edges) {
-    const srcMod = modById.get(e.from), dstMod = modById.get(e.to);
-    if (!srcMod || !dstMod || srcMod.domainId === dstMod.domainId) continue;
-    if (dstMod.domainKey === 'root') { reverseNotes.set(srcMod.domainId, (reverseNotes.get(srcMod.domainId) || 0) + 1); continue; }
-    const isAuxCheck = /(?:^|\/)(?:tests?|__tests__|e2e|check-|self-test|fixtures?|progress-note)[^/]*\.|\.(?:test|spec)\./i.test(srcMod.path);
-    const w = srcMod.domainKey === 'root' ? 8 : (isAuxCheck ? 1 : (e.kind === 'script-ref' ? 2 : 4));
-    const pairKey = `${srcMod.domainId}->${dstMod.domainId}`;
-    weightMap.set(pairKey, (weightMap.get(pairKey) || 0) + w);
+    const srcU = unitByModId.get(e.from);
+    const dstU = unitByModId.get(e.to);
+    const srcMod = modById.get(e.from);
+    if (!srcU || !dstU || !srcMod || srcU.id === dstU.id) continue;
+    if (dstU.isRoot) {
+      reverseNotes.set(srcU.id, (reverseNotes.get(srcU.id) || 0) + 1);
+      continue;
+    }
+    const pairKey = `${srcU.id}->${dstU.id}`;
+    weightMap.set(pairKey, (weightMap.get(pairKey) || 0) + hydWbComputeEdgeWeight(srcMod, srcU.isRoot, e.kind));
     countMap.set(pairKey, (countMap.get(pairKey) || 0) + 1);
   }
+  return { weightMap, countMap, reverseNotes };
+}
 
-  const nextDomMap = new Map(rawDomains.map((d) => [d.id, new Set()]));
-  const domIds = rawDomains.map((d) => d.id);
-  for (let i = 0; i < domIds.length; i++) {
-    for (let j = i + 1; j < domIds.length; j++) {
-      const a = domIds[i], b = domIds[j];
-      const wab = weightMap.get(`${a}->${b}`) || 0;
-      const wba = weightMap.get(`${b}->${a}`) || 0;
+function hydWbOrientUnitPairs(units, weightMap, countMap, reverseNotes) {
+  const nextUnitMap = new Map(units.map((u) => [u.id, new Set()]));
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const ua = units[i], ub = units[j];
+      const wab = weightMap.get(`${ua.id}->${ub.id}`) || 0;
+      const wba = weightMap.get(`${ub.id}->${ua.id}`) || 0;
       if (wab === 0 && wba === 0) continue;
-      if (wab >= wba) {
-        nextDomMap.get(a).add(b);
-        if (wba > 0) reverseNotes.set(b, (reverseNotes.get(b) || 0) + (countMap.get(`${b}->${a}`) || 1));
-      } else {
-        nextDomMap.get(b).add(a);
-        if (wab > 0) reverseNotes.set(a, (reverseNotes.get(a) || 0) + (countMap.get(`${a}->${b}`) || 1));
-      }
+      const preferAB = wab > wba || (wab === wba && ua.archTier <= ub.archTier);
+      const [win, lose, loseW, loseKey] = preferAB
+        ? [ua.id, ub.id, wba, `${ub.id}->${ua.id}`]
+        : [ub.id, ua.id, wab, `${ua.id}->${ub.id}`];
+      nextUnitMap.get(win).add(lose);
+      if (loseW > 0) reverseNotes.set(lose, (reverseNotes.get(lose) || 0) + (countMap.get(loseKey) || 1));
     }
   }
+  return nextUnitMap;
+}
 
-  const orderedForDfs = [...rawDomains].sort((a, b) => (a.key === 'root' ? -1 : (b.key === 'root' ? 1 : laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane))));
+function hydWbCompareDfsOrder(a, b) {
+  if (a.isRoot && !b.isRoot) return -1;
+  if (b.isRoot && !a.isRoot) return 1;
+  if (a.archTier !== b.archTier) return a.archTier - b.archTier;
+  return laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane);
+}
+
+function hydWbDfsPruneCycle(u, nextUnitMap, rootIds, color) {
+  color.set(u, 1);
+  for (const v of [...(nextUnitMap.get(u) || [])]) {
+    if (rootIds.has(v) || color.get(v) === 1) nextUnitMap.get(u).delete(v);
+    else if (!color.get(v)) hydWbDfsPruneCycle(v, nextUnitMap, rootIds, color);
+  }
+  color.set(u, 2);
+}
+
+function hydWbRelaxUnitEdges(nextUnitMap, rootIds, depthByUnit) {
+  for (const [u, targets] of nextUnitMap.entries()) {
+    const nextDepth = (depthByUnit.get(u) || 0) + 1;
+    for (const v of targets) {
+      if (!rootIds.has(v) && (depthByUnit.get(v) || 0) < nextDepth) depthByUnit.set(v, nextDepth);
+    }
+  }
+}
+
+function hydWbCompareUnitTopology(a, b, depthByUnit) {
+  if (a.isRoot && !b.isRoot) return -1;
+  if (b.isRoot && !a.isRoot) return 1;
+  const diff = (depthByUnit.get(a.id) || 0) - (depthByUnit.get(b.id) || 0);
+  if (diff !== 0) return diff;
+  if (a.archTier !== b.archTier) return a.archTier - b.archTier;
+  const lr = laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane);
+  return lr !== 0 ? lr : a.key.localeCompare(b.key);
+}
+
+function buildAcyclicUnitTopology(units, edges) {
+  const { weightMap, countMap, reverseNotes } = hydWbAccumulateUnitEdgeWeights(units, edges);
+  const nextUnitMap = hydWbOrientUnitPairs(units, weightMap, countMap, reverseNotes);
+  const rootIds = new Set(units.filter((u) => u.isRoot).map((u) => u.id));
   const color = new Map();
-  const dfsBreak = (u) => {
-    color.set(u, 1);
-    for (const v of [...(nextDomMap.get(u) || [])]) {
-      if (v === 'dom:root' || color.get(v) === 1) nextDomMap.get(u).delete(v);
-      else if (!color.get(v)) dfsBreak(v);
-    }
-    color.set(u, 2);
-  };
-  for (const d of orderedForDfs) if (!color.get(d.id)) dfsBreak(d.id);
+  for (const u of [...units].sort(hydWbCompareDfsOrder)) {
+    if (!color.get(u.id)) hydWbDfsPruneCycle(u.id, nextUnitMap, rootIds, color);
+  }
+  const initDepth = rootIds.size > 0 ? 1 : 0;
+  const depthByUnit = new Map(units.map((u) => [u.id, u.isRoot ? 0 : initDepth]));
+  for (let pass = 0; pass < units.length; pass++) {
+    hydWbRelaxUnitEdges(nextUnitMap, rootIds, depthByUnit);
+  }
+  const sortedUnits = [...units].sort((a, b) => hydWbCompareUnitTopology(a, b, depthByUnit));
+  return { sortedUnits, nextUnitMap, depthByUnit, reverseNotes };
+}
 
-  const hasRoot = rawDomains.some((d) => d.key === 'root');
-  const depthByDom = new Map(rawDomains.map((d) => [d.id, d.key === 'root' ? 0 : (hasRoot ? 1 : 0)]));
-  for (let pass = 0; pass < rawDomains.length; pass++) {
-    for (const [u, targets] of nextDomMap.entries()) {
-      const du = depthByDom.get(u) || 0;
-      for (const v of targets) {
-        if (v !== 'dom:root' && (depthByDom.get(v) || 0) < du + 1) depthByDom.set(v, du + 1);
+function hydWbComputeUnitColumn(unit, hasEdges, hasRoot, depthByUnit) {
+  if (unit.isRoot) return 0;
+  const rootOffset = hasRoot ? 1 : 0;
+  if (hasEdges) return depthByUnit.get(unit.id) || rootOffset;
+  return laneOrderRank(unit.primaryLane) + rootOffset;
+}
+
+function hydWbModMatchesScope(modPath, rawScope) {
+  const ns = rawScope.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!ns) return true;
+  return ns.endsWith('/') ? modPath.startsWith(ns) : (modPath === ns || modPath.startsWith(ns + '/'));
+}
+
+function hydWbCollectUnitScopes(unit, contractIds, rawById) {
+  const scopeSet = new Set(unit.baseScopes || []);
+  for (const cid of contractIds) {
+    const rc = rawById.get(cid);
+    for (const sp of (rc?.scope || [])) {
+      const clean = typeof sp === 'string' ? sp.trim().replace(/\\/g, '/') : '';
+      if (clean && (unit.mods.length === 0 || unit.mods.some((m) => hydWbModMatchesScope(m.path, clean)))) {
+        scopeSet.add(clean);
       }
     }
   }
-  const sortedDomains = [...rawDomains].sort((a, b) => {
-    if (a.key === 'root' && b.key !== 'root') return -1;
-    if (b.key === 'root' && a.key !== 'root') return 1;
-    const da = depthByDom.get(a.id) || 0;
-    const db = depthByDom.get(b.id) || 0;
-    if (da !== db) return da - db;
-    const lr = laneOrderRank(a.primaryLane) - laneOrderRank(b.primaryLane);
-    return lr !== 0 ? lr : a.key.localeCompare(b.key);
-  });
-  return { sortedDomains, nextDomMap, depthByDom, reverseNotes };
+  return [...scopeSet];
+}
+
+function hydWbBuildUnitTip(unit, contractIds, reverseCount) {
+  const modCount = unit.mods.length;
+  const tipParts = [modCount === 1 ? `源码模块：${unit.mods[0].path}` : `共 ${modCount} 个源码模块`];
+  if (unit.wildCount > 0) tipParts.push(`${unit.wildCount} 个尚未挂入契约保护`);
+  if (contractIds.length > 0) tipParts.push(`关联契约：${contractIds.join('、')}`);
+  if (reverseCount) tipParts.push(`含 ${reverseCount} 处反向自检调用`);
+  if ((unit.activeBranches || []).length > 1) tipParts.push(`活跃支线：${unit.activeBranches.join(' / ')}`);
+  return tipParts.join(' · ');
+}
+
+function hydWbResolveLifecycleLabel(contractIds, summaryById) {
+  if (contractIds.length === 0) return '未挂契约';
+  return summaryById.get(contractIds[0])?.lifecycleLabel || '草稿待冻结';
+}
+
+function hydWbMapHostModuleCard(m) {
+  const epNames = (m.entrypoints || []).map((ep) => ep.humanTitle).filter(Boolean);
+  const name = epNames.length > 0 ? `${m.humanTitle}（${epNames.join(' / ')}）` : m.humanTitle;
+  return {
+    name, role: mapModRoleLabel(m), state: mapModState(m),
+    path: m.path, vibeLabel: m.vibeLabel, aiPrompt: m.aiPrompt, techSummary: m.techSummary
+  };
+}
+
+function hydWbBuildHostUnitNode(unit, idx, ctx) {
+  const { unitById, rawById, summaryById, nextUnitMap, depthByUnit, reverseNotes, colCounts, savedState, hasEdges, hasRoot } = ctx;
+  const col = hydWbComputeUnitColumn(unit, hasEdges, hasRoot, depthByUnit);
+  const rowIdx = colCounts.get(col) || 0;
+  colCounts.set(col, rowIdx + 1);
+
+  const contractIds = [...new Set(unit.mods.map((m) => m.contractId).filter(Boolean))];
+  const nodeId = unit.nodeId;
+  const saved = (savedState.hostNodeLayouts || {})[nodeId] || {};
+  const nextIds = [...(nextUnitMap.get(unit.id) || [])]
+    .map((uid) => unitById.get(uid)?.nodeId || null)
+    .filter(Boolean);
+
+  return {
+    id: nodeId,
+    step: String(idx + 1).padStart(2, '0'),
+    title: unit.humanTitle,
+    sublinePath: unit.sublinePath || '',
+    tip: hydWbBuildUnitTip(unit, contractIds, reverseNotes.get(unit.id)),
+    contractIds,
+    primaryContractId: contractIds[0] || null,
+    lifecycleLabel: hydWbResolveLifecycleLabel(contractIds, summaryById),
+    scopePaths: hydWbCollectUnitScopes(unit, contractIds, rawById),
+    workflowBinding: (savedState.componentWorkflows || {})[nodeId] || null,
+    bypassed: Boolean(saved.bypassed),
+    collapsed: Boolean(saved.collapsed),
+    expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : unit.mods.length <= 4,
+    color: saved.color || 'none',
+    x: typeof saved.x === 'number' ? saved.x : 56 + col * 316,
+    y: typeof saved.y === 'number' ? saved.y : 68 + rowIdx * 238,
+    w: typeof saved.w === 'number' ? saved.w : 256,
+    h: typeof saved.h === 'number' ? saved.h : null,
+    nextIds,
+    modules: unit.mods.map(hydWbMapHostModuleCard)
+  };
 }
 
 function buildHostSandboxFromAtlas(baseAtlas, savedState) {
-  const { sortedDomains: domains, nextDomMap, depthByDom, reverseNotes } = buildAcyclicDomainTopology(
-    baseAtlas.domains || [],
-    baseAtlas.modules || [],
+  const rawUnits = hydWbResolveUnitsFromAtlas(baseAtlas);
+  const { sortedUnits, nextUnitMap, depthByUnit, reverseNotes } = buildAcyclicUnitTopology(
+    rawUnits,
     baseAtlas.edges || []
   );
-  const rawById = new Map((baseAtlas.rawContracts || []).map((c) => [c.id, c]));
-  const summaryById = new Map(((baseAtlas.status && baseAtlas.status.contractSummaries) || []).map((s) => [s.id, s]));
-  const modsByDom = new Map();
-  for (const m of (baseAtlas.modules || [])) {
-    if (!modsByDom.has(m.domainId)) modsByDom.set(m.domainId, []);
-    modsByDom.get(m.domainId).push(m);
-  }
-
-  const colCounts = new Map();
-  const nodes = domains.map((dom, idx) => {
-    const domMods = modsByDom.get(dom.id) || [];
-    const hasEdges = (baseAtlas.edges || []).length > 0;
-    const hasRoot = domains.some((d) => d.key === 'root');
-    const col = dom.key === 'root' ? 0 : (hasEdges ? (depthByDom.get(dom.id) || (hasRoot ? 1 : 0)) : laneOrderRank(dom.primaryLane) + (hasRoot ? 1 : 0));
-    const rowIdx = colCounts.get(col) || 0;
-    colCounts.set(col, rowIdx + 1);
-
-    const contractIds = [...new Set(domMods.map((m) => m.contractId).filter(Boolean))];
-    const scopeSet = new Set([dom.key === 'root' ? './' : `${dom.key}/`]);
-    for (const cid of contractIds) {
-      const rc = rawById.get(cid);
-      for (const sp of (rc?.scope || [])) {
-        if (typeof sp === 'string' && sp.trim()) scopeSet.add(sp.trim().replace(/\\/g, '/'));
-      }
-    }
-
-    const nodeId = `host-dom-${dom.key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
-    const saved = (savedState.hostNodeLayouts || {})[nodeId] || {};
-    const nextDomIds = [...(nextDomMap.get(dom.id) || [])];
-    const nextNodeIds = nextDomIds.map((did) => {
-      const target = domains.find((d) => d.id === did);
-      return target ? `host-dom-${target.key.replace(/[^A-Za-z0-9_-]/g, '-')}` : null;
-    }).filter(Boolean);
-
-    const collisionBranches = dom.activeBranches || [];
-    const tipParts = [`共 ${domMods.length} 个源码模块`];
-    if (dom.wildCount > 0) tipParts.push(`${dom.wildCount} 个尚未挂入契约保护`);
-    if (contractIds.length > 0) tipParts.push(`关联契约：${contractIds.join('、')}`);
-    if (reverseNotes.get(dom.id)) tipParts.push(`含 ${reverseNotes.get(dom.id)} 处门禁脚本反向自检调用`);
-    if (collisionBranches.length > 1) tipParts.push(`活跃支线：${collisionBranches.join(' / ')}`);
-
-    return {
-      id: nodeId,
-      step: String(idx + 1).padStart(2, '0'),
-      title: dom.humanTitle || dom.key,
-      tip: tipParts.join(' · '),
-      contractIds,
-      primaryContractId: contractIds[0] || null,
-      lifecycleLabel: (contractIds[0] && summaryById.get(contractIds[0])?.lifecycleLabel) || (contractIds.length ? '草稿待冻结' : '未挂契约'),
-      scopePaths: [...scopeSet],
-      workflowBinding: (savedState.componentWorkflows || {})[nodeId] || null,
-      bypassed: Boolean(saved.bypassed || false),
-      collapsed: Boolean(saved.collapsed || false),
-      expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : domMods.length <= 4,
-      color: saved.color || 'none',
-      x: typeof saved.x === 'number' ? saved.x : 56 + col * 316,
-      y: typeof saved.y === 'number' ? saved.y : 68 + rowIdx * 238,
-      w: typeof saved.w === 'number' ? saved.w : 256,
-      h: typeof saved.h === 'number' ? saved.h : null,
-      nextIds: nextNodeIds,
-      modules: domMods.slice(0, 14).map((m) => {
-        const epNames = (m.entrypoints || []).map((ep) => ep.humanTitle).filter(Boolean);
-        const label = epNames.length > 0 ? `${m.humanTitle}（${epNames.join(' / ')}）` : m.humanTitle;
-        return {
-          name: label,
-          role: mapModRoleLabel(m),
-          state: mapModState(m),
-          path: m.path,
-          vibeLabel: m.vibeLabel,
-          aiPrompt: m.aiPrompt,
-          techSummary: m.techSummary
-        };
-      })
-    };
-  });
-
+  const ctx = {
+    unitById: new Map(sortedUnits.map((u) => [u.id, u])),
+    rawById: new Map((baseAtlas.rawContracts || []).map((c) => [c.id, c])),
+    summaryById: new Map(((baseAtlas.status && baseAtlas.status.contractSummaries) || []).map((s) => [s.id, s])),
+    nextUnitMap, depthByUnit, reverseNotes,
+    colCounts: new Map(), savedState,
+    hasEdges: (baseAtlas.edges || []).length > 0,
+    hasRoot: sortedUnits.some((u) => u.isRoot)
+  };
   return {
     id: 'host-workspace',
     name: `${baseAtlas.project.name}（当前本仓）`,
@@ -246,7 +444,7 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
     isHost: true,
     readonly: false,
     tip: `${baseAtlas.project.summary} · 支持基于契约 scope[] 右键定位真实目录`,
-    nodes,
+    nodes: sortedUnits.map((unit, idx) => hydWbBuildHostUnitNode(unit, idx, ctx)),
     groups: Array.isArray(savedState.hostGroups) ? savedState.hostGroups : []
   };
 }
@@ -271,11 +469,8 @@ function scanSiblingWorkspaces(projectRoot) {
         readonly: true,
         tip: `同级目录只读参考工作区（../${ent.name}）：可作为汇总节点引入或复制卡片结构`,
         nodes: [{
-          id: `sib-n-${ent.name.slice(0, 8)}`,
-          step: '外仓',
-          title: `${ent.name} 核心入口`,
-          tip: `位于 ../${ent.name}/ 的相邻工程目录`,
-          scopePaths: [`../${ent.name}/`],
+          id: `sib-n-${ent.name.slice(0, 8)}`, step: '外仓', title: `${ent.name} 核心入口`,
+          tip: `位于 ../${ent.name}/ 的相邻工程目录`, scopePaths: [`../${ent.name}/`],
           bypassed: false, collapsed: false, expanded: true, x: 80, y: 120, w: 252, h: null, nextIds: [],
           modules: [{ name: `${ent.name} 工程根目录`, role: '外仓', state: 'ok', path: `../${ent.name}/package.json` }]
         }]
@@ -288,6 +483,90 @@ function scanSiblingWorkspaces(projectRoot) {
   return out;
 }
 
+function hydWbResolveAdapterUpstream(tool, adp, capDoc, upCfg) {
+  const isZeroBin = (capDoc.archetype === 'knowledge-skill' || capDoc.archetype === 'aggregator') && !upCfg.repo;
+  let up = UPSTREAM_GITHUB_MAP[tool];
+  if (!up) {
+    const range = isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0');
+    const fallbackRepo = isZeroBin ? '' : (upCfg.repo || `opensource/${tool}`);
+    up = [fallbackRepo, range, range];
+  }
+  const repoSlug = isZeroBin ? '' : (upCfg.repo || up[0]);
+  const repoUrl = upCfg.homepage || (repoSlug ? `https://github.com/${repoSlug}` : '');
+  return { repoSlug, repoUrl, pinnedVersion: up[1], latestUpstream: up[2] };
+}
+
+function hydWbResolveAdapterCategory(tool, cardCfg) {
+  if (cardCfg.category) return cardCfg.category;
+  if (SEC_ADAPTER_TOOLS.has(tool)) return '安全与运维';
+  if (E2E_ADAPTER_TOOLS.has(tool)) return '端侧与构建';
+  return '代码护栏';
+}
+
+function hydWbResolveAdapterIoAndSlots(cardCfg, hm) {
+  const inputs = Array.isArray(cardCfg.inputs) && cardCfg.inputs.length > 0
+    ? cardCfg.inputs
+    : [{ id: 'in_src', name: hm?.inName || '待查代码或产物', type: 'ARTIFACT' }];
+  const outputs = Array.isArray(cardCfg.outputs) && cardCfg.outputs.length > 0
+    ? cardCfg.outputs
+    : [
+        { id: 'out_sig', name: hm?.outSig || '是否通过检查', type: 'SIGNAL' },
+        { id: 'out_obs', name: hm?.outObs || '问题详情报告', type: 'TEXT' }
+      ];
+  let slots = cardCfg.slots;
+  if (!Array.isArray(slots) || slots.length === 0) {
+    if (hm && Array.isArray(hm.slots)) {
+      slots = hm.slots.map((lbl, i) => ({ id: `ob_${i}`, label: lbl, wired: true, boundOut: outputs[Math.min(i, outputs.length - 1)].id }));
+    } else {
+      slots = [{ id: 'ob_0', label: '自动执行规则检查', wired: true, boundOut: outputs[0].id }];
+    }
+  }
+  return { inputs, outputs, slots };
+}
+
+function hydWbBuildAdapterTemplate(projectRoot, adp, tool) {
+  const localCap = join(resolve(projectRoot), 'bricks', tool, 'capabilities.json');
+  const capPath = existsSync(localCap) ? localCap : join(DG_ROOT, 'bricks', tool, 'capabilities.json');
+  const capDoc = readJsonStrict(capPath).value || {};
+  const cardCfg = (capDoc.card && typeof capDoc.card === 'object') ? capDoc.card : {};
+  const upCfg = (capDoc.upstream && typeof capDoc.upstream === 'object') ? capDoc.upstream : {};
+  const hm = ADAPTER_HUMAN_META[tool] || null;
+  const upstream = hydWbResolveAdapterUpstream(tool, adp, capDoc, upCfg);
+  const ioSlots = hydWbResolveAdapterIoAndSlots(cardCfg, hm);
+  const blindTip = adp.blindSpots?.[0] ? `自动检查边界说明：${adp.blindSpots[0]}` : '外部开源规则检查节点';
+  return {
+    tplId: `tpl-adp-${tool}`,
+    category: hydWbResolveAdapterCategory(tool, cardCfg),
+    title: cardCfg.title || hm?.title || '外部工具规则检查',
+    archetype: capDoc.archetype || 'scanner',
+    uiExternalUrl: upCfg.uiExternalUrl || null,
+    ...upstream,
+    entryPath: adp.entry || `skill/adapters/${tool}.mjs`,
+    brickDir: `bricks/${tool}/`,
+    tip: cardCfg.summary || blindTip,
+    ...ioSlots
+  };
+}
+
+function hydWbSeedSeenCatalogTraits() {
+  const slugs = new Set();
+  const titles = new Set();
+  for (const t of WB_PRESET_TEMPLATE_TRAITS) {
+    if (t.repoSlug) slugs.add(t.repoSlug.toLowerCase());
+    if (t.title) titles.add(t.title.trim());
+  }
+  return { slugs, titles };
+}
+
+function hydWbIsDuplicateTemplate(tpl, seenTraits) {
+  const slug = String(tpl.repoSlug || '').trim().toLowerCase();
+  const title = String(tpl.title || '').trim();
+  if ((slug && seenTraits.slugs.has(slug)) || (title && seenTraits.titles.has(title))) return true;
+  if (slug) seenTraits.slugs.add(slug);
+  if (title) seenTraits.titles.add(title);
+  return false;
+}
+
 function loadRegisteredAdapterTemplates(projectRoot) {
   const localReg = join(resolve(projectRoot), 'adapters.registry.json');
   const regPath = existsSync(localReg) ? localReg : join(DG_ROOT, 'adapters.registry.json');
@@ -295,57 +574,14 @@ function loadRegisteredAdapterTemplates(projectRoot) {
   if (!regRes.ok || !Array.isArray(regRes.value?.adapters)) return [];
 
   const seenTools = new Set();
+  const seenTraits = hydWbSeedSeenCatalogTraits();
   const templates = [];
   for (const adp of regRes.value.adapters) {
     const tool = String(adp.tool || '').trim();
     if (!tool || seenTools.has(tool)) continue;
     seenTools.add(tool);
-
-    const localCap = join(resolve(projectRoot), 'bricks', tool, 'capabilities.json');
-    const capPath = existsSync(localCap) ? localCap : join(DG_ROOT, 'bricks', tool, 'capabilities.json');
-    const capRes = readJsonStrict(capPath);
-    const capDoc = capRes.value || {};
-    const cardCfg = (capDoc.card && typeof capDoc.card === 'object') ? capDoc.card : {};
-    const upCfg = (capDoc.upstream && typeof capDoc.upstream === 'object') ? capDoc.upstream : {};
-    const hm = ADAPTER_HUMAN_META[tool] || null;
-    const isZeroBin = (capDoc.archetype === 'knowledge-skill' || capDoc.archetype === 'aggregator') && !upCfg.repo;
-    const up = UPSTREAM_GITHUB_MAP[tool] || [isZeroBin ? '' : (upCfg.repo || `opensource/${tool}`), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0'), isZeroBin ? '' : (adp.testedToolRange || 'v1.0.0')];
-    const repoSlug = isZeroBin ? '' : (upCfg.repo || up[0]);
-    const cat = cardCfg.category || (['gitleaks', 'osv-scanner', 'semgrep', 'syft', 'trivy', 'vuln-merge'].includes(tool)
-      ? '安全与运维'
-      : (['playwright', 'maestro', 'vitest'].includes(tool) ? '端侧与构建' : '代码护栏'));
-    const inputs = Array.isArray(cardCfg.inputs) && cardCfg.inputs.length > 0
-      ? cardCfg.inputs
-      : [{ id: 'in_src', name: (hm && hm.inName) || '待查代码或产物', type: 'ARTIFACT' }];
-    const outputs = Array.isArray(cardCfg.outputs) && cardCfg.outputs.length > 0
-      ? cardCfg.outputs
-      : [
-          { id: 'out_sig', name: (hm && hm.outSig) || '是否通过检查', type: 'SIGNAL' },
-          { id: 'out_obs', name: (hm && hm.outObs) || '问题详情报告', type: 'TEXT' }
-        ];
-    const slots = Array.isArray(cardCfg.slots) && cardCfg.slots.length > 0
-      ? cardCfg.slots
-      : (hm && Array.isArray(hm.slots)
-          ? hm.slots.map((lbl, i) => ({ id: `ob_${i}`, label: lbl, wired: true, boundOut: outputs[Math.min(i, outputs.length - 1)].id }))
-          : [{ id: 'ob_0', label: '自动执行规则检查', wired: true, boundOut: outputs[0].id }]);
-
-    templates.push({
-      tplId: `tpl-adp-${tool}`,
-      category: cat,
-      title: cardCfg.title || (hm && hm.title) || '外部工具规则检查',
-      archetype: capDoc.archetype || 'scanner',
-      uiExternalUrl: upCfg.uiExternalUrl || null,
-      repoSlug,
-      repoUrl: repoSlug ? (upCfg.homepage || `https://github.com/${repoSlug}`) : (upCfg.homepage || ''),
-      pinnedVersion: up[1],
-      latestUpstream: up[2],
-      entryPath: adp.entry || `skill/adapters/${tool}.mjs`,
-      brickDir: `bricks/${tool}/`,
-      tip: cardCfg.summary || ((adp.blindSpots && adp.blindSpots[0]) ? `自动检查边界说明：${adp.blindSpots[0]}` : '外部开源规则检查节点'),
-      inputs,
-      outputs,
-      slots
-    });
+    const tpl = hydWbBuildAdapterTemplate(projectRoot, adp, tool);
+    if (!hydWbIsDuplicateTemplate(tpl, seenTraits)) templates.push(tpl);
   }
   return templates;
 }
@@ -362,7 +598,9 @@ function loadDeclarativeWorkflowPacks(projectRoot) {
           packs[r.value.id] = { group: r.value.group || '项目声明式工作流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
         }
       }
-    } catch (err) { void err; }
+    } catch (err) {
+      void err;
+    }
   }
   return packs;
 }

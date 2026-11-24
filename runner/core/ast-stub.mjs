@@ -35,42 +35,66 @@ function scanRegexLiteralEnd(src, slashIdx) {
   return -1;
 }
 
+function astStubBlankRange(out, from, to) {
+  for (let k = from; k < to; k++) {
+    if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
+  }
+}
+
+function astStubFindClosingDelim(src, start, delim) {
+  let i = start;
+  while (i < src.length && !src.startsWith(delim, i)) {
+    i += src[i] === '\\' ? 2 : 1;
+  }
+  return Math.min(src.length, i + delim.length);
+}
+
+function astStubMaskComment(src, out, i, isPy) {
+  const n = src.length, c2 = src.slice(i, i + 2);
+  if ((!isPy && c2 === '//') || (isPy && src[i] === '#')) {
+    const nl = src.indexOf('\n', i);
+    const end = nl < 0 ? n : nl;
+    astStubBlankRange(out, i, end);
+    return end;
+  }
+  if (!isPy && c2 === '/*') {
+    const close = src.indexOf('*/', i + 2);
+    const end = close < 0 ? n : close + 2;
+    astStubBlankRange(out, i, end);
+    return end;
+  }
+  return -1;
+}
+
+function astStubMaskString(src, out, i, isPy) {
+  const c = src[i], c3 = src.slice(i, i + 3);
+  if (isPy && (c3 === '"""' || c3 === "'''")) {
+    const end = astStubFindClosingDelim(src, i + 3, c3);
+    astStubBlankRange(out, i, end);
+    return end;
+  }
+  if (c === '"' || c === "'" || (!isPy && c === '`')) {
+    const end = astStubFindClosingDelim(src, i + 1, c);
+    astStubBlankRange(out, i + 1, Math.max(i + 1, end - 1));
+    return end;
+  }
+  return -1;
+}
+
 export function maskCommentsAndStrings(src, ext = '.mjs') {
-  const out = src.split('');
-  const n = src.length;
-  const isPy = ext === '.py';
-  const blank = (from, to) => {
-    for (let k = from; k < to; k++) if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
-  };
+  const out = src.split(''), n = src.length, isPy = ext === '.py';
   let i = 0;
   while (i < n) {
-    const c = src[i], c2 = src.slice(i, i + 2), c3 = src.slice(i, i + 3);
-    if ((!isPy && c2 === '//') || (isPy && c === '#')) {
-      const s = i;
-      while (i < n && src[i] !== '\n') i++;
-      blank(s, i);
-    } else if (!isPy && c2 === '/*') {
-      const s = i;
-      i += 2;
-      while (i < n && src.slice(i, i + 2) !== '*/') i++;
-      i = Math.min(n, i + 2);
-      blank(s, i);
-    } else if (isPy && (c3 === '"""' || c3 === "'''")) {
-      const s = i;
-      i += 3;
-      while (i < n && src.slice(i, i + 3) !== c3) { if (src[i] === '\\') i++; i++; }
-      i = Math.min(n, i + 3);
-      blank(s, i);
-    } else if (!isPy && c === '/' && canStartRegexLiteral(src, i)) {
+    const afterComment = astStubMaskComment(src, out, i, isPy);
+    if (afterComment >= 0) { i = afterComment; continue; }
+    if (!isPy && src[i] === '/' && canStartRegexLiteral(src, i)) {
       const regEnd = scanRegexLiteralEnd(src, i);
-      if (regEnd > i + 1) { blank(i + 1, regEnd - 1); i = regEnd; } else i++;
-    } else if (c === '"' || c === "'" || (!isPy && c === '`')) {
-      const s = i;
-      i++;
-      while (i < n && src[i] !== c) { i += src[i] === '\\' ? 2 : 1; }
-      i = Math.min(n, i + 1);
-      blank(s + 1, Math.max(s + 1, i - 1));
-    } else i++;
+      if (regEnd > i + 1) astStubBlankRange(out, i + 1, regEnd - 1);
+      i = regEnd > i + 1 ? regEnd : i + 1;
+      continue;
+    }
+    const afterStr = astStubMaskString(src, out, i, isPy);
+    i = afterStr >= 0 ? afterStr : i + 1;
   }
   return out.join('');
 }
@@ -111,74 +135,66 @@ function extractJsClassMethods(rawBlock, maskedBlock) {
   return methods;
 }
 
+function astStubFormatVarExport(source, masked, m) {
+  const [kind, name, rawType] = [m[1], m[2], m[3] ? compactWs(m[3]) : ''];
+  const doc = extractLeadingJsDoc(source, m.index, m[0]);
+  const typeSuffix = rawType ? `: ${rawType}` : '';
+  const rhsStart = m.index + m[0].length, rhsSlice = masked.slice(rhsStart, rhsStart + 200);
+  const arrowParen = rhsSlice.match(/^(async\s+)?\(/), arrowIdent = rhsSlice.match(/^(async\s+)?([A-Za-z_$][\w$]*)\s*=>/);
+  const fnExpr = rhsSlice.match(/^(async\s+)?function\s*\(/);
+  if (arrowParen || fnExpr) {
+    const openIdx = rhsStart + rhsSlice.indexOf('('), closeIdx = findBalancedEnd(masked, openIdx, '(', ')');
+    const params = closeIdx > openIdx ? compactWs(source.slice(openIdx, closeIdx + 1)) : '(...args)';
+    const asyncPref = (arrowParen?.[1] || fnExpr?.[1]) ? 'async ' : '';
+    return { symbol: name, doc, signature: `export ${asyncPref}function ${name}${params}${typeSuffix};` };
+  }
+  if (arrowIdent) {
+    const asyncPref = arrowIdent[1] ? 'async ' : '';
+    return { symbol: name, doc, signature: `export ${asyncPref}function ${name}(${arrowIdent[2]});` };
+  }
+  if (rhsSlice.trimStart().startsWith('{')) {
+    const openBrace = rhsStart + rhsSlice.indexOf('{'), closeBrace = findBalancedEnd(masked, openBrace, '{', '}');
+    const objSlice = closeBrace > openBrace ? masked.slice(openBrace + 1, Math.min(closeBrace, openBrace + 2400)) : '';
+    const keys = [...objSlice.matchAll(/(?:^|[,{\n])\s*([A-Za-z_$][\w$]*)\s*(?::|\()/g)].map((k) => k[1]).slice(0, 24);
+    const inferredType = keys.length > 0 ? `{ ${keys.join(', ')} }` : 'Record<string, unknown>';
+    return { symbol: name, doc, signature: `export ${kind} ${name}: ${rawType || inferredType};` };
+  }
+  return { symbol: name, doc, signature: `export ${kind} ${name}${typeSuffix};` };
+}
+
 function extractJsTsExports(source) {
   const masked = maskCommentsAndStrings(source, '.ts');
   const entries = [];
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(default\s+)?(async\s+)?function(\s*\*)?\s*([A-Za-z_$][\w$]*)?\s*\(/g)) {
-    const openParen = m.index + m[0].length - 1;
-    const closeParen = findBalancedEnd(masked, openParen, '(', ')');
+    const openParen = m.index + m[0].length - 1, closeParen = findBalancedEnd(masked, openParen, '(', ')');
     if (closeParen < 0) continue;
     let tailEnd = closeParen + 1;
     while (tailEnd < masked.length && !'{;\n'.includes(masked[tailEnd])) tailEnd++;
     const name = m[4] || 'defaultExport';
-    entries.push({
-      symbol: name,
-      doc: extractLeadingJsDoc(source, m.index, m[0]),
-      signature: `export ${m[1] ? 'default ' : ''}${m[2] ? 'async ' : ''}function ${m[3] ? '* ' : ''}${name}${compactWs(source.slice(openParen, tailEnd))};`
-    });
+    const defPref = m[1] ? 'default ' : '';
+    const asyncPref = m[2] ? 'async ' : '';
+    const genStar = m[3] ? '* ' : '';
+    entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}${asyncPref}function ${genStar}${name}${compactWs(source.slice(openParen, tailEnd))};` });
   }
-
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(default\s+)?class\s+([A-Za-z_$][\w$]*)([^{\n]*)\{/g)) {
-    const openBrace = m.index + m[0].length - 1;
-    const closeBrace = findBalancedEnd(masked, openBrace, '{', '}');
-    const name = m[2];
+    const openBrace = m.index + m[0].length - 1, closeBrace = findBalancedEnd(masked, openBrace, '{', '}'), name = m[2];
     const heritage = compactWs(source.slice(m.index + m[0].indexOf(name) + name.length, openBrace));
     const methods = closeBrace > openBrace ? extractJsClassMethods(source.slice(openBrace + 1, closeBrace), masked.slice(openBrace + 1, closeBrace)) : [];
-    entries.push({
-      symbol: name,
-      doc: extractLeadingJsDoc(source, m.index, m[0]),
-      signature: `export ${m[1] ? 'default ' : ''}class ${name}${heritage ? ' ' + heritage : ''}${methods.length > 0 ? ` { ${methods.join(' ')} }` : ' {}'}`
-    });
+    const defPref = m[1] ? 'default ' : '';
+    const heritagePart = heritage ? ` ${heritage}` : '';
+    const bodyPart = methods.length > 0 ? ` { ${methods.join(' ')} }` : ' {}';
+    entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}class ${name}${heritagePart}${bodyPart}` });
   }
-
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*([^=\n]+?))?\s*=\s*/g)) {
-    const [kind, name, rawType] = [m[1], m[2], m[3] ? compactWs(m[3]) : ''];
-    const doc = extractLeadingJsDoc(source, m.index, m[0]);
-    const rhsStart = m.index + m[0].length;
-    const rhsSlice = masked.slice(rhsStart, rhsStart + 200);
-    const arrowParen = rhsSlice.match(/^(async\s+)?\(/);
-    const arrowIdent = rhsSlice.match(/^(async\s+)?([A-Za-z_$][\w$]*)\s*=>/);
-    const fnExpr = rhsSlice.match(/^(async\s+)?function\s*\(/);
-    if (arrowParen || fnExpr) {
-      const openIdx = rhsStart + rhsSlice.indexOf('(');
-      const closeIdx = findBalancedEnd(masked, openIdx, '(', ')');
-      const params = closeIdx > openIdx ? compactWs(source.slice(openIdx, closeIdx + 1)) : '(...args)';
-      entries.push({ symbol: name, doc, signature: `export ${(arrowParen?.[1] || fnExpr?.[1]) ? 'async ' : ''}function ${name}${params}${rawType ? ': ' + rawType : ''};` });
-    } else if (arrowIdent) {
-      entries.push({ symbol: name, doc, signature: `export ${arrowIdent[1] ? 'async ' : ''}function ${name}(${arrowIdent[2]});` });
-    } else if (rhsSlice.trimStart().startsWith('{')) {
-      const openBrace = rhsStart + rhsSlice.indexOf('{');
-      const closeBrace = findBalancedEnd(masked, openBrace, '{', '}');
-      const objSlice = closeBrace > openBrace ? masked.slice(openBrace + 1, Math.min(closeBrace, openBrace + 2400)) : '';
-      const keys = [...objSlice.matchAll(/(?:^|[,{\n])\s*([A-Za-z_$][\w$]*)\s*(?::|\()/g)].map((k) => k[1]).slice(0, 24);
-      entries.push({ symbol: name, doc, signature: `export ${kind} ${name}: ${rawType || (keys.length > 0 ? `{ ${keys.join(', ')} }` : 'Record<string, unknown>')};` });
-    } else {
-      entries.push({ symbol: name, doc, signature: `export ${kind} ${name}${rawType ? ': ' + rawType : ''};` });
-    }
+    entries.push(astStubFormatVarExport(source, masked, m));
   }
-
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(interface|type|enum)\s+([A-Za-z_$][\w$]*)([^\n;{]*)(?:\{|;|=)/g)) {
-    const doc = extractLeadingJsDoc(source, m.index, m[0]);
-    const kwPos = m[0].search(/\bexport\b/);
-    const declIdx = m.index + (kwPos >= 0 ? kwPos : 0);
+    const doc = extractLeadingJsDoc(source, m.index, m[0]), kwPos = m[0].search(/\bexport\b/), declIdx = m.index + (kwPos >= 0 ? kwPos : 0);
     const openBrace = (m[1] === 'interface' || m[1] === 'enum') ? source.indexOf('{', declIdx) : -1;
-    const closeBrace = openBrace >= 0 ? findBalancedEnd(masked, openBrace, '{', '}') : -1;
-    const sig = (closeBrace > openBrace && closeBrace - openBrace <= 1600)
-      ? compactWs(source.slice(declIdx, closeBrace + 1))
-      : `export ${m[1]} ${m[2]}${compactWs(m[3]) ? ' ' + compactWs(m[3]) : ''};`;
+    const closeBrace = openBrace >= 0 ? findBalancedEnd(masked, openBrace, '{', '}') : -1, tail = compactWs(m[3]);
+    const sig = (closeBrace > openBrace && closeBrace - openBrace <= 1600) ? compactWs(source.slice(declIdx, closeBrace + 1)) : `export ${m[1]} ${m[2]}${tail ? ' ' + tail : ''};`;
     entries.push({ symbol: m[2], doc, signature: sig });
   }
-
   for (const m of source.matchAll(/(?:^|\n)\s*export\s+(\*(?:\s+as\s+[A-Za-z_$][\w$]*)?|\{[^}]+\})\s*(?:from\s*(['"][^'"]+['"]))?\s*;?/g)) {
     if (masked[m.index + m[0].indexOf('export')] === ' ') continue;
     const clause = compactWs(m[1]), fromPart = m[2] ? ` from ${m[2]}` : '';
@@ -219,40 +235,49 @@ export function extractFileInterfaceStub(source, relPath = '') {
   return { relPath, effectiveLines, physicalLines, sourceChars: source.length, exports };
 }
 
+function astStubStatSafe(abs) {
+  if (!existsSync(abs)) return null;
+  try { return statSync(abs); } catch (err) { void err; return null; }
+}
+
+function astStubIsTestRelPath(rel, includeTestDirs) {
+  if (includeTestDirs && /(^|\/)(tests?|__tests__)(\/|$)/i.test(rel)) return true;
+  return /\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(rel);
+}
+
+function astStubCollectScopeDir(projectRoot, abs, dirClean, found, relatedTests, publicEntries) {
+  const dirCodeFiles = [];
+  for (const f of walk(abs, { skipDirs: SKIP_DIRS }).files) {
+    const rel = relative(projectRoot, f).replace(/\\/g, '/');
+    if (!CODE_EXTS.has(extname(rel).toLowerCase())) continue;
+    if (astStubIsTestRelPath(rel, true)) relatedTests.add(rel);
+    else { found.add(rel); dirCodeFiles.push(rel); }
+  }
+  const barrels = dirCodeFiles.filter((f) => {
+    const slash = f.lastIndexOf('/');
+    const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
+    return dir === dirClean && FACADE_BASENAMES.has(base);
+  });
+  for (const item of (barrels.length > 0 ? barrels : dirCodeFiles)) publicEntries.add(item);
+  return barrels.length > 0;
+}
+
+function astStubAddScopeEntry(projectRoot, rawScope, found, relatedTests, publicEntries) {
+  const clean = String(rawScope || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const abs = clean ? resolve(projectRoot, clean) : '', st = clean ? astStubStatSafe(abs) : null;
+  if (!st) return false;
+  if (st.isDirectory()) return astStubCollectScopeDir(projectRoot, abs, clean.replace(/\/+$/, ''), found, relatedTests, publicEntries);
+  if (!st.isFile() || !CODE_EXTS.has(extname(clean).toLowerCase())) return false;
+  if (astStubIsTestRelPath(clean, false)) relatedTests.add(clean);
+  else { found.add(clean); publicEntries.add(clean); }
+  return false;
+}
+
 export function resolveNodeScopeFiles(projectRoot, scopes = []) {
   const found = new Set(), relatedTests = new Set(), publicEntries = new Set();
   let hasBarrel = false;
   for (const rawScope of (Array.isArray(scopes) ? scopes : [])) {
-    const clean = String(rawScope || '').replace(/\\/g, '/').replace(/^\.\//, '');
-    if (!clean) continue;
-    const abs = resolve(projectRoot, clean);
-    if (!existsSync(abs)) continue;
-    let st;
-    try { st = statSync(abs); } catch (err) { void err; continue; }
-    if (st.isFile() && CODE_EXTS.has(extname(clean).toLowerCase())) {
-      if (/\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(clean)) relatedTests.add(clean);
-      else { found.add(clean); publicEntries.add(clean); }
-    } else if (st.isDirectory()) {
-      const dirClean = clean.replace(/\/+$/, '');
-      const dirCodeFiles = [];
-      for (const f of walk(abs, { skipDirs: SKIP_DIRS }).files) {
-        const rel = relative(projectRoot, f).replace(/\\/g, '/');
-        if (!CODE_EXTS.has(extname(rel).toLowerCase())) continue;
-        if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(rel)) relatedTests.add(rel);
-        else { found.add(rel); dirCodeFiles.push(rel); }
-      }
-      const barrels = dirCodeFiles.filter((f) => {
-        const slash = f.lastIndexOf('/');
-        const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
-        return dir === dirClean && FACADE_BASENAMES.has(base);
-      });
-      if (barrels.length > 0) {
-        hasBarrel = true;
-        for (const b of barrels) publicEntries.add(b);
-      } else {
-        for (const df of dirCodeFiles) publicEntries.add(df);
-      }
-    }
+    if (astStubAddScopeEntry(projectRoot, rawScope, found, relatedTests, publicEntries)) hasBarrel = true;
   }
   const scopeFiles = [...found].sort();
   const facadeFiles = publicEntries.size > 0 ? [...publicEntries].sort() : scopeFiles;

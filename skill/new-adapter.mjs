@@ -172,7 +172,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(ok ? `RESULT: PASS 六大普适形态脚手架与模块化卡片模板自检全过（均 ≤ 45 行，零底层原语直引）` : 'RESULT: FAIL 脚手架自检失败');
     process.exit(ok ? 0 : 1);
   }
-  const arg = (k, d = null) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d; };
+  const arg = (k, d = null) => {
+    const i = argv.indexOf(k);
+    return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d;
+  };
   const tool = argv.find((a) => !a.startsWith('--'));
   const archetype = arg('--archetype', 'scanner');
   if (!tool || !/^[a-z0-9-]+$/.test(tool) || !ARCHETYPES.includes(archetype)) {

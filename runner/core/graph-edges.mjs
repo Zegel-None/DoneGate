@@ -2,7 +2,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, normalize, relative } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
+import { readMaybe } from '../../skill/io.mjs';
 import { loadContracts, loadThresholds } from './gates.mjs';
+
+const GE3_STATIC_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
+const GE3_DYNAMIC_IMPORT_RE = /\b(?:import|require)\s*\(\s*[^'")\s]/g;
 
 export function collectCodeFilesForCoverage(projectRoot) {
   const { files } = walk(projectRoot, { skipDirs: ['node_modules', '.git', '.donegate', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'] });
@@ -30,38 +34,53 @@ export function collectCodeFilesForCoverage(projectRoot) {
   return { codeFiles, testFiles, oversizedFiles };
 }
 
-export function computeThreeColorEdges(projectRoot, activeContracts, codeFiles) {
-  const ownersOf = (relFile) => activeContracts.filter((c) => (c.scope || []).some((s) => {
-    const ns = s.replace(/\\/g, '/').replace(/^\.\//, '');
-    return ns.endsWith('/') ? relFile.startsWith(ns) : (relFile === ns || relFile.startsWith(ns + '/'));
-  })).map((c) => c.id);
+function ge3FileMatchesScope(relFile, scopeItem) {
+  const ns = scopeItem.replace(/\\/g, '/').replace(/^\.\//, '');
+  return ns.endsWith('/') ? relFile.startsWith(ns) : (relFile === ns || relFile.startsWith(ns + '/'));
+}
 
+function ge3OwnersOfFile(activeContracts, relFile) {
+  return activeContracts.filter((c) => (c.scope || []).some((s) => ge3FileMatchesScope(relFile, s))).map((c) => c.id);
+}
+
+function ge3ResolveRelativeTarget(cf, spec, codeSet) {
+  if (!spec.startsWith('.')) return null;
+  const rawTarget = normalize(join(dirname(cf), spec)).replace(/\\/g, '/');
+  const candidates = [rawTarget, rawTarget + '.mjs', rawTarget + '.js', rawTarget + '.ts', rawTarget + '/index.mjs', rawTarget + '/index.js'];
+  return candidates.find((cand) => codeSet.has(cand)) || null;
+}
+
+function ge3AddOwnerPairs(srcOwners, dstOwners, actualPairs) {
+  for (const dstOwner of dstOwners) {
+    for (const srcOwner of srcOwners) {
+      if (srcOwner !== dstOwner) actualPairs.add(`${srcOwner}->${dstOwner}`);
+    }
+  }
+}
+
+function ge3ScanFileImports(projectRoot, cf, srcOwners, activeContracts, codeSet, actualPairs) {
+  const body = readMaybe(join(projectRoot, cf));
+  if (body === null) return 0;
+  for (const m of body.matchAll(GE3_STATIC_IMPORT_RE)) {
+    const hit = ge3ResolveRelativeTarget(cf, m[1].split(/[?#]/)[0], codeSet);
+    if (hit) ge3AddOwnerPairs(srcOwners, ge3OwnersOfFile(activeContracts, hit), actualPairs);
+  }
+  let invisible = 0;
+  for (const dm of body.matchAll(GE3_DYNAMIC_IMPORT_RE)) {
+    if (dm) invisible++;
+  }
+  return invisible;
+}
+
+export function computeThreeColorEdges(projectRoot, activeContracts, codeFiles) {
   const codeSet = new Set(codeFiles);
   const actualPairs = new Set();
   let invisible = 0;
 
   for (const cf of codeFiles) {
-    const srcOwners = ownersOf(cf);
+    const srcOwners = ge3OwnersOfFile(activeContracts, cf);
     if (srcOwners.length === 0) continue;
-    let body = '';
-    try { body = readFileSync(join(projectRoot, cf), 'utf8'); } catch { continue; }
-    for (const m of body.matchAll(/(?:import\s+(?:[^\n;]*?\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g)) {
-      const spec = m[1].split(/[?#]/)[0];
-      if (!spec.startsWith('.')) continue;
-      const baseDir = dirname(cf);
-      const rawTarget = normalize(join(baseDir, spec)).replace(/\\/g, '/');
-      const candidates = [rawTarget, rawTarget + '.mjs', rawTarget + '.js', rawTarget + '.ts', rawTarget + '/index.mjs', rawTarget + '/index.js'];
-      const hit = candidates.find((cand) => codeSet.has(cand));
-      if (!hit) continue;
-      for (const dstOwner of ownersOf(hit)) {
-        for (const srcOwner of srcOwners) {
-          if (srcOwner !== dstOwner) actualPairs.add(`${srcOwner}->${dstOwner}`);
-        }
-      }
-    }
-    for (const dm of body.matchAll(/\b(?:import|require)\s*\(\s*[^'")\s]/g)) {
-      if (dm) invisible++;
-    }
+    invisible += ge3ScanFileImports(projectRoot, cf, srcOwners, activeContracts, codeSet, actualPairs);
   }
 
   const declaredPairs = new Set();
@@ -93,10 +112,7 @@ export function cmdGraph(projectRoot) {
   const claimed = [];
   const orphans = [];
   for (const cf of codeFiles) {
-    const matched = active.some((c) => (c.scope || []).some((s) => {
-      const ns = s.replace(/\\/g, '/').replace(/^\.\//, '');
-      return ns.endsWith('/') ? cf.startsWith(ns) : (cf === ns || cf.startsWith(ns + '/'));
-    }));
+    const matched = active.some((c) => (c.scope || []).some((s) => ge3FileMatchesScope(cf, s)));
     if (matched) claimed.push(cf);
     else orphans.push(cf);
   }

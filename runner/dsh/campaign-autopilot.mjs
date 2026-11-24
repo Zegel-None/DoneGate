@@ -10,25 +10,36 @@ import { assignComponentWorkflow } from './workflow-jit.mjs';
 import { collectGitDiffStats, executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
 
-export function sortSandboxComponentsTopologically(nodes = [], links = []) {
-  const active = (Array.isArray(nodes) ? nodes : []).filter(
-    (n) => n && n.id && !n.bypassed && !n.isBoundary && !n.isSubRepoRef && !n.isBlank
-  );
+function campTopoIsActiveNode(n) {
+  if (!n || !n.id) return false;
+  return !n.bypassed && !n.isBoundary && !n.isSubRepoRef && !n.isBlank;
+}
+
+function campTopoAddEdge(byId, adj, indeg, from, to) {
+  if (!from || !to || from === to) return;
+  if (!byId.has(from) || !byId.has(to)) return;
+  const set = adj.get(from);
+  if (set.has(to)) return;
+  set.add(to);
+  indeg.set(to, (indeg.get(to) || 0) + 1);
+}
+
+function campTopoBuildGraph(active, links) {
   const byId = new Map(active.map((n) => [n.id, n]));
   const adj = new Map(active.map((n) => [n.id, new Set()]));
   const indeg = new Map(active.map((n) => [n.id, 0]));
-  const addEdge = (from, to) => {
-    if (!from || !to || from === to || !byId.has(from) || !byId.has(to)) return;
-    const set = adj.get(from);
-    if (!set.has(to)) { set.add(to); indeg.set(to, (indeg.get(to) || 0) + 1); }
-  };
   for (const n of active) {
-    for (const nxt of (Array.isArray(n.nextIds) ? n.nextIds : [])) addEdge(n.id, nxt);
+    const nextIds = Array.isArray(n.nextIds) ? n.nextIds : [];
+    for (const nxt of nextIds) campTopoAddEdge(byId, adj, indeg, n.id, nxt);
   }
-  for (const lk of (Array.isArray(links) ? links : [])) {
-    addEdge(lk.fromNode || lk.from || lk.src, lk.toNode || lk.to || lk.dst);
+  const linkList = Array.isArray(links) ? links : [];
+  for (const lk of linkList) {
+    campTopoAddEdge(byId, adj, indeg, lk.fromNode || lk.from || lk.src, lk.toNode || lk.to || lk.dst);
   }
-  const queue = active.filter((n) => (indeg.get(n.id) || 0) === 0).map((n) => n.id);
+  return { byId, adj, indeg };
+}
+
+function campTopoDrainZeroIndegree(byId, adj, indeg, queue) {
   const ordered = [];
   const visited = new Set();
   while (queue.length > 0) {
@@ -42,7 +53,18 @@ export function sortSandboxComponentsTopologically(nodes = [], links = []) {
       if (nextDeg <= 0 && !visited.has(dst)) queue.push(dst);
     }
   }
-  for (const n of active) if (!visited.has(n.id)) ordered.push(n);
+  return { ordered, visited };
+}
+
+export function sortSandboxComponentsTopologically(nodes = [], links = []) {
+  const rawList = Array.isArray(nodes) ? nodes : [];
+  const active = rawList.filter(campTopoIsActiveNode);
+  const { byId, adj, indeg } = campTopoBuildGraph(active, links);
+  const queue = active.filter((n) => (indeg.get(n.id) || 0) === 0).map((n) => n.id);
+  const { ordered, visited } = campTopoDrainZeroIndegree(byId, adj, indeg, queue);
+  for (const n of active) {
+    if (!visited.has(n.id)) ordered.push(n);
+  }
   return ordered;
 }
 

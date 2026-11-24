@@ -55,6 +55,76 @@ function localTodayIsoStr() {
     String(now.getDate()).padStart(2, '0');
 }
 
+function csgReadFirstDecisionDate(projectRoot) {
+  const decDir = join(projectRoot, 'decisions');
+  let decFiles = [];
+  try {
+    if (!existsSync(decDir) || !statSync(decDir).isDirectory()) {
+      return { ok: false, exitCode: 3, line: 'RESULT: 无法判断 没有 decisions/ 目录，无法确定首轮日期' };
+    }
+    decFiles = readdirSync(decDir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name);
+  } catch {
+    return { ok: false, exitCode: 3, line: 'RESULT: 无法判断 decisions/ 目录不可读' };
+  }
+  if (decFiles.length === 0) {
+    return { ok: false, exitCode: 3, line: 'RESULT: 无法判断 decisions/ 目录为空，无法确定首轮日期' };
+  }
+  const decDates = decFiles.map((n) => parseIsoDateStr(n.slice(0, 10))).filter(Boolean).sort((a, b) => a.iso.localeCompare(b.iso));
+  if (decDates.length === 0) {
+    return { ok: false, exitCode: 3, line: 'RESULT: 无法判断 decisions/ 文件名前 10 字符均不是合法 YYYY-MM-DD' };
+  }
+  return { ok: true, firstDate: decDates[0] };
+}
+
+function csgIsObligationCleared(o) {
+  if (!o || typeof o.signedBy !== 'string' || o.signedBy.trim() === '') return false;
+  return Boolean(o.teeth && o.teeth.result === 'killed');
+}
+
+function csgInspectContractEntry(cDir, entry) {
+  if (!entry.isDirectory()) return { kind: 'skip' };
+  const cPath = join(cDir, entry.name, 'contract.json');
+  if (!existsSync(cPath)) return { kind: 'skip' };
+  const res = readJsonStrict(cPath);
+  if (!res.ok) {
+    if (res.error === 'parse') return { kind: 'err', exitCode: 2, line: 'RESULT: 事故 契约 JSON 损坏：' + cPath };
+    return { kind: 'err', exitCode: 3, line: 'RESULT: 无法判断 契约读不出：' + cPath };
+  }
+  const c = res.value;
+  if (c && c.retired) return { kind: 'skip' };
+  const reqObs = Array.isArray(c && c.obligations) ? c.obligations.filter((o) => o && o.required === true) : [];
+  return { kind: 'active', cleared: reqObs.length > 0 && reqObs.every(csgIsObligationCleared) };
+}
+
+function csgScanContracts(projectRoot) {
+  const cDir = join(projectRoot, 'contracts');
+  if (!existsSync(cDir)) return { ok: true, contractCount: 0, hasCleared: false };
+  let entries = [];
+  try {
+    entries = readdirSync(cDir, { withFileTypes: true });
+  } catch {
+    return { ok: false, exitCode: 3, line: 'RESULT: 无法判断 contracts/ 目录不可读' };
+  }
+  let contractCount = 0;
+  let hasCleared = false;
+  for (const e of entries) {
+    const r = csgInspectContractEntry(cDir, e);
+    if (r.kind === 'err') return { ok: false, exitCode: r.exitCode, line: r.line };
+    if (r.kind === 'active') {
+      contractCount++;
+      if (r.cleared) hasCleared = true;
+    }
+  }
+  return { ok: true, contractCount, hasCleared };
+}
+
+function csgResolveStageName(contractCount, hasCleared) {
+  if (contractCount >= 8) return 'T1完整';
+  if (contractCount >= 4) return 'T1c';
+  if (hasCleared) return 'T1b';
+  return 'T1a';
+}
+
 export function evalStageGate(projectRoot, todayOverride) {
   let rootOk = false;
   try { rootOk = !!projectRoot && statSync(projectRoot).isDirectory(); } catch { rootOk = false; }
@@ -65,53 +135,15 @@ export function evalStageGate(projectRoot, todayOverride) {
     return { exitCode: 2, line: 'RESULT: 事故 --today 日期格式非法：' + todayStr };
   }
 
-  const decDir = join(projectRoot, 'decisions');
-  let decFiles = [];
-  try {
-    if (!existsSync(decDir) || !statSync(decDir).isDirectory()) {
-      return { exitCode: 3, line: 'RESULT: 无法判断 没有 decisions/ 目录，无法确定首轮日期' };
-    }
-    decFiles = readdirSync(decDir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name);
-  } catch {
-    return { exitCode: 3, line: 'RESULT: 无法判断 decisions/ 目录不可读' };
-  }
-  if (decFiles.length === 0) {
-    return { exitCode: 3, line: 'RESULT: 无法判断 decisions/ 目录为空，无法确定首轮日期' };
-  }
+  const decRes = csgReadFirstDecisionDate(projectRoot);
+  if (!decRes.ok) return { exitCode: decRes.exitCode, line: decRes.line };
 
-  const decDates = decFiles.map((n) => parseIsoDateStr(n.slice(0, 10))).filter(Boolean).sort((a, b) => a.iso.localeCompare(b.iso));
-  if (decDates.length === 0) {
-    return { exitCode: 3, line: 'RESULT: 无法判断 decisions/ 文件名前 10 字符均不是合法 YYYY-MM-DD' };
-  }
-  const firstDate = decDates[0];
+  const cRes = csgScanContracts(projectRoot);
+  if (!cRes.ok) return { exitCode: cRes.exitCode, line: cRes.line };
 
-  const cDir = join(projectRoot, 'contracts');
-  let contractCount = 0;
-  let hasCleared = false;
-  if (existsSync(cDir)) {
-    let entries = [];
-    try { entries = readdirSync(cDir, { withFileTypes: true }); }
-    catch { return { exitCode: 3, line: 'RESULT: 无法判断 contracts/ 目录不可读' }; }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const cPath = join(cDir, e.name, 'contract.json');
-      if (!existsSync(cPath)) continue;
-      const res = readJsonStrict(cPath);
-      if (!res.ok) {
-        if (res.error === 'parse') return { exitCode: 2, line: 'RESULT: 事故 契约 JSON 损坏：' + cPath };
-        return { exitCode: 3, line: 'RESULT: 无法判断 契约读不出：' + cPath };
-      }
-      const c = res.value;
-      if (c && c.retired) continue;
-      contractCount++;
-      const reqObs = Array.isArray(c && c.obligations) ? c.obligations.filter((o) => o && o.required === true) : [];
-      if (reqObs.length > 0 && reqObs.every((o) => typeof o.signedBy === 'string' && o.signedBy.trim() !== '' && o.teeth && o.teeth.result === 'killed')) {
-        hasCleared = true;
-      }
-    }
-  }
-
-  const stage = contractCount >= 8 ? 'T1完整' : contractCount >= 4 ? 'T1c' : hasCleared ? 'T1b' : 'T1a';
+  const { firstDate } = decRes;
+  const { contractCount, hasCleared } = cRes;
+  const stage = csgResolveStageName(contractCount, hasCleared);
   const rule = STAGE_RULES[stage];
   const deadlineStr = addMonthsIsoStr(firstDate, rule.months);
   const daysLeft = diffDaysIsoStr(todayStr, deadlineStr);

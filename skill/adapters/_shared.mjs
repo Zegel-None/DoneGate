@@ -83,43 +83,43 @@ export function buildWinBatchSpawn(batPath, args = []) {
   };
 }
 
-function resolveExecutable(spec, fallbackCandidates = []) {
-  if (/[\\/]/.test(spec)) {
-    if (!existsSync(spec)) return null;
-    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spec)) {
-      return { cmd: spec, prefixArgs: [], isWinBatch: true };
-    }
-    return { cmd: spec, prefixArgs: [], isWinBatch: false };
-  }
+function adpShBuildExecEntry(cmdPath) {
+  const isWinBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmdPath);
+  return { cmd: cmdPath, prefixArgs: [], isWinBatch };
+}
+
+function adpShProbeSystemPath(spec) {
   const finder = process.platform === 'win32' ? 'where.exe' : 'which';
   const w = spawnSync(finder, [spec], { encoding: 'utf8', windowsHide: true });
-  if (w.status === 0 && (w.stdout || '').trim()) {
-    const lines = w.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (process.platform === 'win32') {
-      const winExec = lines.find((l) => /\.(exe|cmd|bat|com)$/i.test(l));
-      if (winExec) return { cmd: winExec, prefixArgs: [], isWinBatch: /\.(cmd|bat)$/i.test(winExec) };
-      const firstExt = lines.find((l) => /\.[A-Za-z0-9]+$/.test(l));
-      if (firstExt) return { cmd: firstExt, prefixArgs: [], isWinBatch: false };
-    } else {
-      return { cmd: lines[0], prefixArgs: [], isWinBatch: false };
-    }
-  }
+  if (w.status !== 0 || !(w.stdout || '').trim()) return null;
+  const lines = w.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (process.platform !== 'win32') return adpShBuildExecEntry(lines[0]);
+  const winExec = lines.find((l) => /\.(exe|cmd|bat|com)$/i.test(l));
+  if (winExec) return adpShBuildExecEntry(winExec);
+  const firstExt = lines.find((l) => /\.[A-Za-z0-9]+$/.test(l));
+  return firstExt ? { cmd: firstExt, prefixArgs: [], isWinBatch: false } : null;
+}
+
+function adpShBuildFallbackList(spec, fallbackCandidates) {
+  const isWin = process.platform === 'win32';
   const home = process.env.USERPROFILE || homedir();
-  const appDataNpm = process.platform === 'win32' && process.env.APPDATA ? join(process.env.APPDATA, 'npm') : null;
-  const cands = [
+  const appDataNpm = isWin && process.env.APPDATA ? join(process.env.APPDATA, 'npm') : null;
+  return [
     ...fallbackCandidates,
     ...(appDataNpm ? [join(appDataNpm, spec + '.cmd'), join(appDataNpm, spec + '.exe')] : []),
-    process.platform === 'win32' ? join(home, 'bin', spec + '.exe') : join(home, 'bin', spec),
-    process.platform === 'win32' ? join(home, 'bin', spec + '.cmd') : null,
-    process.platform === 'win32' ? join(home, '.local', 'bin', spec + '.exe') : join(home, '.local', 'bin', spec)
+    join(home, 'bin', isWin ? spec + '.exe' : spec),
+    isWin ? join(home, 'bin', spec + '.cmd') : null,
+    join(home, '.local', 'bin', isWin ? spec + '.exe' : spec)
   ];
-  for (const c of cands) {
-    if (c && existsSync(c)) {
-      if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(c)) {
-        return { cmd: c, prefixArgs: [], isWinBatch: true };
-      }
-      return { cmd: c, prefixArgs: [], isWinBatch: false };
-    }
+}
+
+// 跨平台解析可执行文件路径（显式路径 → PATH → 常见用户安装目录）
+function resolveExecutable(spec, fallbackCandidates = []) {
+  if (/[\\/]/.test(spec)) return existsSync(spec) ? adpShBuildExecEntry(spec) : null;
+  const fromPath = adpShProbeSystemPath(spec);
+  if (fromPath) return fromPath;
+  for (const c of adpShBuildFallbackList(spec, fallbackCandidates)) {
+    if (c && existsSync(c)) return adpShBuildExecEntry(c);
   }
   return null;
 }

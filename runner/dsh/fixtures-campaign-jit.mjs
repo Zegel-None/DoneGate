@@ -242,9 +242,14 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   const winListeners = {};
   const posted = [];
   const appended = [];
+  const btnAttrs = Object.assign(Object.create(null), {
+    'data-dg-action': 'act-save',
+    'data-dg-wiring': 'mock',
+    'data-dg-source': 'src/App.tsx:42:3'
+  });
   const btnEl = {
     tagName: 'BUTTON', id: 'save-btn', innerText: '保存单据', outerHTML: '<button id="save-btn">保存单据</button>',
-    getAttribute: (k) => (k === 'data-dg-action' ? 'act-save' : (k === 'data-dg-wiring' ? 'mock' : (k === 'data-dg-source' ? 'src/App.tsx:42:3' : null))),
+    getAttribute: (k) => btnAttrs[k] ?? null,
     closest: () => btnEl,
     getBoundingClientRect: () => ({ left: 20, top: 40, bottom: 72, width: 96, height: 32 })
   };

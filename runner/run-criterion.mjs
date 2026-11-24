@@ -60,9 +60,17 @@ function collectGitAnchor(cwd) {
   };
 }
 
-if (!CONTRACT || !existsSync(CONTRACT)) { console.error('契约读不出来：' + CONTRACT); process.exit(3); }
+if (!CONTRACT || !existsSync(CONTRACT)) {
+  console.error('契约读不出来：' + CONTRACT);
+  process.exit(3);
+}
 let contract;
-try { contract = JSON.parse(readFileSync(CONTRACT, 'utf8')); } catch (e) { console.error('契约不是合法 JSON：' + e.message); process.exit(2); }
+try {
+  contract = JSON.parse(readFileSync(CONTRACT, 'utf8'));
+} catch (e) {
+  console.error('契约不是合法 JSON：' + e.message);
+  process.exit(2);
+}
 const schemaErrs = validateContractSchema(contract, { full: false });
 if (schemaErrs.length > 0) {
   for (const se of schemaErrs) console.error('契约 schema 错误：' + se);
@@ -136,9 +144,17 @@ for (const o of obligations) {
 // 与模型自述对账：只认实测，自述对不上就是事故（M-19 的机读落点）
 const mismatches = [];
 if (COMPARE) {
-  if (!existsSync(COMPARE)) { console.error('自述 report 读不出来：' + COMPARE); process.exit(2); }
+  if (!existsSync(COMPARE)) {
+    console.error('自述 report 读不出来：' + COMPARE);
+    process.exit(2);
+  }
   let claimed;
-  try { claimed = JSON.parse(readFileSync(COMPARE, 'utf8')); } catch (e) { console.error('自述 report 不是合法 JSON：' + e.message); process.exit(2); }
+  try {
+    claimed = JSON.parse(readFileSync(COMPARE, 'utf8'));
+  } catch (e) {
+    console.error('自述 report 不是合法 JSON：' + e.message);
+    process.exit(2);
+  }
   const list = Array.isArray(claimed) ? claimed : (claimed.rows || claimed.results || []);
   for (const c of list) {
     const m = rows.find((x) => x.id === c.id);

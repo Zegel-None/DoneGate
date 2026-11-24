@@ -42,7 +42,10 @@ runAdapter({
       if (!/<testsuite\b/i.test(rawText)) ctx.fail(3, 'Maestro JUNIT XML 报告损坏（缺少 <testsuite>）');
       for (const m of rawText.matchAll(/<testsuite\b([^>]*)>/gi)) {
         const num = (k) => Number((m[1].match(new RegExp(`\\b${k}=["'](\\d+)["']`)) || [])[1] || 0);
-        totalFlows += num('tests'); failureCount += num('failures'); errorCount += num('errors'); skippedCount += num('skipped');
+        totalFlows += num('tests');
+        failureCount += num('failures');
+        errorCount += num('errors');
+        skippedCount += num('skipped');
       }
       for (const m of rawText.matchAll(/<testcase\b([^>]*[^/])>([\s\S]*?)<\/testcase>/gi)) {
         if (/<(?:failure|error)\b/i.test(m[2])) failingFlows.push((m[1].match(/\bname=["']([^"']+)["']/) || [])[1] || 'unnamed-flow');

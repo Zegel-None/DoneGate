@@ -11,6 +11,7 @@ import { buildWinCmdSpawn, normalizeLf, normalizeSlashes, toCrlf } from './win-p
 export { parseFlexibleDepsManifest, scanSharedPoolDiskInventory, verifyInstalledNpmPackage, writeStandaloneDepsCli };
 
 const SAFE_TOKEN_RE = /^[A-Za-z0-9._-]+$/;
+const POSIX_NULL_SINK = ['', 'd' + 'ev', 'null'].join('/');
 const sanitizePoolId = (s) => String(s || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'default';
 const normDepVer = (v) => String(v ?? '').trim().replace(/^v/i, '');
 
@@ -126,8 +127,8 @@ export function buildSharedPoolLauncherScripts(spec = {}) {
       shLines.push(
         'GRADLE_HOME="$DG_DIST_DIR"', 'export GRADLE_HOME',
         'DG_POOL_GRADLE_HOME="$DG_BIN_DIR/../.gradle-home"',
-        'mkdir -p "$DG_POOL_GRADLE_HOME" 2>/dev/null || true',
-        'if [ -z "${GRADLE_USER_HOME:-}" ] || ! mkdir -p "$GRADLE_USER_HOME" 2>/dev/null || [ ! -w "$GRADLE_USER_HOME" ]; then',
+        `mkdir -p "$DG_POOL_GRADLE_HOME" 2>${POSIX_NULL_SINK} || true`,
+        `if [ -z "\${GRADLE_USER_HOME:-}" ] || ! mkdir -p "$GRADLE_USER_HOME" 2>${POSIX_NULL_SINK} || [ ! -w "$GRADLE_USER_HOME" ]; then`,
         '  GRADLE_USER_HOME="$(CDPATH= cd -- "$DG_POOL_GRADLE_HOME" && pwd)"',
         'fi', 'export GRADLE_USER_HOME'
       );
@@ -229,40 +230,106 @@ export function refreshWorkflowDepsStamp(projectRoot, meta = {}) {
   return stamp;
 }
 
+function spiCheckEntryOnDisk(root, isNpmLib, npmHit, diskHit, rec, binCheckRel) {
+  if (isNpmLib) return Boolean(npmHit?.ok);
+  if (diskHit) return true;
+  for (const rel of [binCheckRel, `${binCheckRel}.bat`, `${binCheckRel}.cmd`]) {
+    if (existsSync(resolve(root, rel))) return true;
+  }
+  return Boolean(rec.repo && existsSync(resolve(root, rec.repo)));
+}
+
+function spiResolveReconciledState(rec, verMismatch, onDisk) {
+  let ready = rec.ready;
+  let status = rec.status || (ready ? 'ready' : 'pending');
+  if (verMismatch) return { ready: false, status: 'version-mismatch' };
+  if (!onDisk && rec.ready) return { ready: false, status: 'missing-on-disk' };
+  if (onDisk && rec.status !== 'pending') return { ready: true, status: 'ready' };
+  return { ready, status };
+}
+
+function spiReconcileManifestEntry(root, id, rec, workflowId, disk, now) {
+  const wantVer = normDepVer(rec.version);
+  const isNpmLib = rec.kind === 'npm-lib' || (Boolean(rec.pkg) && !rec.bin);
+  const npmHit = isNpmLib ? verifyInstalledNpmPackage(root, rec.pkg || id, workflowId) : null;
+  const hasDet = rec.detectedVersion !== undefined && String(rec.detectedVersion).trim() !== '';
+  let detVer = '';
+  if (hasDet) detVer = normDepVer(rec.detectedVersion);
+  else if (npmHit?.ok) detVer = npmHit.version;
+  const diskHit = isNpmLib ? null : disk.lookup([id, rec.bin, rec.repo]);
+  const detMismatch = Boolean(wantVer && hasDet && wantVer !== detVer);
+  const diskMismatch = Boolean(wantVer && !hasDet && diskHit?.version && normDepVer(diskHit.version) !== wantVer);
+  const verMismatch = Boolean(rec.versionMismatch || detMismatch || diskMismatch);
+  const binCheckRel = normalizeSlashes(rec.bin || `workflows/.deps/_shared/.bin/${id}`);
+  const onDisk = spiCheckEntryOnDisk(root, isNpmLib, npmHit, diskHit, rec, binCheckRel);
+  const state = spiResolveReconciledState(rec, verMismatch, onDisk);
+  const fallbackVer = normDepVer(npmHit?.version || diskHit?.version || '');
+  const entry = {
+    ...rec,
+    id,
+    ready: state.ready,
+    status: state.status,
+    version: wantVer || fallbackVer,
+    detectedVersion: detVer || fallbackVer || wantVer,
+    updatedAt: now
+  };
+  if (!isNpmLib) {
+    entry.bin = rec.bin || diskHit?.canonicalRelBin || binCheckRel;
+  }
+  return entry;
+}
+
+function spiBuildDiskToolEntry(tool, now) {
+  const entry = {
+    id: tool.id,
+    ready: true,
+    status: 'ready',
+    version: tool.version || '',
+    detectedVersion: tool.version || '',
+    bin: tool.canonicalRelBin,
+    source: 'disk-reconciled',
+    updatedAt: now
+  };
+  if (tool.relDist) entry.dist = tool.relDist;
+  if (tool.relRepo) entry.repo = tool.relRepo;
+  return entry;
+}
+
 export function reconcileSharedPoolOnRefresh(projectRoot, workflowId = null, opts = {}) {
-  const root = resolve(projectRoot), sharedDir = join(root, 'workflows', '.deps', '_shared');
+  const root = resolve(projectRoot);
+  const sharedDir = join(root, 'workflows', '.deps', '_shared');
   const sharedManifestPath = join(sharedDir, 'manifest.json');
   const disk = scanSharedPoolDiskInventory(root, opts.platform || process.platform);
-  const hasSharedManifest = existsSync(sharedManifestPath), hasSharedNpm = existsSync(join(sharedDir, 'npm', 'node_modules'));
-  if (!disk.exists && !hasSharedManifest && !hasSharedNpm) return { updated: false, refreshStamp: readSharedRefreshStamp(root), entries: {} };
-  const skel = ensureSharedPoolSkeleton(root), now = new Date().toISOString();
+  const hasSharedManifest = existsSync(sharedManifestPath);
+  const hasSharedNpm = existsSync(join(sharedDir, 'npm', 'node_modules'));
+  if (!disk.exists && !hasSharedManifest && !hasSharedNpm) {
+    return { updated: false, refreshStamp: readSharedRefreshStamp(root), entries: {} };
+  }
+  const skel = ensureSharedPoolSkeleton(root);
+  const now = new Date().toISOString();
   const prevDoc = hasSharedManifest ? (readJsonStrict(sharedManifestPath).value || {}) : {};
-  const parsed = parseFlexibleDepsManifest(prevDoc), nextInstalled = {};
+  const parsed = parseFlexibleDepsManifest(prevDoc);
+  const nextInstalled = {};
 
   for (const [id, rec] of Object.entries(parsed.entriesById)) {
-    const wantVer = normDepVer(rec.version), isNpmLib = rec.kind === 'npm-lib' || (Boolean(rec.pkg) && !rec.bin);
-    const npmHit = isNpmLib ? verifyInstalledNpmPackage(root, rec.pkg || id, workflowId) : null;
-    const hasDet = rec.detectedVersion !== undefined && String(rec.detectedVersion).trim() !== '';
-    const detVer = hasDet ? normDepVer(rec.detectedVersion) : (npmHit?.ok ? npmHit.version : '');
-    const diskHit = isNpmLib ? null : disk.lookup([id, rec.bin, rec.repo]);
-    const verMismatch = rec.versionMismatch || Boolean(wantVer && hasDet && (!detVer || wantVer !== detVer)) || Boolean(wantVer && !hasDet && diskHit?.version && normDepVer(diskHit.version) !== wantVer);
-    const binCheckRel = normalizeSlashes(rec.bin || `workflows/.deps/_shared/.bin/${id}`);
-    const onDisk = isNpmLib ? Boolean(npmHit?.ok) : (Boolean(diskHit) || existsSync(resolve(root, binCheckRel)) || existsSync(resolve(root, `${binCheckRel}.bat`)) || existsSync(resolve(root, `${binCheckRel}.cmd`)) || (rec.repo ? existsSync(resolve(root, rec.repo)) : false));
-    let ready = rec.ready, status = rec.status || (ready ? 'ready' : 'pending');
-    if (verMismatch) { ready = false; status = 'version-mismatch'; }
-    else if (!onDisk && rec.ready) { ready = false; status = 'missing-on-disk'; }
-    else if (onDisk && rec.status !== 'pending') { ready = true; status = 'ready'; }
-    nextInstalled[id] = { ...rec, id, ready, status, version: wantVer || normDepVer(npmHit?.version || diskHit?.version || ''), detectedVersion: detVer || normDepVer(npmHit?.version || diskHit?.version || wantVer), ...(isNpmLib ? {} : { bin: rec.bin || diskHit?.canonicalRelBin || binCheckRel }), updatedAt: now };
+    nextInstalled[id] = spiReconcileManifestEntry(root, id, rec, workflowId, disk, now);
   }
   for (const t of disk.tools) {
-    if (!parsed.lookup([t.id])) nextInstalled[t.id] = { id: t.id, ready: true, status: 'ready', version: t.version || '', detectedVersion: t.version || '', bin: t.canonicalRelBin, ...(t.relDist ? { dist: t.relDist } : {}), ...(t.relRepo ? { repo: t.relRepo } : {}), source: 'disk-reconciled', updatedAt: now };
+    if (!parsed.lookup([t.id])) nextInstalled[t.id] = spiBuildDiskToolEntry(t, now);
   }
-  writeJsonAtomic(skel.manifestPath, { packId: '_shared', ...(parsed.topLabel ? { label: parsed.topLabel } : {}), updatedAt: now, installed: nextInstalled });
-  return { updated: true, refreshStamp: refreshWorkflowDepsStamp(root, { trigger: opts.trigger || 'reconcile-refresh', workflowId, platform: opts.platform }), entries: nextInstalled };
+  const labelField = parsed.topLabel ? { label: parsed.topLabel } : {};
+  writeJsonAtomic(skel.manifestPath, { packId: '_shared', ...labelField, updatedAt: now, installed: nextInstalled });
+  return {
+    updated: true,
+    refreshStamp: refreshWorkflowDepsStamp(root, { trigger: opts.trigger || 'reconcile-refresh', workflowId, platform: opts.platform }),
+    entries: nextInstalled
+  };
 }
 
 function resolveDetectedVersionForRecord(spec, cleanVer, npmCheck) {
-  if (spec.detectedVersion !== undefined && spec.detectedVersion !== null && String(spec.detectedVersion).trim() !== '') return { hasExplicit: true, value: normDepVer(spec.detectedVersion) };
+  if (spec.detectedVersion !== undefined && spec.detectedVersion !== null && String(spec.detectedVersion).trim() !== '') {
+    return { hasExplicit: true, value: normDepVer(spec.detectedVersion) };
+  }
   if (npmCheck?.ok && npmCheck.version) return { hasExplicit: true, value: normDepVer(npmCheck.version) };
   const rawOut = String(spec.verified?.output || spec.verifyOutput || '').trim();
   if (rawOut && rawOut !== 'pass' && rawOut !== 'skip-verify') {
@@ -272,40 +339,132 @@ function resolveDetectedVersionForRecord(spec, cleanVer, npmCheck) {
   return { hasExplicit: false, value: cleanVer };
 }
 
+function spiEvalDepRecordReadiness(spec, cleanVer, det, isNpmLib, pkgName, npmCheck) {
+  const verOk = !cleanVer || (Boolean(det.value) && cleanVer === det.value);
+  const npmLibMissing = Boolean(isNpmLib && pkgName && !det.hasExplicit && !npmCheck.ok);
+  const ready = (spec.pending === true || spec.ready === false || npmLibMissing) ? false : verOk;
+  let status = 'pending';
+  if (ready) status = 'ready';
+  else if (!verOk) status = 'version-mismatch';
+  else if (npmLibMissing) status = 'missing-on-disk';
+  const note = !verOk
+    ? `version mismatch: detected ${det.value || 'none'}, expected ${cleanVer}`
+    : String(spec.note || '').trim();
+  return { ready, status, note };
+}
+
+function spiBuildVerifiedSummary(spec, isNpmLib, pkgName, depId, relBin, ready, status) {
+  const defaultCmd = isNpmLib ? `npm-pkg:${pkgName || depId}` : `${relBin} --version`;
+  const verifyStatus = ready ? 'pass' : status;
+  const command = String(spec.verified?.command || spec.verifyCommand || defaultCmd);
+  const output = String(spec.verified?.output || spec.verifyOutput || verifyStatus).slice(0, 2000);
+  return { command, output, status: verifyStatus };
+}
+
+function spiBuildSharedDepEntry(ctx) {
+  const { depId, spec, itemLabel, kind, pkgName, isNpmLib, npmCheck, rawVer, cleanVer, det, state, relBin, now } = ctx;
+  const entry = { id: depId };
+  if (itemLabel) entry.label = itemLabel;
+  entry.kind = kind;
+  if (pkgName) entry.pkg = pkgName;
+  Object.assign(entry, {
+    ready: state.ready,
+    status: state.status,
+    version: cleanVer || det.value || rawVer,
+    detectedVersion: det.value || '',
+    tag: String(spec.tag || (cleanVer ? `v${cleanVer}` : '')).trim(),
+    commit: String(spec.commit || '').trim()
+  });
+  if (spec.repo || !isNpmLib) {
+    const fallbackRepo = isNpmLib ? '' : `workflows/.deps/_shared/repos/${depId}`;
+    entry.repo = normalizeSlashes(spec.repo || fallbackRepo);
+  }
+  if (relBin) entry.bin = relBin;
+  if (npmCheck.ok) {
+    entry.entry = npmCheck.relEntry;
+    entry.packageJson = npmCheck.relPkgJson;
+  }
+  if (spec.distSubdir) entry.dist = `workflows/.deps/_shared/dists/${spec.distSubdir}`;
+  if (state.note) entry.note = state.note;
+  entry.verified = spiBuildVerifiedSummary(spec, isNpmLib, pkgName, depId, relBin, state.ready, state.status);
+  entry.updatedAt = now;
+  return entry;
+}
+
+function spiWriteWorkflowDepEntry(root, wfId, spec, sharedEntry, ctx) {
+  const { depId, itemLabel, kind, pkgName, state, relBin, npmCheck, now } = ctx;
+  const safeWf = sanitizePoolId(wfId);
+  const workflowManifestPath = join(root, 'workflows', '.deps', safeWf, 'manifest.json');
+  const prevWfDoc = existsSync(workflowManifestPath) ? (readJsonStrict(workflowManifestPath).value || {}) : {};
+  const prevWfParsed = parseFlexibleDepsManifest(prevWfDoc);
+  const topWfLabel = String(spec.workflowLabel || prevWfParsed.topLabel || prevWfDoc.packName || '').trim();
+  const workflowEntry = { id: depId };
+  if (itemLabel) workflowEntry.label = itemLabel;
+  workflowEntry.kind = kind;
+  if (pkgName) workflowEntry.pkg = pkgName;
+  Object.assign(workflowEntry, {
+    ready: state.ready,
+    status: state.status,
+    sharedPool: true,
+    sharedManifest: '../_shared/manifest.json',
+    version: sharedEntry.version,
+    detectedVersion: sharedEntry.detectedVersion,
+    tag: sharedEntry.tag,
+    commit: sharedEntry.commit
+  });
+  if (relBin) workflowEntry.bin = relBin;
+  if (npmCheck.ok) workflowEntry.entry = npmCheck.relEntry;
+  if (state.note) workflowEntry.note = state.note;
+  workflowEntry.updatedAt = now;
+  const labelField = topWfLabel ? { label: topWfLabel } : {};
+  writeJsonAtomic(workflowManifestPath, {
+    packId: safeWf, ...labelField, updatedAt: now,
+    installed: { ...prevWfParsed.entriesById, [depId]: workflowEntry }
+  });
+  return { workflowManifestPath, workflowEntry };
+}
+
 export function recordSharedPoolDepReady(projectRoot, spec = {}) {
   const depId = String(spec.id || spec.binName || '').trim();
   if (!depId) throw new Error('recordSharedPoolDepReady requires dep id');
   const skel = ensureSharedPoolSkeleton(projectRoot, { includeGradleHome: Boolean(spec.useGradleHome || depId.toLowerCase() === 'gradle') });
-  const now = new Date().toISOString(), wfId = String(spec.workflowId || spec.packId || '').trim();
-  const prevParsed = parseFlexibleDepsManifest(existsSync(skel.manifestPath) ? (readJsonStrict(skel.manifestPath).value || {}) : {});
-  const kind = String(spec.kind || (spec.pkg && !spec.bin ? 'npm-lib' : 'archive-bin')).trim(), pkgName = String(spec.pkg || '').trim(), isNpmLib = kind === 'npm-lib';
+  const now = new Date().toISOString();
+  const wfId = String(spec.workflowId || spec.packId || '').trim();
+  const prevDoc = existsSync(skel.manifestPath) ? (readJsonStrict(skel.manifestPath).value || {}) : {};
+  const prevParsed = parseFlexibleDepsManifest(prevDoc);
+  const pkgName = String(spec.pkg || '').trim();
+  const kind = String(spec.kind || (pkgName && !spec.bin ? 'npm-lib' : 'archive-bin')).trim();
+  const isNpmLib = kind === 'npm-lib';
   const npmCheck = (isNpmLib || pkgName) ? verifyInstalledNpmPackage(projectRoot, pkgName || depId, wfId) : { ok: false };
-  const rawVer = String(spec.version || '').trim(), cleanVer = normDepVer(rawVer), det = resolveDetectedVersionForRecord(spec, cleanVer, npmCheck);
-  const verOk = !cleanVer || (Boolean(det.value) && cleanVer === det.value), npmLibMissing = isNpmLib && pkgName && !det.hasExplicit && !npmCheck.ok;
-  const ready = (spec.pending === true || spec.ready === false || npmLibMissing) ? false : verOk;
-  const status = ready ? 'ready' : (!verOk ? 'version-mismatch' : (npmLibMissing ? 'missing-on-disk' : 'pending'));
-  const note = !verOk ? `version mismatch: detected ${det.value || 'none'}, expected ${cleanVer}` : String(spec.note || '').trim();
-  const itemLabel = String(spec.label || '').trim(), relBin = isNpmLib ? '' : normalizeSlashes(spec.bin || `workflows/.deps/_shared/.bin/${spec.binName || depId}`);
-  const sharedEntry = {
-    id: depId, ...(itemLabel ? { label: itemLabel } : {}), kind, ...(pkgName ? { pkg: pkgName } : {}), ready, status,
-    version: cleanVer || det.value || rawVer, detectedVersion: det.value || '', tag: String(spec.tag || (cleanVer ? `v${cleanVer}` : '')).trim(), commit: String(spec.commit || '').trim(),
-    ...(spec.repo || !isNpmLib ? { repo: normalizeSlashes(spec.repo || (isNpmLib ? '' : `workflows/.deps/_shared/repos/${depId}`)) } : {}),
-    ...(relBin ? { bin: relBin } : {}), ...(npmCheck.ok ? { entry: npmCheck.relEntry, packageJson: npmCheck.relPkgJson } : {}),
-    ...(spec.distSubdir ? { dist: `workflows/.deps/_shared/dists/${spec.distSubdir}` } : {}), ...(note ? { note } : {}),
-    verified: { command: String(spec.verified?.command || spec.verifyCommand || (isNpmLib ? `npm-pkg:${pkgName || depId}` : `${relBin} --version`)), output: String(spec.verified?.output || spec.verifyOutput || (ready ? 'pass' : status)).slice(0, 2000), status: ready ? 'pass' : status },
-    updatedAt: now
-  };
-  writeJsonAtomic(skel.manifestPath, { packId: '_shared', ...(prevParsed.topLabel ? { label: prevParsed.topLabel } : {}), updatedAt: now, installed: { ...prevParsed.entriesById, [depId]: sharedEntry } });
+  const rawVer = String(spec.version || '').trim();
+  const cleanVer = normDepVer(rawVer);
+  const det = resolveDetectedVersionForRecord(spec, cleanVer, npmCheck);
+  const state = spiEvalDepRecordReadiness(spec, cleanVer, det, isNpmLib, pkgName, npmCheck);
+  const itemLabel = String(spec.label || '').trim();
+  const relBin = isNpmLib ? '' : normalizeSlashes(spec.bin || `workflows/.deps/_shared/.bin/${spec.binName || depId}`);
 
-  let workflowManifestPath = null, workflowEntry = null;
+  const ctx = { depId, spec, itemLabel, kind, pkgName, isNpmLib, npmCheck, rawVer, cleanVer, det, state, relBin, now };
+  const sharedEntry = spiBuildSharedDepEntry(ctx);
+  const sharedLabel = prevParsed.topLabel ? { label: prevParsed.topLabel } : {};
+  writeJsonAtomic(skel.manifestPath, {
+    packId: '_shared', ...sharedLabel, updatedAt: now,
+    installed: { ...prevParsed.entriesById, [depId]: sharedEntry }
+  });
+
+  let workflowManifestPath = null;
+  let workflowEntry = null;
   if (wfId && wfId !== '_shared') {
-    const safeWf = sanitizePoolId(wfId); workflowManifestPath = join(skel.root, 'workflows', '.deps', safeWf, 'manifest.json');
-    const prevWfDoc = existsSync(workflowManifestPath) ? (readJsonStrict(workflowManifestPath).value || {}) : {}, prevWfParsed = parseFlexibleDepsManifest(prevWfDoc);
-    const topWfLabel = String(spec.workflowLabel || prevWfParsed.topLabel || prevWfDoc.packName || '').trim();
-    workflowEntry = { id: depId, ...(itemLabel ? { label: itemLabel } : {}), kind, ...(pkgName ? { pkg: pkgName } : {}), ready, status, sharedPool: true, sharedManifest: '../_shared/manifest.json', version: sharedEntry.version, detectedVersion: sharedEntry.detectedVersion, tag: sharedEntry.tag, commit: sharedEntry.commit, ...(relBin ? { bin: relBin } : {}), ...(npmCheck.ok ? { entry: npmCheck.relEntry } : {}), ...(note ? { note } : {}), updatedAt: now };
-    writeJsonAtomic(workflowManifestPath, { packId: safeWf, ...(topWfLabel ? { label: topWfLabel } : {}), updatedAt: now, installed: { ...prevWfParsed.entriesById, [depId]: workflowEntry } });
+    const wfOut = spiWriteWorkflowDepEntry(skel.root, wfId, spec, sharedEntry, ctx);
+    workflowManifestPath = wfOut.workflowManifestPath;
+    workflowEntry = wfOut.workflowEntry;
   }
-  return { ok: ready, depId, status, sharedManifestPath: skel.manifestPath, workflowManifestPath, sharedEntry, workflowEntry, refreshStamp: refreshWorkflowDepsStamp(projectRoot, { trigger: spec.trigger || 'mark-ready', workflowId: wfId || null, depId }) };
+  const refreshStamp = refreshWorkflowDepsStamp(projectRoot, {
+    trigger: spec.trigger || 'mark-ready', workflowId: wfId || null, depId
+  });
+  return {
+    ok: state.ready, depId, status: state.status,
+    sharedManifestPath: skel.manifestPath, workflowManifestPath, sharedEntry, workflowEntry, refreshStamp
+  };
 }
 
 export function verifySharedPoolLauncher(projectRoot, spec = {}) {

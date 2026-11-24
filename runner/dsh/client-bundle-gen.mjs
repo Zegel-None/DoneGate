@@ -23,7 +23,6 @@ function buildClientHeaderSource() {
 
     var zh = {
       "view.donegate": "完结门",
-      "switch.label": "完结门",
       "dock.pin": "固定",
       "dock.pinned": "已固定",
       "dock.waiting": "等待新消息…",
@@ -35,7 +34,6 @@ function buildClientHeaderSource() {
     };
     var en = {
       "view.donegate": "DoneGate",
-      "switch.label": "DoneGate",
       "dock.pin": "Pin",
       "dock.pinned": "Pinned",
       "dock.waiting": "Waiting for reply…",
@@ -122,7 +120,8 @@ function buildHostOverlayCssSource() {
       "[data-donegate-chat-scroll]::-webkit-scrollbar-track { background: transparent; margin: 6px 0; }",
       "[data-donegate-chat-scroll]::-webkit-scrollbar-thumb { background: var(--dsw-alias-scrollbar-bg-l2, rgba(128, 128, 128, 0.28)); border-radius: 999px; }",
       "[data-donegate-chat-scroll]::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-scrollbar-hover-l2, rgba(128, 128, 128, 0.44)); }",
-      "[data-donegate-resize-bar]:hover [data-donegate-resize-pill] { opacity: 0.72 !important; width: 42px !important; }"
+      "[data-donegate-resize-bar]:hover [data-donegate-resize-pill] { opacity: 0.72 !important; width: 42px !important; }",
+      "[data-sidebar-chat] [data-donegate-dock-wrap], [data-sidebar-chat] [data-donegate-overlay] { display: none !important; }"
     ].join("\n");
 `;
 }
@@ -234,6 +233,7 @@ function buildClientDockStoreSource() {
 
     var dockStore = createDockStore();
     var iframeBySession = new Map();
+    var activePluginCtx = null;
 
     function resolveSessionId(props) {
       if (props && typeof props.useSession === "function") {
@@ -246,6 +246,35 @@ function buildClientDockStoreSource() {
       if (props && props.sessionId) return String(props.sessionId);
       return "default";
     }
+
+    function isSubagentOrEmbeddedSession(props, sessionId) {
+      if (!props) return false;
+      if (props.variant === "embedded" || props.inSidebarChat === true) return true;
+      if (props.session && (props.session.subagent != null || props.session.origin === "subagent")) return true;
+      if (typeof props.useSession === "function") {
+        try {
+          var subFromHook = props.useSession(function (s) {
+            return Boolean(s && (s.subagent != null || s.origin === "subagent"));
+          });
+          if (subFromHook) return true;
+        } catch (err) { void err; }
+      }
+      var sid = sessionId || resolveSessionId(props);
+      if (typeof props.useSessions === "function") {
+        try {
+          var subFromStore = props.useSessions(function (st) {
+            var item = st && st.byId && st.byId[sid];
+            return Boolean(item && (item.origin === "subagent" || item.subagent));
+          });
+          if (subFromStore) return true;
+        } catch (err) { void err; }
+      }
+      var hostEl = props.hostEl || props.container || props.containerEl || props.target || null;
+      if (hostEl && typeof hostEl.closest === "function" && hostEl.closest("[data-sidebar-chat]")) {
+        return true;
+      }
+      return false;
+    }
 `;
 }
 
@@ -253,6 +282,14 @@ function buildClientCanvasViewSource() {
   return String.raw`
     function DoneGateCanvasView(props) {
       var sessionId = resolveSessionId(props);
+      if (isSubagentOrEmbeddedSession(props, sessionId)) {
+        var uic = (props && (props.uiConversation || props.uic))
+          || (activePluginCtx && activePluginCtx.get && activePluginCtx.get("uiConversation"));
+        if (uic && typeof uic.binding === "function") {
+          try { uic.binding(sessionId).activate("chat"); } catch (err) { void err; }
+        }
+        return null;
+      }
       var inputActions = props.inputActions;
       var openRightResource = props.openRightResource;
       var frameRef = React.useRef(null);
@@ -328,34 +365,10 @@ function buildClientCanvasViewSource() {
 
 function buildClientSlotsPluginSource() {
   return String.raw`
-    function DoneGateQuickSwitch(props) {
-      var sessionId = resolveSessionId(props);
-      var t = props.t || function (k) { return zh[k] || k; };
-      if (typeof props.toggleDoneGateView !== "function") return null;
-      return h("button", {
-        type: "button",
-        onClick: function () { props.toggleDoneGateView(sessionId); },
-        style: {
-          display: "inline-flex", alignItems: "center", gap: "5px",
-          height: "28px", padding: "0 10px", boxSizing: "border-box",
-          borderRadius: "var(--dsw-radius-sm, 8px)",
-          border: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.16))",
-          background: "transparent",
-          color: "var(--dsw-alias-label-secondary, inherit)",
-          fontFamily: "var(--dsw-font-family, inherit)",
-          fontSize: "12.5px", fontWeight: 500, cursor: "pointer", lineHeight: "20px"
-        }
-      },
-        h("svg", { width: "13", height: "13", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" },
-          h("path", { d: "M2.5 5.2h11M4.2 5.2v7.3M11.8 5.2v7.3M2 3.2h12", stroke: "currentColor", strokeWidth: "1.35", strokeLinecap: "round" })
-        ),
-        t("switch.label")
-      );
-    }
-
     return {
       inject: ["slots", "locale"],
       apply: function apply(ctx) {
+        activePluginCtx = ctx;
         ctx.effect(function () { return ensureHostOverlayStyle(); }, "dsh-donegate: overlay-css");
         ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "dsh-donegate: locale");
         var t = ctx.locale.bind(NS);
@@ -403,6 +416,7 @@ function buildClientSlotsPluginSource() {
             label: function () { return t("view.donegate"); },
             inject: function () {
               return {
+                uiConversation: ctx.get && ctx.get("uiConversation"),
                 openRightResource: function (addr) {
                   var sr = ctx.get && ctx.get("sidebarRight");
                   if (sr && typeof sr.openResource === "function") sr.openResource(addr, { preferNewPane: false });
@@ -426,16 +440,6 @@ function buildClientSlotsPluginSource() {
               };
             }
           }, DoneGateInputDock);
-        });
-
-        ctx.slots.inject("conversation.input.left", function () {
-          return ctx.slots.register({
-            name: "conversation.input.left",
-            id: "donegate-switch",
-            order: 35,
-            locale: NS,
-            inject: function () { return { toggleDoneGateView: toggleDoneGate }; }
-          }, DoneGateQuickSwitch);
         });
       }
     };

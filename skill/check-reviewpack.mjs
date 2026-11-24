@@ -36,21 +36,23 @@ const 第六类词 = /(ledger|总账|缺口清单|计划|思路|草稿|对话)/i
 // 所以正文检索豁免「判据原文形状」的文件。代价见文件头诚实边界 2。
 const 判据原文形状 = (b) => /claim/i.test(b) && /observable/i.test(b) && /scope/i.test(b);
 
-// 审一份复核包：八行布尔 + 逐行缺口说明
-function auditPack(packRoot) {
+function crpReadPackFiles(packRoot) {
   const { files, unreadable } = walk(packRoot);
   const dirAsFiles = collectDirAsFiles(packRoot);
   const rels = files.map((f) => relative(packRoot, f).split(sep).join('/'));
   // 读不出来 → **null，不折成 ''**。'' 是合法的空文件内容，折平之后这个文件在下面八行里
   // 会按「正常空文件」参与判定，坏文件反而更不容易被看见（等于伪造转绿）。
-  const bodies = files.map((f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } });
-  const 读不出 = [...unreadable, ...dirAsFiles, ...files.filter((_, i) => bodies[i] === null)].map((f) => relative(packRoot, f).split(sep).join('/'));
+  const bodies = files.map((f) => {
+    try { return readFileSync(f, 'utf8'); } catch { return null; }
+  });
+  const 读不出 = [...unreadable, ...dirAsFiles, ...files.filter((_, i) => bodies[i] === null)]
+    .map((f) => relative(packRoot, f).split(sep).join('/'));
   const 正文 = bodies.filter((b) => b !== null);
-  const rows = {};
-  const why = {};
+  return { rels, bodies, 读不出, 正文 };
+}
 
-  // ① 判据原文。W13 的教训（skill/08 §29.3）：认内容不认格式——整份 contract.json、
-  // 单条判据 json、markdown 都收；assertionId 按 G-01 定论不新增字段，认 obligation 的 id。
+function crpAuditFiveCategories(rels, 正文, rows, why) {
+  // ① 判据原文：认内容不认格式；assertionId 按 G-01 定论认 obligation 的 id
   rows['①判据原文'] = 正文.some((b) =>
     /claim/i.test(b) && /observable/i.test(b) && /scope/i.test(b) &&
     /(expect|frozenHash)/i.test(b) && /("id"|assertionId)/.test(b));
@@ -75,60 +77,71 @@ function auditPack(packRoot) {
   rows['⑤完成声称'] = 正文.some((b) => /(做完了|已完成|本轮完成|完成声称|claim of completion)/.test(b)) ||
     rels.some((r) => /claim|声称/i.test(r));
   if (!rows['⑤完成声称']) why['⑤完成声称'] = '找不到完成声称的原文';
+}
 
+function crpCheckManifestClosure(rels, bodies) {
   // 清单闭合（卡出口 2）：双向对齐 + 逐文件哈希重算——改一字、幽灵条目、清单外文件都红
   const maniRel = rels.find((r) => /MANIFEST/i.test(r));
-  if (!maniRel) {
-    rows['清单闭合'] = false;
-    why['清单闭合'] = '没有 MANIFEST';
-  } else {
-    const entries = new Map();
-    const maniBody = bodies[rels.indexOf(maniRel)];
-    for (const line of (maniBody === null ? '' : maniBody).split(/\r?\n/)) {
-      const m = line.match(/^([0-9a-f]{64})\s+\*?\s*(.+?)\s*$/);
-      if (m) entries.set(m[2].replace(/\\/g, '/'), m[1]);
-    }
-    const relNoMani = rels.filter((r) => !/MANIFEST/i.test(r));
-    const 清单外 = relNoMani.filter((r) => !entries.has(r));
-    const 幽灵 = [...entries.keys()].filter((r) => !rels.includes(r));
-    // 用已经读进来的那一份算哈希（不再二次读盘）；读不出的文件直接算坏哈希——那是材料不全，不是通过
-    const 坏哈希 = relNoMani.filter((r) => {
-      const i = rels.indexOf(r);
-      if (bodies[i] === null) return true;
-      return entries.has(r) && entries.get(r) !== sha256(bodies[i]);
-    });
-    rows['清单闭合'] = 清单外.length === 0 && 幽灵.length === 0 && 坏哈希.length === 0;
-    if (!rows['清单闭合']) {
-      const w = [];
-      if (清单外.length) w.push('清单外文件 ' + 清单外.slice(0, 3).join(','));
-      if (幽灵.length) w.push('列了不存在的 ' + 幽灵.slice(0, 3).join(','));
-      if (坏哈希.length) w.push('哈希对不上 ' + 坏哈希.slice(0, 3).join(','));
-      why['清单闭合'] = w.join('；');
+  if (!maniRel) return { ok: false, why: '没有 MANIFEST' };
+  const entries = new Map();
+  const maniBody = bodies[rels.indexOf(maniRel)] ?? '';
+  for (const line of maniBody.split(/\r?\n/)) {
+    const m = line.match(/^([0-9a-f]{64})\s+\*?\s*(.+?)\s*$/);
+    if (m) entries.set(m[2].replace(/\\/g, '/'), m[1]);
+  }
+  const relNoMani = rels.filter((r) => !/MANIFEST/i.test(r));
+  const 清单外 = relNoMani.filter((r) => !entries.has(r));
+  const 幽灵 = [...entries.keys()].filter((r) => !rels.includes(r));
+  const 坏哈希 = relNoMani.filter((r) => {
+    const i = rels.indexOf(r);
+    if (bodies[i] === null) return true;
+    return entries.has(r) && entries.get(r) !== sha256(bodies[i]);
+  });
+  if (清单外.length === 0 && 幽灵.length === 0 && 坏哈希.length === 0) return { ok: true, why: '' };
+  const w = [];
+  if (清单外.length) w.push('清单外文件 ' + 清单外.slice(0, 3).join(','));
+  if (幽灵.length) w.push('列了不存在的 ' + 幽灵.slice(0, 3).join(','));
+  if (坏哈希.length) w.push('哈希对不上 ' + 坏哈希.slice(0, 3).join(','));
+  return { ok: false, why: w.join('；') };
+}
+
+function crpCheckForeignRefs(own, rels, bodies) {
+  // 无越界材料（卡出口 7）：只认 contracts/<id> 字样
+  const 越界 = [];
+  const fre = /contracts\/([a-z0-9-]+)/gi;
+  for (let i = 0; i < rels.length; i++) {
+    fre.lastIndex = 0;
+    const src = rels[i] + '\n' + (bodies[i] ?? '');
+    for (let m = fre.exec(src); m; m = fre.exec(src)) {
+      if (m[1] !== own) {
+        越界.push(rels[i] + '→' + m[0]);
+        break;
+      }
     }
   }
+  return { ok: 越界.length === 0, why: 越界.slice(0, 3).join('；') };
+}
 
-  // 无第六类（INV-14）：委托给 checkSixthCategory，区分额外叙述材料与合法业务域名/载体路径
-  // - 允许合法业务契约名（如 ledger-core、plan-scheduler）出现在载体路径及 scope 路径中；
-  // - 判据原文形状、diff/、evidence/ 仍走结构载体豁免；
-  // - 塞入 LEDGER.md、计划.md 或在完成声称/额外文档写叙述性「总账/计划/思路/对话」依然必红。
+// 审一份复核包：八行布尔 + 逐行缺口说明
+function auditPack(packRoot) {
+  const { rels, bodies, 读不出, 正文 } = crpReadPackFiles(packRoot);
+  const rows = {};
+  const why = {};
+
+  crpAuditFiveCategories(rels, 正文, rows, why);
+
+  const mani = crpCheckManifestClosure(rels, bodies);
+  rows['清单闭合'] = mani.ok;
+  if (!mani.ok) why['清单闭合'] = mani.why;
+
   const own = basename(resolve(packRoot));
   const sixth = checkSixthCategory(own, rels, bodies);
   rows['无第六类'] = sixth.ok;
   if (!rows['无第六类']) why['无第六类'] = sixth.why;
 
-  // 无越界材料（卡出口 7）：只认 contracts/<id> 字样
-  // 说明：仅在包名与跨契约目录不匹配时判定越界
-  // （此行保持 bad/ok 位于 255/256 行对齐 symbols-baseline）
-  //
-  const 越界 = [];
-  const fre = /contracts\/([a-z0-9-]+)/gi;
-  for (let i = 0; i < rels.length; i++) {
-    fre.lastIndex = 0;
-    const src = rels[i] + '\n' + (bodies[i] === null ? '' : bodies[i]);
-    for (let m = fre.exec(src); m; m = fre.exec(src)) { if (m[1] !== own) { 越界.push(rels[i] + '→' + m[0]); break; } }
-  }
-  rows['无越界材料'] = 越界.length === 0;
-  if (越界.length) why['无越界材料'] = 越界.slice(0, 3).join('；');
+  const foreign = crpCheckForeignRefs(own, rels, bodies);
+  rows['无越界材料'] = foreign.ok;
+  if (!foreign.ok) why['无越界材料'] = foreign.why;
 
   const fails = 行序.filter((k) => rows[k] === false).map((k) => k + '：' + (why[k] || '未过'));
   return { rows, fails, own, 读不出 };
@@ -247,9 +260,7 @@ const cases = [
   { name: 'foreign', red: ['无越界材料'], note: '越界必红：对照.md 提到 contracts/metrics-rollup，其余行不红' }
 ];
 
-// `fails` / `bad` / `ok` 必须在 `--pack` 分支**之前**声明：`auditPack` 里会用 `bad`，
-// 而 `--pack` 分支在本文件里先于它们执行。旧版把它们放在分支之后，`unreadable` 非空时
-// 就是 const 的 TDZ 崩溃（抛 ReferenceError、退出码 1），不是判 3。
+// `fails` / `bad` / `ok` 必须在 `--pack` 分支**之前**声明
 let fails = 0;
 const bad = (m) => { fails++; console.log('  ✗ ' + m); };
 const ok = (m) => console.log('  ✓ ' + m);

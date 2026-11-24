@@ -33,113 +33,327 @@ const SKIP_DIRS = new Set([
 ]);
 const JS_EXTS = new Set(['.mjs', '.cjs', '.js']);
 const JSONC_ALLOW_RE = /(?:^|\/)(?:tsconfig(?:\.[a-z0-9_-]+)?|\.oxlintrc|jsconfig)\.json$/i;
+const CMI_DECL_STOP_RE = /^(?:export|import|function|class|const|let|var|if|for|while|return|try)$/;
+
+const cmiIsIdentStart = (ch) => /[A-Za-z_$]/.test(ch);
+const cmiIsIdentPart = (ch) => /[A-Za-z0-9_$]/.test(ch);
+
+function cmiSkipComment(source, start, next) {
+  let i = start + 2;
+  if (next === '/') {
+    while (i < source.length && source[i] !== '\n') i++;
+    return i;
+  }
+  while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++;
+  return i + 2;
+}
+
+function cmiReadStringToken(source, start, tokens) {
+  const q = source[start];
+  let val = '';
+  let i = start + 1;
+  while (i < source.length && source[i] !== q) {
+    if (source[i] === '\\') {
+      val += source.slice(i + 1, i + 2);
+      i += 2;
+      continue;
+    }
+    val += source[i++];
+  }
+  tokens.push({ type: 'string', value: val });
+  return i + 1;
+}
+
+function cmiSkipSimpleQuoted(source, start) {
+  const sq = source[start];
+  let i = start + 1;
+  while (i < source.length && source[i] !== sq) {
+    i += source[i] === '\\' ? 2 : 1;
+  }
+  return i + 1;
+}
+
+function cmiSkipInlineRegex(source, start) {
+  let i = start + 1;
+  let inCls = false;
+  while (i < source.length && source[i] !== '\n') {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === '[') inCls = true;
+    else if (source[i] === ']') inCls = false;
+    else if (source[i] === '/' && !inCls) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+function cmiSkipTemplateExpr(source, start) {
+  let i = start;
+  let depth = 1;
+  let prevSig = '{';
+  while (i < source.length && depth > 0) {
+    const tc = source[i];
+    if (tc === "'" || tc === '"' || tc === '`') {
+      i = cmiSkipSimpleQuoted(source, i);
+      prevSig = tc;
+      continue;
+    }
+    if (tc === '/' && /[=([,:!&|?;{]/.test(prevSig) && source[i + 1] !== '/' && source[i + 1] !== '*') {
+      i = cmiSkipInlineRegex(source, i);
+      prevSig = '/';
+      continue;
+    }
+    if (tc === '{') depth++;
+    else if (tc === '}') depth--;
+    if (!/\s/.test(tc)) prevSig = tc;
+    i++;
+  }
+  return i;
+}
+
+function cmiReadTemplateToken(source, start, tokens) {
+  let i = start + 1;
+  while (i < source.length && source[i] !== '`') {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === '$' && source[i + 1] === '{') {
+      i = cmiSkipTemplateExpr(source, i + 2);
+      continue;
+    }
+    i++;
+  }
+  tokens.push({ type: 'template', value: '' });
+  return i + 1;
+}
+
+function cmiCanStartRegex(prev) {
+  if (!prev) return true;
+  if (prev.type === 'punct' && /[=([,:!&|?;{}]/.test(prev.value)) return true;
+  return prev.type === 'ident' && /^(?:return|throw|case|typeof|void|delete|in|of)$/.test(prev.value);
+}
+
+function cmiReadRegexToken(source, start, tokens) {
+  let i = start + 1;
+  let inClass = false;
+  while (i < source.length && source[i] !== '\n') {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === '[') inClass = true;
+    else if (source[i] === ']') inClass = false;
+    else if (source[i] === '/' && !inClass) {
+      i++;
+      while (i < source.length && /[a-z]/i.test(source[i])) i++;
+      break;
+    }
+    i++;
+  }
+  tokens.push({ type: 'regex', value: '' });
+  return i;
+}
+
+function cmiReadIdentToken(source, start, tokens) {
+  let i = start;
+  let id = '';
+  while (i < source.length && cmiIsIdentPart(source[i])) id += source[i++];
+  tokens.push({ type: 'ident', value: id });
+  return i;
+}
 
 export function scanJsModuleTokens(source) {
   const tokens = [];
-  const n = source.length;
   let i = 0;
-  const isIdentStart = (ch) => /[A-Za-z_$]/.test(ch);
-  const isIdentPart = (ch) => /[A-Za-z0-9_$]/.test(ch);
-
-  while (i < n) {
+  while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1] || '';
-    if (/\s/.test(ch)) { i++; continue; }
-    if (ch === '/' && next === '/') {
-      i += 2;
-      while (i < n && source[i] !== '\n') i++;
+    if (/\s/.test(ch)) {
+      i++;
       continue;
     }
-    if (ch === '/' && next === '*') {
-      i += 2;
-      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) i++;
-      i += 2;
+    if (ch === '/' && (next === '/' || next === '*')) {
+      i = cmiSkipComment(source, i, next);
       continue;
     }
     if (ch === "'" || ch === '"') {
-      const q = ch;
-      let val = '';
-      i++;
-      while (i < n && source[i] !== q) {
-        if (source[i] === '\\') { val += source.slice(i + 1, i + 2); i += 2; continue; }
-        val += source[i++];
-      }
-      i++;
-      tokens.push({ type: 'string', value: val });
+      i = cmiReadStringToken(source, i, tokens);
       continue;
     }
     if (ch === '`') {
-      i++;
-      while (i < n && source[i] !== '`') {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === '$' && source[i + 1] === '{') {
-          i += 2;
-          let depth = 1;
-          let prevSig = '{';
-          while (i < n && depth > 0) {
-            const tc = source[i];
-            if (tc === "'" || tc === '"' || tc === '`') {
-              const sq = source[i++];
-              while (i < n && source[i] !== sq) { if (source[i] === '\\') i += 2; else i++; }
-              i++;
-              prevSig = sq;
-              continue;
-            }
-            if (tc === '/' && /[=([,:!&|?;{]/.test(prevSig) && source[i + 1] !== '/' && source[i + 1] !== '*') {
-              i++;
-              let inCls = false;
-              while (i < n && source[i] !== '\n') {
-                if (source[i] === '\\') { i += 2; continue; }
-                if (source[i] === '[') inCls = true;
-                else if (source[i] === ']') inCls = false;
-                else if (source[i] === '/' && !inCls) { i++; break; }
-                i++;
-              }
-              prevSig = '/';
-              continue;
-            }
-            if (tc === '{') depth++;
-            else if (tc === '}') depth--;
-            if (!/\s/.test(tc)) prevSig = tc;
-            i++;
-          }
-          continue;
-        }
-        i++;
-      }
-      i++;
-      tokens.push({ type: 'template', value: '' });
+      i = cmiReadTemplateToken(source, i, tokens);
       continue;
     }
-    if (ch === '/') {
-      const prev = tokens[tokens.length - 1];
-      const canBeRegex = !prev || (prev.type === 'punct' && /[=([,:!&|?;{}]/.test(prev.value)) ||
-        (prev.type === 'ident' && /^(?:return|throw|case|typeof|void|delete|in|of)$/.test(prev.value));
-      if (canBeRegex) {
-        i++;
-        let inClass = false;
-        while (i < n) {
-          if (source[i] === '\\') { i += 2; continue; }
-          if (source[i] === '[') inClass = true;
-          else if (source[i] === ']') inClass = false;
-          else if (source[i] === '/' && !inClass) { i++; while (i < n && /[a-z]/i.test(source[i])) i++; break; }
-          else if (source[i] === '\n') break;
-          i++;
-        }
-        tokens.push({ type: 'regex', value: '' });
-        continue;
-      }
+    if (ch === '/' && cmiCanStartRegex(tokens[tokens.length - 1])) {
+      i = cmiReadRegexToken(source, i, tokens);
+      continue;
     }
-    if (isIdentStart(ch)) {
-      let id = '';
-      while (i < n && isIdentPart(source[i])) id += source[i++];
-      tokens.push({ type: 'ident', value: id });
+    if (cmiIsIdentStart(ch)) {
+      i = cmiReadIdentToken(source, i, tokens);
       continue;
     }
     tokens.push({ type: 'punct', value: ch });
     i++;
   }
   return tokens;
+}
+
+function cmiReadBraceSpecifiers(toks, openBraceIdx) {
+  let j = openBraceIdx + 1;
+  const pairs = [];
+  while (j < toks.length && toks[j].value !== '}') {
+    if (toks[j].type !== 'ident') {
+      j++;
+      continue;
+    }
+    const orig = toks[j].value;
+    const hasAs = toks[j + 1]?.type === 'ident' && toks[j + 1].value === 'as' && toks[j + 2]?.type === 'ident';
+    pairs.push({ orig, exported: hasAs ? toks[j + 2].value : orig });
+    j += hasAs ? 3 : 1;
+  }
+  if (toks[j]?.value === '}') j++;
+  return { pairs, nextIdx: j };
+}
+
+function cmiConsumeImportBindings(toks, startIdx) {
+  let j = startIdx;
+  let hasDefault = false;
+  let named = [];
+  if (toks[j]?.type === 'ident' && toks[j].value !== 'from') {
+    hasDefault = true;
+    j++;
+    if (toks[j]?.value === ',') j++;
+  }
+  if (toks[j]?.value === '*') {
+    j += 2;
+    if (toks[j]?.type === 'ident') j++;
+  } else if (toks[j]?.value === '{') {
+    const br = cmiReadBraceSpecifiers(toks, j);
+    named = br.pairs.map((p) => p.orig);
+    j = br.nextIdx;
+  }
+  return { named: hasDefault ? ['default', ...named] : named, nextIdx: j };
+}
+
+function cmiParseImportAt(toks, i, imports) {
+  const n1 = toks[i + 1];
+  if (!n1 || n1.value === '.') return i;
+  if (n1.value === '(') {
+    if (toks[i + 2]?.type === 'string') imports.push({ spec: toks[i + 2].value, named: [], isDynamic: true });
+    return i;
+  }
+  if (n1.type === 'string') {
+    imports.push({ spec: n1.value, named: [], isDynamic: false });
+    return i;
+  }
+  const b = cmiConsumeImportBindings(toks, i + 1);
+  if (toks[b.nextIdx]?.type === 'ident' && toks[b.nextIdx].value === 'from' && toks[b.nextIdx + 1]?.type === 'string') {
+    imports.push({ spec: toks[b.nextIdx + 1].value, named: b.named, isDynamic: false });
+    return b.nextIdx + 1;
+  }
+  return i;
+}
+
+function cmiCollectDestructuredExports(toks, startIdx, exports) {
+  let j = startIdx;
+  while (j < toks.length && toks[j].value !== '}') {
+    if (toks[j].type !== 'ident') {
+      j++;
+      continue;
+    }
+    if (toks[j + 1]?.value === ':' && toks[j + 2]?.type === 'ident') {
+      exports.add(toks[j + 2].value);
+      j += 3;
+    } else {
+      exports.add(toks[j].value);
+      j++;
+    }
+  }
+}
+
+function cmiStepDeclDepth(val, d) {
+  if (val === '{') d.brace++;
+  else if (val === '}') d.brace = Math.max(0, d.brace - 1);
+  else if (val === '(') d.paren++;
+  else if (val === ')') d.paren = Math.max(0, d.paren - 1);
+  else if (val === '[') d.bracket++;
+  else if (val === ']') d.bracket = Math.max(0, d.bracket - 1);
+}
+
+function cmiParseExportVarDecl(toks, startIdx, exports) {
+  if (toks[startIdx]?.value === '{') {
+    cmiCollectDestructuredExports(toks, startIdx + 1, exports);
+    return;
+  }
+  const d = { brace: 0, paren: 0, bracket: 0 };
+  let expectBinding = true;
+  for (let j = startIdx; j < toks.length; j++) {
+    const t = toks[j];
+    const atTop = d.brace === 0 && d.paren === 0 && d.bracket === 0;
+    if (!atTop) {
+      cmiStepDeclDepth(t.value, d);
+      continue;
+    }
+    if (t.value === ';') break;
+    if (expectBinding && t.type === 'ident') {
+      exports.add(t.value);
+      expectBinding = false;
+      continue;
+    }
+    if (t.value === ',') {
+      expectBinding = true;
+      continue;
+    }
+    if (!expectBinding && t.type === 'ident' && CMI_DECL_STOP_RE.test(t.value)) break;
+    cmiStepDeclDepth(t.value, d);
+  }
+}
+
+function cmiParseExportStarOrBraces(toks, i, exports, imports, reExportsAll) {
+  if (toks[i + 1].value === '*') {
+    if (toks[i + 2]?.type === 'ident' && toks[i + 2].value === 'as' && toks[i + 3]?.type === 'ident' && toks[i + 4]?.value === 'from' && toks[i + 5]?.type === 'string') {
+      exports.add(toks[i + 3].value);
+      imports.push({ spec: toks[i + 5].value, named: [], isDynamic: false });
+    } else if (toks[i + 2]?.type === 'ident' && toks[i + 2].value === 'from' && toks[i + 3]?.type === 'string') {
+      reExportsAll.push(toks[i + 3].value);
+      imports.push({ spec: toks[i + 3].value, named: [], isDynamic: false });
+    }
+    return;
+  }
+  const br = cmiReadBraceSpecifiers(toks, i + 1);
+  for (const p of br.pairs) exports.add(p.exported);
+  if (toks[br.nextIdx]?.type === 'ident' && toks[br.nextIdx].value === 'from' && toks[br.nextIdx + 1]?.type === 'string') {
+    imports.push({ spec: toks[br.nextIdx + 1].value, named: br.pairs.map((p) => p.orig), isDynamic: false });
+  }
+}
+
+function cmiParseExportAt(toks, i, exports, imports, reExportsAll) {
+  const n1 = toks[i + 1];
+  if (!n1) return;
+  if (n1.type === 'ident' && n1.value === 'default') {
+    exports.add('default');
+    return;
+  }
+  if (n1.type === 'ident' && (n1.value === 'function' || n1.value === 'class')) {
+    const fnIdx = toks[i + 2]?.value === '*' ? i + 3 : i + 2;
+    if (toks[fnIdx]?.type === 'ident') exports.add(toks[fnIdx].value);
+    return;
+  }
+  if (n1.type === 'ident' && n1.value === 'async' && toks[i + 2]?.value === 'function') {
+    const fnIdx = toks[i + 3]?.value === '*' ? i + 4 : i + 3;
+    if (toks[fnIdx]?.type === 'ident') exports.add(toks[fnIdx].value);
+    return;
+  }
+  if (n1.type === 'ident' && (n1.value === 'const' || n1.value === 'let' || n1.value === 'var')) {
+    cmiParseExportVarDecl(toks, i + 2, exports);
+    return;
+  }
+  if (n1.value === '*' || n1.value === '{') {
+    cmiParseExportStarOrBraces(toks, i, exports, imports, reExportsAll);
+  }
 }
 
 export function parseModuleInterface(source) {
@@ -151,154 +365,21 @@ export function parseModuleInterface(source) {
 
   for (let i = 0; i < toks.length; i++) {
     const tk = toks[i];
-    if (tk.type === 'ident' && tk.value === 'module' && toks[i + 1]?.value === '.' && toks[i + 2]?.value === 'exports') {
+    if (tk.type !== 'ident') continue;
+    if (tk.value === 'module' && toks[i + 1]?.value === '.' && toks[i + 2]?.value === 'exports') {
       hasCjsExport = true;
+      continue;
     }
-    if (tk.type === 'ident' && tk.value === 'require' && toks[i + 1]?.value === '(' && toks[i + 2]?.type === 'string' && toks[i + 3]?.value === ')') {
+    if (tk.value === 'require' && toks[i + 1]?.value === '(' && toks[i + 2]?.type === 'string' && toks[i + 3]?.value === ')') {
       imports.push({ spec: toks[i + 2].value, named: [], isDynamic: true });
       continue;
     }
-    if (tk.type === 'ident' && tk.value === 'import') {
-      if (toks[i + 1]?.value === '.') continue;
-      if (toks[i + 1]?.value === '(') {
-        if (toks[i + 2]?.type === 'string') imports.push({ spec: toks[i + 2].value, named: [], isDynamic: true });
-        continue;
-      }
-      if (toks[i + 1]?.type === 'string') {
-        imports.push({ spec: toks[i + 1].value, named: [], isDynamic: false });
-        continue;
-      }
-      const named = [];
-      let j = i + 1;
-      let hasDefault = false;
-      if (toks[j]?.type === 'ident' && toks[j].value !== 'from') {
-        hasDefault = true;
-        j++;
-        if (toks[j]?.value === ',') j++;
-      }
-      if (toks[j]?.value === '*') {
-        j += 2;
-        if (toks[j]?.type === 'ident') j++;
-      } else if (toks[j]?.value === '{') {
-        j++;
-        while (j < toks.length && toks[j].value !== '}') {
-          if (toks[j].type === 'ident') {
-            const orig = toks[j].value;
-            if (toks[j + 1]?.type === 'ident' && toks[j + 1].value === 'as' && toks[j + 2]?.type === 'ident') {
-              j += 3;
-            } else {
-              j++;
-            }
-            named.push(orig);
-          } else {
-            j++;
-          }
-        }
-        if (toks[j]?.value === '}') j++;
-      }
-      if (toks[j]?.type === 'ident' && toks[j].value === 'from' && toks[j + 1]?.type === 'string') {
-        const allNamed = hasDefault ? ['default', ...named] : named;
-        imports.push({ spec: toks[j + 1].value, named: allNamed, isDynamic: false });
-        i = j + 1;
-      }
+    if (tk.value === 'import') {
+      i = cmiParseImportAt(toks, i, imports);
       continue;
     }
-    if (tk.type === 'ident' && tk.value === 'export') {
-      const n1 = toks[i + 1];
-      if (!n1) continue;
-      if (n1.type === 'ident' && n1.value === 'default') {
-        exports.add('default');
-        continue;
-      }
-      if (n1.type === 'ident' && (n1.value === 'function' || n1.value === 'class')) {
-        let fnIdx = i + 2;
-        if (toks[fnIdx]?.value === '*') fnIdx++;
-        if (toks[fnIdx]?.type === 'ident') exports.add(toks[fnIdx].value);
-        continue;
-      }
-      if (n1.type === 'ident' && n1.value === 'async' && toks[i + 2]?.value === 'function') {
-        let fnIdx = i + 3;
-        if (toks[fnIdx]?.value === '*') fnIdx++;
-        if (toks[fnIdx]?.type === 'ident') exports.add(toks[fnIdx].value);
-        continue;
-      }
-      if (n1.type === 'ident' && (n1.value === 'const' || n1.value === 'let' || n1.value === 'var')) {
-        let j = i + 2;
-        let braceDepth = 0, parenDepth = 0, bracketDepth = 0;
-        if (toks[j]?.value === '{') {
-          j++;
-          while (j < toks.length && toks[j].value !== '}') {
-            if (toks[j].type === 'ident') {
-              if (toks[j + 1]?.value === ':' && toks[j + 2]?.type === 'ident') {
-                exports.add(toks[j + 2].value);
-                j += 3;
-              } else {
-                exports.add(toks[j].value);
-                j++;
-              }
-            } else j++;
-          }
-          continue;
-        }
-        let expectBinding = true;
-        while (j < toks.length) {
-          const t = toks[j];
-          if (braceDepth === 0 && parenDepth === 0 && bracketDepth === 0) {
-            if (t.value === ';') break;
-            if (expectBinding && t.type === 'ident') {
-              exports.add(t.value);
-              expectBinding = false;
-              j++;
-              continue;
-            }
-            if (t.value === ',') { expectBinding = true; j++; continue; }
-            if (!expectBinding && t.type === 'ident' && /^(?:export|import|function|class|const|let|var|if|for|while|return|try)$/.test(t.value)) break;
-          }
-          if (t.value === '{') braceDepth++;
-          else if (t.value === '}') braceDepth = Math.max(0, braceDepth - 1);
-          else if (t.value === '(') parenDepth++;
-          else if (t.value === ')') parenDepth = Math.max(0, parenDepth - 1);
-          else if (t.value === '[') bracketDepth++;
-          else if (t.value === ']') bracketDepth = Math.max(0, bracketDepth - 1);
-          j++;
-        }
-        continue;
-      }
-      if (n1.value === '*') {
-        if (toks[i + 2]?.type === 'ident' && toks[i + 2].value === 'as' && toks[i + 3]?.type === 'ident' && toks[i + 4]?.value === 'from' && toks[i + 5]?.type === 'string') {
-          exports.add(toks[i + 3].value);
-          imports.push({ spec: toks[i + 5].value, named: [], isDynamic: false });
-        } else if (toks[i + 2]?.type === 'ident' && toks[i + 2].value === 'from' && toks[i + 3]?.type === 'string') {
-          reExportsAll.push(toks[i + 3].value);
-          imports.push({ spec: toks[i + 3].value, named: [], isDynamic: false });
-        }
-        continue;
-      }
-      if (n1.value === '{') {
-        let j = i + 2;
-        const pairs = [];
-        while (j < toks.length && toks[j].value !== '}') {
-          if (toks[j].type === 'ident') {
-            const orig = toks[j].value;
-            let exported = orig;
-            if (toks[j + 1]?.type === 'ident' && toks[j + 1].value === 'as' && toks[j + 2]?.type === 'ident') {
-              exported = toks[j + 2].value;
-              j += 3;
-            } else {
-              j++;
-            }
-            pairs.push({ orig, exported });
-          } else j++;
-        }
-        if (toks[j]?.value === '}') j++;
-        if (toks[j]?.type === 'ident' && toks[j].value === 'from' && toks[j + 1]?.type === 'string') {
-          const spec = toks[j + 1].value;
-          for (const p of pairs) exports.add(p.exported);
-          imports.push({ spec, named: pairs.map((p) => p.orig), isDynamic: false });
-        } else {
-          for (const p of pairs) exports.add(p.exported);
-        }
-      }
+    if (tk.value === 'export') {
+      cmiParseExportAt(toks, i, exports, imports, reExportsAll);
     }
   }
   return { imports, exports, reExportsAll, hasCjsExport };
@@ -531,7 +612,6 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
     }
   }
 
-
   // M6：公共原语反手搓门禁与核心子模块行数棘轮
   const CORE_SPLIT_RE = /^runner\/core\/(?:cmd-[a-z-]+|commands-[ab]|gates|project-loader|state-calc|gate-checks|graph-edges)\.mjs$/;
   for (const [f, info] of parsedMap.entries()) {
@@ -566,7 +646,10 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
       }
     }
 
-    const effLines = rawSrc.split(/\r?\n/).filter((l) => { const s = l.trim(); return s && !s.startsWith("//") && !s.startsWith("*") && !s.startsWith("/*"); }).length;
+    const effLines = rawSrc.split(/\r?\n/).filter((l) => {
+      const s = l.trim();
+      return s && !s.startsWith('//') && !s.startsWith('*') && !s.startsWith('/*');
+    }).length;
     if (/^runner\/atlas\/wb-(?:logic|style|dom)-[a-z]\.mjs$/.test(rel)) {
       fails.push(`M6 禁止机械字母切片回潮 (${rel})：请归入 runner/atlas/ 职责语义模块（见 MODULE-INDEX.md）`);
     } else if (CORE_SPLIT_RE.test(rel) && effLines > 420) {

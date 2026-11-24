@@ -25,10 +25,10 @@
      ```
      自动拦截越界改写非本卡 `scope` 文件、私改已冻结导出签名、绕过门面私引内部实现与未声明红线依赖；退出码为 `0` 后，子代理仅将输出的 **500 Tokens 以内 JSON 回执**交回总控会话，随即销毁子会话上下文。
 
-## 2. 工程与提交红线
+## 2. 四维工程与提交红线
 
 - **跨平台兼容**：路径处理统一使用 `node:path`，禁止硬编码盘符或个人本机绝对路径。
-- **小步增量预算**：单次提交新增代码 `<= 300` 行、涉及代码文件 `<= 8` 个；单文件有效代码 `600` 行预警 / `850` 行硬顶，禁止按字母机械切碎文件。
+- **四维结构化预算**：`tests/**` （私有仓）与 `*-fixtures.mjs` 豁免生产代码行数配额（鼓励逻辑与单测同批提交）；单次提交净增生产代码 `<= 250` 行绿灯、`251–450` 行软提示、`> 450` 行硬阻断，生产文件 `<= 6` 个（含测试总文件 `<= 10` 个）；单函数认知复杂度 `<= 15` 预警、`> 25` 硬阻断，严禁单行压码钻空子；单文件有效代码 `600` 行预警 / `850` 行硬顶，禁止按字母机械切碎文件。
 - **严禁凑绿**：禁止 `.skip/.only/.todo`、恒真断言、删断言凑绿、静态检查豁免注释、`|| true` 吞退出码或 `TODO/FIXME` 空壳实现。
 - **适配器与工作流扩展**：新增外部工具统一使用 `node skill/new-adapter.mjs <tool> --archetype <形态> --card-json` 委托 `skill/adapters/_shared.mjs`（`runAdapter`），外部依赖按需补齐至 `workflows/.deps/_shared/`，严禁将第三方源码或二进制提交入库。
 
@@ -36,6 +36,7 @@
 
 ```bash
 node skill/check-escapes.mjs --self-check
+node skill/check-commit-hygiene.mjs --audit-repo
 node runner/self-test.mjs
 node runner/dsh-fixtures.mjs
 node runner/atlas-fixtures.mjs

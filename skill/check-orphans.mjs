@@ -22,38 +22,74 @@ import { readMaybe, readJson } from './io.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 
+function corLoadContracts(projectRoot) {
+  const cDir = join(projectRoot, 'contracts');
+  if (!existsSync(cDir)) return [];
+  const contracts = [];
+  for (const e of readdirSync(cDir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const j = readJson(join(cDir, e.name, 'contract.json'));
+    if (j && j.id) {
+      contracts.push({
+        id: j.id,
+        retired: typeof j.retired === 'string' && j.retired.trim() !== ''
+      });
+    }
+  }
+  return contracts;
+}
+
+function corLoadFunctions(projectRoot) {
+  const fDir = join(projectRoot, 'functions');
+  if (!existsSync(fDir)) return [];
+  const functions = [];
+  for (const e of readdirSync(fDir)) {
+    if (!e.endsWith('.json')) continue;
+    const j = readJson(join(fDir, e));
+    if (j) {
+      functions.push({
+        file: e.replace(/\.json$/, ''),
+        id: j.id,
+        contracts: Array.isArray(j.contracts) ? j.contracts : null,
+        source: typeof j.source === 'string' ? j.source : ''
+      });
+    }
+  }
+  return functions;
+}
+
+function corIsOrphanFunction(fnItem, knownContractIds) {
+  if (!fnItem.contracts || fnItem.contracts.length === 0) return true;
+  return fnItem.contracts.some((c) => !knownContractIds.has(c));
+}
+
+function corCheckSourceCompliance(functions, rows, why) {
+  const badSrc = functions.filter(
+    (f) => f.source.trim() === '' || /(基于分析|根据规范|从代码推断|总结|概括)/.test(f.source)
+  );
+  rows['④source 合规'] = badSrc.length === 0;
+  if (badSrc.length) {
+    const prefix = badSrc[0].source.trim() === '' ? 'source 为空：' : '转述顶替原话：';
+    why['④source 合规'] = prefix + badSrc.map((f) => f.id || f.file).join('、');
+  }
+}
+
 // 审一个项目根的 contracts/ × functions/：四行布尔 + 孤儿点名
 function auditOrphans(projectRoot) {
-  const rows = {}; const why = {};
-
-  const cDir = join(projectRoot, 'contracts');
-  const fDir = join(projectRoot, 'functions');
-  const contracts = [];
-  if (existsSync(cDir)) {
-    for (const e of readdirSync(cDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const j = readJson(join(cDir, e.name, 'contract.json'));
-      if (j && j.id) contracts.push({ id: j.id, retired: typeof j.retired === 'string' && j.retired.trim() !== '' });
-    }
-  }
-  const functions = [];
-  if (existsSync(fDir)) {
-    for (const e of readdirSync(fDir)) {
-      if (!e.endsWith('.json')) continue;
-      const j = readJson(join(fDir, e));
-      if (j) functions.push({ file: e.replace(/\.json$/, ''), id: j.id, contracts: Array.isArray(j.contracts) ? j.contracts : null, source: typeof j.source === 'string' ? j.source : '' });
-    }
-  }
+  const rows = {};
+  const why = {};
+  const contracts = corLoadContracts(projectRoot);
+  const functions = corLoadFunctions(projectRoot);
 
   // ① 孤儿契约（未登记功能）：没被任何 functions[].contracts 引用、且未退役
-  const referenced = new Set(functions.flatMap((f) => (f.contracts || [])));
+  const referenced = new Set(functions.flatMap((f) => f.contracts || []));
   const orphanC = contracts.filter((c) => !referenced.has(c.id) && !c.retired);
   rows['①契约无孤儿'] = orphanC.length === 0;
   if (orphanC.length) why['①契约无孤儿'] = '未登记功能：' + orphanC.map((c) => c.id).join('、');
 
   // ② 孤儿功能（声明了没做）：contracts 为空、或引用不存在的契约
   const known = new Set(contracts.map((c) => c.id));
-  const orphanF = functions.filter((f) => !f.contracts || f.contracts.length === 0 || f.contracts.some((c) => !known.has(c)));
+  const orphanF = functions.filter((f) => corIsOrphanFunction(f, known));
   rows['②功能无孤儿'] = orphanF.length === 0;
   if (orphanF.length) why['②功能无孤儿'] = '声明了没做：' + orphanF.map((f) => f.id || f.file).join('、');
 
@@ -63,9 +99,7 @@ function auditOrphans(projectRoot) {
   if (badName.length) why['③文件名=id'] = badName.map((f) => f.file + '≠' + f.id).join('、');
 
   // ④ source 合规（INV-18）
-  const badSrc = functions.filter((f) => f.source.trim() === '' || /(基于分析|根据规范|从代码推断|总结|概括)/.test(f.source));
-  rows['④source 合规'] = badSrc.length === 0;
-  if (badSrc.length) why['④source 合规'] = (badSrc[0].source.trim() === '' ? 'source 为空：' : '转述顶替原话：') + badSrc.map((f) => f.id || f.file).join('、');
+  corCheckSourceCompliance(functions, rows, why);
 
   const order = ['①契约无孤儿', '②功能无孤儿', '③文件名=id', '④source 合规'];
   const fails = order.filter((k) => rows[k] === false).map((k) => k + '：' + why[k]);
@@ -74,15 +108,54 @@ function auditOrphans(projectRoot) {
 
 // —— 夹具：五个变体（含「退役不计」这条 §2.3 细节）——
 function buildCase(dir, variant) {
-  const c = (id, extra) => { mkdirSync(join(dir, 'contracts', id), { recursive: true }); writeFileSync(join(dir, 'contracts', id, 'contract.json'), JSON.stringify({ id, ...(extra || {}) }, null, 2)); };
-  const f = (name, obj) => { mkdirSync(join(dir, 'functions'), { recursive: true }); writeFileSync(join(dir, 'functions', name + '.json'), JSON.stringify({ id: name, source: src, ...(obj || {}) }, null, 2)); };
   const src = '业主原话：同一时段不出现两条同键记录。';
-  if (variant === 'good') { c('quchong'); c('yuebao'); f('fenye', { contracts: ['quchong'] }); f('yuebao-kuang', { contracts: ['yuebao'], source: src }); }
-  if (variant === 'orphan-c') { c('quchong'); c('yuebao'); c('gudan'); f('fenye', { contracts: ['quchong'] }); f('yuebao-kuang', { contracts: ['yuebao'], source: src }); }
-  if (variant === 'orphan-f') { c('quchong'); f('fenye', { contracts: ['quchong'] }); f('xuan-kong', { contracts: [] }); }
-  if (variant === 'retired') { c('quchong'); c('yuebao'); c('tuoyi', { retired: '2026-11-19 被月报新流程替代' }); f('fenye', { contracts: ['quchong'] }); f('yuebao-kuang', { contracts: ['yuebao'], source: src }); }
-  if (variant === 'badname') { c('quchong'); f('fenye', { id: 'fenye-2026', contracts: ['quchong'] }); }
-  if (variant === 'badsource') { c('quchong'); f('fenye', { contracts: ['quchong'], source: '基于分析得出该功能存在。' }); }
+  const c = (id, extra) => {
+    mkdirSync(join(dir, 'contracts', id), { recursive: true });
+    writeFileSync(
+      join(dir, 'contracts', id, 'contract.json'),
+      JSON.stringify({ id, ...(extra || {}) }, null, 2)
+    );
+  };
+  const f = (name, obj) => {
+    mkdirSync(join(dir, 'functions'), { recursive: true });
+    writeFileSync(
+      join(dir, 'functions', name + '.json'),
+      JSON.stringify({ id: name, source: src, ...(obj || {}) }, null, 2)
+    );
+  };
+  if (variant === 'good') {
+    c('quchong');
+    c('yuebao');
+    f('fenye', { contracts: ['quchong'] });
+    f('yuebao-kuang', { contracts: ['yuebao'], source: src });
+  }
+  if (variant === 'orphan-c') {
+    c('quchong');
+    c('yuebao');
+    c('gudan');
+    f('fenye', { contracts: ['quchong'] });
+    f('yuebao-kuang', { contracts: ['yuebao'], source: src });
+  }
+  if (variant === 'orphan-f') {
+    c('quchong');
+    f('fenye', { contracts: ['quchong'] });
+    f('xuan-kong', { contracts: [] });
+  }
+  if (variant === 'retired') {
+    c('quchong');
+    c('yuebao');
+    c('tuoyi', { retired: '2026-11-19 被月报新流程替代' });
+    f('fenye', { contracts: ['quchong'] });
+    f('yuebao-kuang', { contracts: ['yuebao'], source: src });
+  }
+  if (variant === 'badname') {
+    c('quchong');
+    f('fenye', { id: 'fenye-2026', contracts: ['quchong'] });
+  }
+  if (variant === 'badsource') {
+    c('quchong');
+    f('fenye', { contracts: ['quchong'], source: '基于分析得出该功能存在。' });
+  }
 }
 
 const cases = [

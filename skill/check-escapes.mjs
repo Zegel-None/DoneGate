@@ -165,15 +165,19 @@ const BUILTIN_GATES = {
       c.why = 'test';
       c.obligations = [{ id: 'o1', kind: 'command', command: 'node -e "process.exit(0)"', expect: { exitCode: 0 }, required: true, claim: 'ok', observable: 'exit 0', scope: 'src/m.mjs', inputClasses: ['正常'], servesSuccessCriterion: 's' }];
       writeFileSync(cp, JSON.stringify(c, null, 2));
-      spawnSync('git', ['-C', tmp, 'init', '-q']); spawnSync('git', ['-C', tmp, 'config', 'user.email', 't@local']); spawnSync('git', ['-C', tmp, 'config', 'user.name', 'T']);
-      spawnSync('git', ['-C', tmp, 'add', '.']); spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
+      spawnSync('git', ['-C', tmp, 'init', '-q']);
+      spawnSync('git', ['-C', tmp, 'config', 'user.email', 't@local']);
+      spawnSync('git', ['-C', tmp, 'config', 'user.name', 'T']);
+      spawnSync('git', ['-C', tmp, 'add', '.']);
+      spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
       dispatchCommand(['contract', 'freeze', 'c1', '--by', '业主'], tmp);
       const rTeeth = dispatchCommand(['teeth', 'c1', 'o1'], tmp);
       if (rTeeth.exitCode !== 3 || !/contract freeze/.test(rTeeth.stderr || '')) return { ok: false, detail: `缺 breakPatch 提示不清：${rTeeth.stderr}` };
       const c2 = JSON.parse(readFileSync(cp, 'utf8'));
       c2.obligations[0].breakPatch = { file: 'src/m.mjs', from: 'a + b', to: 'a - b' };
       writeFileSync(cp, JSON.stringify(c2, null, 2));
-      spawnSync('git', ['-C', tmp, 'add', '.']); spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add bp']);
+      spawnSync('git', ['-C', tmp, 'add', '.']);
+      spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add bp']);
       const rCheck = dispatchCommand(['check', 'c1'], tmp);
       if (rCheck.exitCode !== 1 || !/breakPatch/.test(rCheck.stdout + (rCheck.stderr || ''))) return { ok: false, detail: `冻结后补 breakPatch 报错未点名 breakPatch：${rCheck.stdout}` };
       return { ok: true, detail: 'teeth 缺 breakPatch 与冻结后补 breakPatch 均给出清晰提示' };
@@ -388,6 +392,7 @@ if (has('--self-check')) {
     ['skill/check-decisions.mjs', []],
     ['skill/check-ai-habits.mjs', ['--red-self-test']],
     ['skill/check-commit-hygiene.mjs', ['--red-self-test']],
+    ['skill/check-commit-hygiene.mjs', ['--audit-repo']],
     ['skill/check-module-integrity.mjs', ['--red-self-test']],
     ['skill/check-terminology.mjs', ['--red-self-test']],
     ['skill/check-terminology.mjs', []],
@@ -507,8 +512,20 @@ if (has('--record')) {
   const dir = join(proj, '.donegate'), file = join(dir, 'escapes.jsonl');
   mkdirSync(dir, { recursive: true });
   if (existsSync(file)) {
-    const existing = readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => { try { return JSON.parse(l).id; } catch { return null; } });
-    if (existing.includes(entry.id)) { console.error('id 已存在，禁止覆盖或重复登记：' + entry.id); process.exit(1); }
+    const existing = readFileSync(file, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l).id;
+        } catch {
+          return null;
+        }
+      });
+    if (existing.includes(entry.id)) {
+      console.error('id 已存在，禁止覆盖或重复登记：' + entry.id);
+      process.exit(1);
+    }
   }
   appendFileSync(file, JSON.stringify(entry) + '\n', 'utf8');
   console.log(`已登记漏网问题 ${entry.id} 到 ${file}（新门禁试跑 exit 0）`);

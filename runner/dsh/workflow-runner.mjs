@@ -15,45 +15,78 @@ import { buildBrickNodeExecSpec, executeBrickGateNode } from './brick-exec.mjs';
 
 const HUB_MAP = new Map();
 
+function wfrResolveGateTelemetryState(record) {
+  if (record.cacheHit) return 'cached';
+  if (record.exitCode === 0) return 'pass';
+  if (record.exitCode === 1) return 'fail';
+  return 'fault';
+}
+
+function wfrUpsertDockItem(dockItems, item) {
+  const idx = dockItems.findIndex((x) => x.id === item.id);
+  if (idx >= 0) dockItems[idx] = item;
+  else dockItems.unshift(item);
+  if (dockItems.length > 16) dockItems.pop();
+}
+
+function wfrApplyHubRecord(hubState, record) {
+  const { recentEvents, activeCards, nodeTelemetry, dockItems } = hubState;
+  recentEvents.push(record);
+  if (recentEvents.length > 200) recentEvents.shift();
+  if (record.type === 'micro_card_ready' && record.card?.targetUri) {
+    activeCards.set(record.card.targetUri, record.card);
+  }
+  if (record.type === 'node_enter' && record.nodeId) {
+    nodeTelemetry.set(record.nodeId, { nodeId: record.nodeId, state: 'running', updatedAt: record.ts });
+  }
+  if (record.type === 'gate_settled' && record.nodeId) {
+    nodeTelemetry.set(record.nodeId, {
+      nodeId: record.nodeId,
+      state: wfrResolveGateTelemetryState(record),
+      exitCode: record.exitCode,
+      durationMs: record.durationMs || 0,
+      cacheHit: Boolean(record.cacheHit),
+      diagSummary: record.diagSummary || '',
+      updatedAt: record.ts
+    });
+  }
+  if (record.type === 'dock_item' && record.item) {
+    wfrUpsertDockItem(dockItems, record.item);
+  }
+}
+
+function wfrCreateHubInstance() {
+  const listeners = new Set();
+  const recentEvents = [];
+  const activeCards = new Map();
+  const nodeTelemetry = new Map();
+  const dockItems = [];
+  const hubState = { listeners, recentEvents, activeCards, nodeTelemetry, dockItems };
+  return {
+    listeners,
+    recentEvents,
+    activeCards,
+    nodeTelemetry,
+    dockItems,
+    emit(evt) {
+      const record = { seq: recentEvents.length + 1, ts: Date.now(), ...evt };
+      wfrApplyHubRecord(hubState, record);
+      for (const fn of listeners) {
+        try {
+          fn(record);
+        } catch (err) {
+          void err;
+        }
+      }
+      return record;
+    }
+  };
+}
+
 export function getRunEventHub(projectRoot) {
   const key = normalizeWinDriveKey(resolve(projectRoot));
   if (!HUB_MAP.has(key)) {
-    const listeners = new Set();
-    const recentEvents = [];
-    const activeCards = new Map();
-    const nodeTelemetry = new Map();
-    const dockItems = [];
-    HUB_MAP.set(key, {
-      listeners, recentEvents, activeCards, nodeTelemetry, dockItems,
-      emit(evt) {
-        const record = { seq: recentEvents.length + 1, ts: Date.now(), ...evt };
-        recentEvents.push(record);
-        if (recentEvents.length > 200) recentEvents.shift();
-        if (record.type === 'micro_card_ready' && record.card?.targetUri) activeCards.set(record.card.targetUri, record.card);
-        if (record.type === 'node_enter' && record.nodeId) {
-          nodeTelemetry.set(record.nodeId, { nodeId: record.nodeId, state: 'running', updatedAt: record.ts });
-        }
-        if (record.type === 'gate_settled' && record.nodeId) {
-          nodeTelemetry.set(record.nodeId, {
-            nodeId: record.nodeId,
-            state: record.cacheHit ? 'cached' : (record.exitCode === 0 ? 'pass' : (record.exitCode === 1 ? 'fail' : 'fault')),
-            exitCode: record.exitCode,
-            durationMs: record.durationMs || 0,
-            cacheHit: Boolean(record.cacheHit),
-            diagSummary: record.diagSummary || '',
-            updatedAt: record.ts
-          });
-        }
-        if (record.type === 'dock_item' && record.item) {
-          const idx = dockItems.findIndex((x) => x.id === record.item.id);
-          if (idx >= 0) dockItems[idx] = record.item;
-          else dockItems.unshift(record.item);
-          if (dockItems.length > 16) dockItems.pop();
-        }
-        for (const fn of listeners) { try { fn(record); } catch (err) { void err; } }
-        return record;
-      }
-    });
+    HUB_MAP.set(key, wfrCreateHubInstance());
   }
   return HUB_MAP.get(key);
 }
@@ -82,33 +115,45 @@ export function preflightWorkflowPack(pack, opts = {}) {
   return { ok: true, exitCode: 0 };
 }
 
+function wfrIsInternalRuntimePath(normPath) {
+  return normPath.startsWith('.donegate/') || normPath.startsWith('workflows/.deps/');
+}
+
+function wfrAccumulateNumstatStdout(stdout, files) {
+  let added = 0;
+  let removed = 0;
+  for (const line of normalizeLf(stdout).split('\n').filter(Boolean)) {
+    const [a, d, f] = line.split('\t');
+    if (!f) continue;
+    const norm = normalizeSlashes(f.trim());
+    if (wfrIsInternalRuntimePath(norm)) continue;
+    files.add(norm);
+    if (/^\d+$/.test(a)) added += Number(a);
+    if (/^\d+$/.test(d)) removed += Number(d);
+  }
+  return { added, removed };
+}
+
+function wfrCollectUntrackedFiles(stdout, files) {
+  for (const u of normalizeLf(stdout).split('\n').map((s) => s.trim()).filter(Boolean)) {
+    const norm = normalizeSlashes(u);
+    if (!wfrIsInternalRuntimePath(norm)) files.add(norm);
+  }
+}
+
 export function collectGitDiffStats(cwd) {
   const gitOpts = { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true };
   const r = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'diff', '--numstat', 'HEAD'], gitOpts);
   const rFallback = r.status === 0 ? r : spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'diff', '--numstat'], gitOpts);
   const files = new Set();
-  let added = 0;
-  let removed = 0;
-  if (rFallback.status === 0) {
-    for (const line of normalizeLf(rFallback.stdout).split('\n').filter(Boolean)) {
-      const [a, d, f] = line.split('\t');
-      if (!f) continue;
-      const norm = normalizeSlashes(f.trim());
-      if (!norm.startsWith('.donegate/') && !norm.startsWith('workflows/.deps/')) {
-        files.add(norm);
-        if (/^\d+$/.test(a)) added += Number(a);
-        if (/^\d+$/.test(d)) removed += Number(d);
-      }
-    }
-  }
+  const counts = rFallback.status === 0
+    ? wfrAccumulateNumstatStdout(rFallback.stdout, files)
+    : { added: 0, removed: 0 };
   const untracked = spawnSync('git', ['-C', cwd, '-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard'], gitOpts);
   if (untracked.status === 0) {
-    for (const u of normalizeLf(untracked.stdout).split('\n').map((s) => s.trim()).filter(Boolean)) {
-      const norm = normalizeSlashes(u);
-      if (!norm.startsWith('.donegate/') && !norm.startsWith('workflows/.deps/')) files.add(norm);
-    }
+    wfrCollectUntrackedFiles(untracked.stdout, files);
   }
-  return { files: [...files], added, removed };
+  return { files: [...files], added: counts.added, removed: counts.removed };
 }
 
 export function checkWriteScopeMandate(files, allowedScopes, platform = process.platform) {
@@ -121,6 +166,13 @@ export function checkWriteScopeMandate(files, allowedScopes, platform = process.
     return !cleanScopes.some((s) => (s.endsWith('/') ? f.startsWith(s) : (f === s || f.startsWith(s + '/'))));
   });
   return { ok: violated.length === 0, violated };
+}
+
+function wfrResumeExistingCheckpoint(root, existingCp) {
+  const cleaned = { ...existingCp, state: AUTOPILOT_STATES.RUNNING, breaker: null };
+  delete cleaned.briefMarkdown;
+  delete cleaned.checkpointFile;
+  return saveAutopilotCheckpoint(root, cleaned);
 }
 
 export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack, hooks = {}) {
@@ -146,7 +198,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   }
 
   const cp = existingCp
-    ? (() => { const c = { ...existingCp, state: AUTOPILOT_STATES.RUNNING, breaker: null }; delete c.briefMarkdown; delete c.checkpointFile; return saveAutopilotCheckpoint(root, c); })()
+    ? wfrResumeExistingCheckpoint(root, existingCp)
     : createInitialCheckpoint(root, runId, pack, ticket);
 
   if (hooks.requireCleanGit === true) {

@@ -8,77 +8,89 @@ import { validateContractSchema } from '../../skill/schema-lite.mjs';
 import { evalStageGate } from '../../skill/check-stage.mjs';
 import { isSelfWriterIdentity, loadContracts, loadThresholds } from './project-loader.mjs';
 
-export function evaluateGate0(projectRoot, targetContractId, gapsList = []) {
-  const fails = [];
-  const intent = readMaybe(join(projectRoot, 'INTENT.md'));
-  const cons = readMaybe(join(projectRoot, 'CONSTRAINTS.md'));
+function gc0CheckIntentHeadings(intent, fails) {
   const headings = intent ? intent.split(/\r?\n/).filter((l) => /^##\s/.test(l)).map((l) => l.trim()) : [];
   const reqHeadings = ['## 为什么做', '## 服务谁', '## 什么算成功', '## 明确不做什么'];
   if (!intent || headings.length !== 4 || !reqHeadings.every((h, i) => headings[i] === h)) {
     fails.push('0.1 INTENT.md 缺失或四节不齐');
   }
+}
+
+function gc0CheckConstraintsAndQuotas(projectRoot, cons, fails) {
   if (!cons || !cons.split(/\r?\n/).some((l) => /^(不许|必须)/.test(l.trim()))) {
     fails.push('0.1 CONSTRAINTS.md 缺失或无有效「不许/必须」条目');
-  } else {
-    // 失效链 F：常驻（上限 6）与临时（上限 12）配额核对
-    const thresholds = loadThresholds(projectRoot);
-    let inPerm = false, permCount = 0, tempCount = 0;
-    for (const line of cons.split(/\r?\n/)) {
-      const t = line.trim();
-      if (/^##\s*常驻/.test(t)) { inPerm = true; continue; }
-      if (/^##\s/.test(t)) { inPerm = false; continue; }
-      if (/^(不许|必须)/.test(t)) {
-        if (inPerm) permCount++;
-        else tempCount++;
-      }
-    }
-    if (permCount > (thresholds.maxPermanentConstraints || 6)) {
-      fails.push(`链 F 常驻约束条数 ${permCount} 超过上限 ${thresholds.maxPermanentConstraints || 6}`);
-    }
-    if (tempCount > (thresholds.maxConstraints || 12)) {
-      fails.push(`链 F 临时约束条数 ${tempCount} 超过上限 ${thresholds.maxConstraints || 12}`);
-    }
+    return;
   }
-  // 0.2 INTENT / CONSTRAINTS 哈希必须在最近一条决策记录中出现（若存在 decisions/）
+  const thresholds = loadThresholds(projectRoot);
+  let inPerm = false, permCount = 0, tempCount = 0;
+  for (const line of cons.split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^##\s*常驻/.test(t)) { inPerm = true; continue; }
+    if (/^##\s/.test(t)) { inPerm = false; continue; }
+    if (!/^(不许|必须)/.test(t)) continue;
+    if (inPerm) permCount++;
+    else tempCount++;
+  }
+  const maxPerm = thresholds.maxPermanentConstraints || 6;
+  const maxTemp = thresholds.maxConstraints || 12;
+  if (permCount > maxPerm) fails.push(`链 F 常驻约束条数 ${permCount} 超过上限 ${maxPerm}`);
+  if (tempCount > maxTemp) fails.push(`链 F 临时约束条数 ${tempCount} 超过上限 ${maxTemp}`);
+}
+
+function gc0CompareDecisionNames(a, b) {
+  const pa = a.match(/^(\d{4}-\d{2}-\d{2})-(?:(\d{2,4})-)?(.*)$/);
+  const pb = b.match(/^(\d{4}-\d{2}-\d{2})-(?:(\d{2,4})-)?(.*)$/);
+  if (!pa || !pb) return a.localeCompare(b);
+  if (pa[1] !== pb[1]) return pa[1].localeCompare(pb[1]);
+  const sa = pa[2] !== undefined ? Number(pa[2]) : -1;
+  const sb = pb[2] !== undefined ? Number(pb[2]) : -1;
+  return sa !== sb ? sa - sb : a.localeCompare(b);
+}
+
+function gc0CheckDecisionHashSync(projectRoot, intent, cons, fails) {
   const decDir = join(projectRoot, 'decisions');
-  if (existsSync(decDir) && intent && cons) {
-    const decFiles = readdirSync(decDir).filter((f) => f.endsWith('.md')).sort((a, b) => {
-      const pa = a.match(/^(\d{4}-\d{2}-\d{2})-(?:(\d{2,4})-)?(.*)$/);
-      const pb = b.match(/^(\d{4}-\d{2}-\d{2})-(?:(\d{2,4})-)?(.*)$/);
-      if (pa && pb && pa[1] !== pb[1]) return pa[1].localeCompare(pb[1]);
-      if (pa && pb) {
-        const sa = pa[2] !== undefined ? Number(pa[2]) : -1;
-        const sb = pb[2] !== undefined ? Number(pb[2]) : -1;
-        if (sa !== sb) return sa - sb;
-      }
-      return a.localeCompare(b);
-    });
-    if (decFiles.length > 0) {
-      const latestDec = readMaybe(join(decDir, decFiles[decFiles.length - 1])) || '';
-      const hInt = sha256(readFileSync(join(projectRoot, 'INTENT.md')));
-      const hCon = sha256(readFileSync(join(projectRoot, 'CONSTRAINTS.md')));
-      if (!latestDec.includes(hInt.slice(0, 12)) && !latestDec.includes(hCon.slice(0, 12))) {
-        fails.push(`0.2 最近一条决策记录（${decFiles[decFiles.length - 1]}）未含当前 INTENT(${hInt.slice(0, 12)}) 或 CONSTRAINTS(${hCon.slice(0, 12)}) 哈希`);
-      }
-    }
+  if (!existsSync(decDir) || !intent || !cons) return;
+  const decFiles = readdirSync(decDir).filter((f) => f.endsWith('.md')).sort(gc0CompareDecisionNames);
+  if (decFiles.length === 0) return;
+  const latestName = decFiles[decFiles.length - 1];
+  const latestDec = readMaybe(join(decDir, latestName)) || '';
+  const hInt = sha256(readFileSync(join(projectRoot, 'INTENT.md'))).slice(0, 12);
+  const hCon = sha256(readFileSync(join(projectRoot, 'CONSTRAINTS.md'))).slice(0, 12);
+  if (!latestDec.includes(hInt) && !latestDec.includes(hCon)) {
+    fails.push(`0.2 最近一条决策记录（${latestName}）未含当前 INTENT(${hInt}) 或 CONSTRAINTS(${hCon}) 哈希`);
   }
-  // 0.3 前 3 位不重复缺口契约或 skipReason
-  if (targetContractId && gapsList.length > 0) {
-    const distinctTop3 = [...new Set(gapsList.map((g) => g.contractId).filter(Boolean))].slice(0, 3);
-    if (distinctTop3.length > 0 && !distinctTop3.includes(targetContractId)) {
-      const cRes = readJsonStrict(join(projectRoot, 'contracts', targetContractId, 'contract.json'));
-      const skipReason = cRes.ok && typeof cRes.value.skipReason === 'string' && cRes.value.skipReason.trim();
-      if (!skipReason) fails.push(`0.3 契约 ${targetContractId} 不在缺口前 3 位（${distinctTop3.join('、')}）且未填 skipReason`);
-    }
+}
+
+function gc0CheckTargetInTopGaps(projectRoot, targetContractId, gapsList, fails) {
+  if (!targetContractId || gapsList.length === 0) return;
+  const distinctTop3 = [...new Set(gapsList.map((g) => g.contractId).filter(Boolean))].slice(0, 3);
+  if (distinctTop3.length === 0 || distinctTop3.includes(targetContractId)) return;
+  const cRes = readJsonStrict(join(projectRoot, 'contracts', targetContractId, 'contract.json'));
+  const skipReason = cRes.ok && typeof cRes.value.skipReason === 'string' && cRes.value.skipReason.trim();
+  if (!skipReason) {
+    const topStr = distinctTop3.join('、');
+    fails.push(`0.3 契约 ${targetContractId} 不在缺口前 3 位（${topStr}）且未填 skipReason`);
   }
-  // 0.4 若已存在 HANDOVER.md（进入阶段 6），要求六节齐且含接收方验收记录四要素
+}
+
+function gc0CheckHandoverSectionIntegrity(projectRoot, fails) {
   const hoPath = join(projectRoot, 'HANDOVER.md');
-  if (existsSync(hoPath)) {
-    const ho = readMaybe(hoPath) || '';
-    const hasSix = ['## 一、', '## 二、', '## 三、', '## 四、', '## 五、', '## 六、'].every((h) => ho.includes(h));
-    const hasRecv = ho.includes('### 接收方验收记录') && /谁跑的/.test(ho) && /命令/.test(ho) && /输出/.test(ho) && /卡住/.test(ho);
-    if (!hasSix || !hasRecv) fails.push('0.4 HANDOVER.md 缺六节或接收方验收记录四要素');
-  }
+  if (!existsSync(hoPath)) return;
+  const ho = readMaybe(hoPath) || '';
+  const hasSix = ['## 一、', '## 二、', '## 三、', '## 四、', '## 五、', '## 六、'].every((h) => ho.includes(h));
+  const hasRecv = ho.includes('### 接收方验收记录') && ['谁跑的', '命令', '输出', '卡住'].every((k) => ho.includes(k));
+  if (!hasSix || !hasRecv) fails.push('0.4 HANDOVER.md 缺六节或接收方验收记录四要素');
+}
+
+export function evaluateGate0(projectRoot, targetContractId, gapsList = []) {
+  const fails = [];
+  const intent = readMaybe(join(projectRoot, 'INTENT.md'));
+  const cons = readMaybe(join(projectRoot, 'CONSTRAINTS.md'));
+  gc0CheckIntentHeadings(intent, fails);
+  gc0CheckConstraintsAndQuotas(projectRoot, cons, fails);
+  gc0CheckDecisionHashSync(projectRoot, intent, cons, fails);
+  gc0CheckTargetInTopGaps(projectRoot, targetContractId, gapsList, fails);
+  gc0CheckHandoverSectionIntegrity(projectRoot, fails);
   return { ok: fails.length === 0, fails };
 }
 

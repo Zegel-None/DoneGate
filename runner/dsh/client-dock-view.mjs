@@ -17,6 +17,7 @@ function buildDoneGateInputDockMainSource() {
   return String.raw`
     function DoneGateInputDock(props) {
       var sessionId = resolveSessionId(props);
+      if (isSubagentOrEmbeddedSession(props, sessionId)) return null;
       var t = props.t || function (k) { return zh[k] || k; };
       var snap = React.useSyncExternalStore
         ? React.useSyncExternalStore(dockStore.subscribe, dockStore.getSnapshot, dockStore.getSnapshot)

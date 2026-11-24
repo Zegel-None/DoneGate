@@ -14,10 +14,18 @@ const STAGE_HERE = dirname(fileURLToPath(import.meta.url));
 const STAGE_REPO = resolve(STAGE_HERE, '..');
 
 const argv = process.argv.slice(2);
-const pullOpt = (k) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
+const pullOpt = (k) => {
+  const i = argv.indexOf(k);
+  if (i < 0) return null;
+  const next = argv[i + 1];
+  return next && !next.startsWith('--') ? next : null;
+};
 const rootDir = resolve(pullOpt('--root') || process.cwd());
 const registryId = pullOpt('--registry-id');
-if (!registryId) { console.error('缺少 --registry-id'); process.exit(2); }
+if (!registryId) {
+  console.error('缺少 --registry-id');
+  process.exit(2);
+}
 
 // 1. 干净树门禁：工作区脏即退 3
 const st = spawnSync('git', ['-C', rootDir, 'status', '--porcelain'], { encoding: 'utf8' });
@@ -37,10 +45,16 @@ if (st.status !== 0 || st.stdout.trim() !== '') {
 // 2. 从 registry 查入口（除非 --adapter 指定测试假适配器）
 const regFile = existsSync(join(rootDir, 'adapters.registry.json')) ? join(rootDir, 'adapters.registry.json') : join(STAGE_REPO, 'adapters.registry.json');
 const regRes = readJsonStrict(regFile);
-if (!regRes.ok) { console.error('adapters.registry.json 不可读或损坏'); process.exit(regRes.error === 'parse' ? 2 : 3); }
+if (!regRes.ok) {
+  console.error('adapters.registry.json 不可读或损坏');
+  process.exit(regRes.error === 'parse' ? 2 : 3);
+}
 const regEntry = Array.isArray(regRes.value.adapters) ? regRes.value.adapters.find((a) => a.id === registryId) : null;
 const adapterOverride = pullOpt('--adapter');
-if (!regEntry && !adapterOverride) { console.error('未登记 --registry-id：' + registryId); process.exit(2); }
+if (!regEntry && !adapterOverride) {
+  console.error('未登记 --registry-id：' + registryId);
+  process.exit(2);
+}
 
 const toolName = regEntry ? regEntry.tool : registryId.split('@')[0];
 const adapterAbs = resolve(adapterOverride || join(STAGE_REPO, regEntry.entry));
@@ -55,7 +69,10 @@ mkdirSync(outDir, { recursive: true });
 // 4. 构造透传参数并运行适配器（直跑 node，绝不吞码）
 const passArgs = [adapterAbs, '--root', rootDir, '--registry-id', registryId, '--out', outRel];
 for (let i = 0; i < argv.length; i++) {
-  if (['--root', '--registry-id', '--adapter', '--out'].includes(argv[i])) { i++; continue; }
+  if (['--root', '--registry-id', '--adapter', '--out'].includes(argv[i])) {
+    i++;
+    continue;
+  }
   passArgs.push(argv[i]);
 }
 const adpRes = spawnSync(process.execPath, passArgs, { cwd: rootDir, encoding: 'utf8' });
