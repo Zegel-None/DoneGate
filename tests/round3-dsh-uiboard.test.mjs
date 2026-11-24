@@ -237,7 +237,7 @@ describe('问题 #5 与问题 #9：精简输入栏完结门小框 + 严禁子代
   it('彻底移除 conversation.input.left 完结门小框，仅保留顶部会话视图标签与主对话抽屉', () => {
     const { clientCode, registeredSlots } = loadClientPluginInSandbox();
     const slotIds = registeredSlots.map((s) => `${s.opts.name}:${s.opts.id}`);
-    expect(slotIds).toEqual(['conversation.view:donegate', 'conversation.input.dock:donegate-dock']);
+    expect(slotIds).toEqual(['conversation.view:donegate', 'conversation.input.dock:donegate-dock', 'conversation.composer:donegate-subagent-readonly']);
     expect(slotIds).not.toContain('conversation.input.left:donegate-switch');
     expect(clientCode).not.toContain('DoneGateQuickSwitch');
     expect(clientCode).not.toContain('conversation.input.left');

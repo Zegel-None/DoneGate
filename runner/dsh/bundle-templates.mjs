@@ -40,6 +40,7 @@ export function renderDshBundlePackageJson() {
           '@deepseek-ai/dsh-client-locale',
           '@deepseek-ai/dsh-client-ui-sessions',
           '@deepseek-ai/dsh-client-ui-conversation',
+          '@deepseek-ai/dsh-client-ui-workspace',
           '@deepseek-ai/dsh-client-ui-slots'
         ]
       }
@@ -173,7 +174,7 @@ export function renderDshBundleCordisPatch(projectRoot) {
 export function renderDshHostIndexJs(projectRoot) {
   const routesModuleUrl = toSafeFileUrl(`${normalizeSlashes(projectRoot).replace(/\/+$/, '')}/runner/dsh/host-routes.mjs`);
   const cleanRoot = normalizeSlashes(projectRoot);
-  return `// DSH Host 端插件入口（遵循 dsh-doc 单一 apply 导出规范，按会话工作区动态路由完结门接口）
+  return `// DSH Host 端插件入口（遵循 dsh-doc 单一 apply 导出规范，按会话工作区动态路由完结门接口并隔离人类直连子代理）
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -188,6 +189,20 @@ export async function apply(ctx, config) {
   const defaultRoot = (config && config.projectRoot) || ${JSON.stringify(cleanRoot)};
   const mod = await import(${JSON.stringify(routesModuleUrl)});
 
+  let disposeSubagentGuard = () => {};
+  if (typeof mod.installSubagentHumanIsolationGuard === 'function') {
+    const tryInstallGuard = (svc) => {
+      if (svc) disposeSubagentGuard = mod.installSubagentHumanIsolationGuard(svc);
+    };
+    tryInstallGuard(ctx.get && ctx.get('subagents'));
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['subagents'], (innerCtx) => {
+        const d = mod.installSubagentHumanIsolationGuard(innerCtx.get ? innerCtx.get('subagents') : innerCtx.subagents);
+        innerCtx.effect(() => () => { d(); });
+      });
+    }
+  }
+
   const dispatchSubagent = async ({ sessionId, label, prompt } = {}) => {
     try {
       const subagents = ctx.get && ctx.get('subagents');
@@ -201,6 +216,10 @@ export async function apply(ctx, config) {
           } catch (err) { void err; }
         }
         if (parent && typeof subagents.startActivation === 'function') {
+          const pCwd = parent.cwd || parent.workDir || parent.workspaceDir || parent.options?.cwd || '';
+          if (isExistingDir(pCwd) && typeof mod.writeStandaloneDepsCli === 'function') {
+            try { mod.writeStandaloneDepsCli(resolve(pCwd)); } catch (err) { void err; }
+          }
           const act = await subagents.startActivation({
             provider: 'spawn',
             label: String(label || '补齐工作流依赖').slice(0, 48),
@@ -269,7 +288,10 @@ export async function apply(ctx, config) {
     }
   });
 
-  ctx.effect(() => () => { disposeRoute(); });
+  ctx.effect(() => () => {
+    disposeSubagentGuard();
+    disposeRoute();
+  });
 }
 `;
 }

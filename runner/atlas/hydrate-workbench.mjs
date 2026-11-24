@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
 import { WB_PRESET_TEMPLATE_TRAITS } from './wb-catalog.mjs';
+import { buildAdaptiveBusinessHierarchy } from './modularity-hierarchy.mjs';
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SMALL_PROJECT_MODULE_LIMIT = 18;
@@ -422,7 +423,7 @@ function hydWbBuildHostUnitNode(unit, idx, ctx) {
   };
 }
 
-function buildHostSandboxFromAtlas(baseAtlas, savedState) {
+function buildHostSandboxFromAtlas(baseAtlas, savedState, projectRoot = null) {
   const rawUnits = hydWbResolveUnitsFromAtlas(baseAtlas);
   const { sortedUnits, nextUnitMap, depthByUnit, reverseNotes } = buildAcyclicUnitTopology(
     rawUnits,
@@ -437,14 +438,18 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState) {
     hasEdges: (baseAtlas.edges || []).length > 0,
     hasRoot: sortedUnits.some((u) => u.isRoot)
   };
+  const codeUnitNodes = sortedUnits.map((unit, idx) => hydWbBuildHostUnitNode(unit, idx, ctx));
+  const hasInitializedIntent = Boolean(projectRoot && existsSync(join(resolve(projectRoot), 'INTENT.md')));
+  const businessNodes = buildAdaptiveBusinessHierarchy(codeUnitNodes, savedState, hasInitializedIntent);
   return {
     id: 'host-workspace',
     name: `${baseAtlas.project.name}（当前本仓）`,
     repoSlug: `local/${baseAtlas.project.name}`,
     isHost: true,
     readonly: false,
-    tip: `${baseAtlas.project.summary} · 支持基于契约 scope[] 右键定位真实目录`,
-    nodes: sortedUnits.map((unit, idx) => hydWbBuildHostUnitNode(unit, idx, ctx)),
+    tip: `${baseAtlas.project.summary} · 按模块度内聚增益自适应折叠业务流，支持原地展开与代码架构透视`,
+    nodes: businessNodes,
+    codeUnitNodes,
     groups: Array.isArray(savedState.hostGroups) ? savedState.hostGroups : []
   };
 }
@@ -608,7 +613,7 @@ function loadDeclarativeWorkflowPacks(projectRoot) {
 export function hydrateWorkbenchData(projectRoot, baseAtlas) {
   const savedState = readSavedWorkbenchState(projectRoot);
   savedState.customPacks = { ...loadDeclarativeWorkflowPacks(projectRoot), ...(savedState.customPacks || {}) };
-  const hostSandbox = buildHostSandboxFromAtlas(baseAtlas, savedState);
+  const hostSandbox = buildHostSandboxFromAtlas(baseAtlas, savedState, projectRoot);
   const siblingSandboxes = scanSiblingWorkspaces(projectRoot);
   const registeredTemplates = loadRegisteredAdapterTemplates(projectRoot);
   const depsBundle = inspectAllKnownWorkflowPacks(projectRoot, savedState.customPacks);

@@ -1,7 +1,8 @@
-// 生成符合 DSH 官方规范的浏览器端模块总装入口（组合全屏画布、会话消息提取器与卡包抽卡式对话抽屉）
+// 生成符合 DSH 官方规范的浏览器端模块总装入口（组合全屏画布、会话消息提取器、卡包抽卡式对话抽屉与子智能体只读隔离槽）
 import { DSH_BUNDLE_NAME } from './bundle-templates.mjs';
 import { buildDshClientChatExtractSource } from './client-chat-extract.mjs';
 import { buildDshClientDockViewSource } from './client-dock-view.mjs';
+import { buildClientSubagentReadOnlyComposerSource } from './subagent-isolation.mjs';
 
 function buildClientHeaderSource() {
   return String.raw`
@@ -30,7 +31,10 @@ function buildClientHeaderSource() {
       "dock.renameTip": "双击可修改 Agent 称呼（回车保存）",
       "dock.resizeTip": "上下拖动调整窗口高度（自动记忆）",
       "dock.fly": "定位节点",
-      "dock.thinking": "思考过程"
+      "dock.thinking": "思考过程",
+      "readonly.dgTitle": "🔒 子智能体只读执行视图",
+      "readonly.dgBody": "施工与盲审子智能体仅接受主对话契约调度（防止人工插话绕过门禁或污染上下文）。",
+      "readonly.dgBackParent": "↩ 返回主对话"
     };
     var en = {
       "view.donegate": "DoneGate",
@@ -41,7 +45,10 @@ function buildClientHeaderSource() {
       "dock.renameTip": "Double-click to rename Agent",
       "dock.resizeTip": "Drag to resize height (auto-saved)",
       "dock.fly": "Locate",
-      "dock.thinking": "Reasoning"
+      "dock.thinking": "Reasoning",
+      "readonly.dgTitle": "🔒 Subagent Read-Only View",
+      "readonly.dgBody": "Worker and Judge subagents accept Lead orchestration only to preserve contract gates.",
+      "readonly.dgBackParent": "↩ Back to Lead"
     };
 `;
 }
@@ -373,6 +380,14 @@ function buildClientSlotsPluginSource() {
         ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "dsh-donegate: locale");
         var t = ctx.locale.bind(NS);
 
+        function openParentSession(parentSessionId) {
+          if (!parentSessionId) return;
+          var ws = (ctx.get && ctx.get("uiWorkspace")) || ctx.uiWorkspace;
+          if (ws && typeof ws.openSession === "function") {
+            try { ws.openSession(parentSessionId); } catch (err) { void err; }
+          }
+        }
+
         function activateDoneGate(sid) {
           var uic = ctx.get && ctx.get("uiConversation");
           if (uic && typeof uic.binding === "function" && sid && sid !== "default") {
@@ -441,6 +456,22 @@ function buildClientSlotsPluginSource() {
             }
           }, DoneGateInputDock);
         });
+
+        /* 在权限审批卡 (>=0) 之下、官方只读卡 (-10) 与默认 InputBar 之上，接管全部子智能体会话输入框为只读视图 */
+        ctx.slots.inject("conversation.composer", function () {
+          return ctx.slots.register({
+            name: "conversation.composer",
+            id: "donegate-subagent-readonly",
+            priority: -5,
+            locale: NS,
+            select: selectDoneGateReadOnlySubagent,
+            inject: function () {
+              return {
+                openParentSession: openParentSession
+              };
+            }
+          }, DoneGateSubagentReadOnlyComposer);
+        });
       }
     };
 `;
@@ -454,6 +485,7 @@ export function renderDshClientBundleJs() {
     buildDshClientChatExtractSource(),
     buildClientCanvasViewSource(),
     buildDshClientDockViewSource(),
+    buildClientSubagentReadOnlyComposerSource(),
     buildClientSlotsPluginSource()
   ].join('\n');
   return [

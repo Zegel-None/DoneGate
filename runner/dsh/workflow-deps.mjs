@@ -256,9 +256,9 @@ export function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missin
     let hint;
     if (m.installCmd) hint = `执行 \`${m.installCmd}\``;
     else if (isNpmLibItem(m)) {
-      hint = `[npm-lib 纯库] 执行 \`npm install --prefix ${sharedRelDir}/npm --no-save ${m.pkg}${cleanVer ? '@' + cleanVer : ''}\`，随后直接运行 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${m.id} --kind npm-lib --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''}\`（严禁对 npm-lib 调用 write-launchers 生成 dists/*.bat 或脱离 npm/node_modules 复制文件！）`;
+      hint = `[npm-lib 纯库] 一键执行 \`node ${cliRel} install-npm --project . --workflow ${packId} --id ${m.id} --kind npm-lib --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''}\`（自动以 --save-exact 装入 ${sharedRelDir}/npm 并校验落盘，严禁手敲 --no-save 或生成 dists/*.bat）`;
     } else if (isNpmCliItem(m)) {
-      hint = `[npm-cli 工具] 执行 \`npm install --prefix ${sharedRelDir}/npm --no-save ${m.pkg}${cleanVer ? '@' + cleanVer : ''}\`，随后运行 \`node ${cliRel} write-launchers --project . --bin ${m.bin || m.id} --npm-bin\` 与 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${m.id} --kind npm-cli --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''} --bin ${sharedRelDir}/.bin/${m.bin || m.id}\``;
+      hint = `[npm-cli 独立工具舱] 一键执行 \`node ${cliRel} install-npm --project . --workflow ${packId} --id ${m.id} --kind npm-cli --pkg ${m.pkg}${cleanVer ? ' --version ' + cleanVer : ''} --bin ${m.bin || m.id}\`（自动装入独立隔离舱 ${sharedRelDir}/npm-cells/${sanitizeId(m.id)}/ 避免 vite 等 peer 冲突、自愈 esbuild、生成带 NODE_PATH 的 .bin 启动器并完成验真）`;
     } else if (m.repoUrl) {
       hint = `落盘至 \`${sharedRelDir}/repos/${m.id}\` 并生成 \`${sharedRelDir}/.bin\` 启动器`;
     } else {
@@ -274,7 +274,7 @@ export function buildProvisionAgentPrompt(pack, relDepsDir, sharedRelDir, missin
     '### Windows 11 共享池防坑硬规约（必读 · 统一调用工作区自包含 CLI）',
     `1. **禁用原生 curl/Invoke-WebRequest，规避 Schannel 与脏 Git 索引**：Windows Schannel 易报 \`SEC_E_NO_CREDENTIALS\` 且大仓完整 clone 易断连残留 24000+ 条 \`D \` 脏记录与 \`.git/index.lock\`。Git 命令统一加 \`-c core.longpaths=true -c http.sslBackend=openssl\`（有代理时显式加 \`-c http.proxy=... -c https.proxy=...\`）；优先下载 tag tarball 解压，随后执行 \`node ${cliRel} repair-git --repo ${sharedRelDir}/repos/${sample.id}\` 清理陈旧 \`index.lock\` 并仅执行 \`read-tree --reset HEAD\`（严禁 \`git add -A\`）确保零 \`D \` 脏记录。`,
     `2. **大体积压缩包 1 MiB HTTP Range 分块断点续传**：下载大体积发行包（如 Gradle zip）须运行 \`node ${cliRel} download --url <url> --dest ${sharedRelDir}/dists/<file>\` 或导入 \`./${cliRel}\` 的 \`downloadWithRangeResume\`（默认 \`1 MiB = 1048576\` 字节 \`Range\` 分块、支持 302/307 跳转、\`.part\` 断点续传、单块最多 8 次指数退避重试、字节长度与 SHA-256 校验通过后原子重命名）。`,
-    `3. **严格区分 npm-lib / npm-cli / archive-bin 启动器与沙盒目录**：\`npm-lib\` 纯库直接留在 \`${sharedRelDir}/npm/node_modules/\` 靠 \`package.json\` 验真，严禁生成 \`dists/.../bin/*.bat\`；\`npm-cli\` 传 \`--npm-bin\` 指向 \`..\\npm\\node_modules\\.bin\`；独立发行包执行 \`node ${cliRel} write-launchers --project . --bin ${sampleBin} --dist <dist-dir>\` 生成 100% 纯 ASCII + CRLF 三入口启动器（\`%~dp0\` 相对解析，Gradle 自动绑定可写 \`GRADLE_USER_HOME\` 至 \`${sharedRelDir}/.gradle-home\`）。`,
+    `3. **严禁 --no-save，按 npm-lib / npm-cli 独立工具舱 / archive-bin 分舱隔离**：严禁手敲 \`npm install --no-save\`（会导致共享目录已装包被卸载清空！）；\`npm-lib\` 与 \`npm-cli\` 统一调用 \`node ${cliRel} install-npm\`（\`npm-cli\` 自动装入 \`${sharedRelDir}/npm-cells/<id>/\` 独立隔离舱彻底杜绝 vite 6/8 等 peer 冲突并自动注入 \`NODE_PATH\`）；独立发行包执行 \`node ${cliRel} write-launchers --project . --bin ${sampleBin} --dist <dist-dir>\` 生成 100% 纯 ASCII + CRLF 三入口启动器（\`%~dp0\` 相对解析，Gradle 自动绑定可写 \`GRADLE_USER_HOME\` 至 \`${sharedRelDir}/.gradle-home\`）。`,
     `4. **双层 \`manifest.json\` 落盘与免 401 本地 CLI 刷新**：严禁直接请求 \`http://127.0.0.1:3200/\`（会撞 \`401 Unauthorized\`）。自检通过后运行免鉴权本地命令 \`node ${cliRel} mark-ready --project . --workflow ${packId} --id ${sample.id} --version ${sampleVer} --detected-version ${sampleVer}\`（单包名称用 \`--label\` 仅写条目自身，绝不覆盖工作流顶层 \`label\`；亦可执行 \`node ${cliRel} refresh --project . --workflow ${packId}\`），原子更新双层 \`manifest.json\` 与 \`.refresh-stamp.json\`。`
   );
   return lines.join('\n');
@@ -593,14 +593,17 @@ export function buildWorkflowDepEnv(projectRoot, packId, baseEnv = process.env, 
   nextEnv.PATH = extraBins.length ? [...extraBins, curPath].filter(Boolean).join(pathSep) : curPath;
   nextEnv.DG_WORKFLOW_DEPS_DIR = paths.absDir;
   nextEnv.DG_SHARED_DEPS_DIR = shared.absDir;
+  const sharedNodeMods = join(shared.absDir, 'npm', 'node_modules');
+  if (existsSync(sharedNodeMods)) {
+    nextEnv.NODE_PATH = nextEnv.NODE_PATH ? `${sharedNodeMods}${pathSep}${nextEnv.NODE_PATH}` : sharedNodeMods;
+  }
   const hasGradle = existsSync(shared.gradleHomeDir) || Boolean(findExecutableInDirs('gradle', [paths.binDir, shared.binDir], platform));
   if (hasGradle) nextEnv.GRADLE_USER_HOME = resolvePoolGradleUserHome(root, baseEnv);
   return nextEnv;
 }
 
-export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.platform) {
-  if (!/^[a-zA-Z0-9@/._-]+$/.test(String(spec || ''))) return { status: 2, error: new Error('非法包名规格') };
-  const npmArgs = ['install', '--no-audit', '--no-fund', '--no-save', '--prefix', prefixDir, spec];
+function wfdSpawnNpmOnce(prefixDir, spec, cwd, platform, extraFlags = []) {
+  const npmArgs = ['install', '--no-audit', '--no-fund', '--save-exact', ...extraFlags, '--prefix', prefixDir, spec];
   const cliCands = [
     join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
@@ -608,10 +611,22 @@ export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.pla
   const npmCli = cliCands.find((p) => existsSync(p));
   if (npmCli) return spawnSync(process.execPath, [npmCli, ...npmArgs], { cwd, encoding: 'utf8', timeout: 180000, windowsHide: true });
   if (platform === 'win32') {
-    const cmdLine = `"npm.cmd install --no-audit --no-fund --no-save --prefix "${String(prefixDir).replace(/"/g, '')}" "${spec}""`;
+    const cmdLine = `"npm.cmd ${npmArgs.map((a) => `"${String(a).replace(/"/g, '')}"`).join(' ')}"`;
     return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], { cwd, encoding: 'utf8', timeout: 180000, windowsVerbatimArguments: true, windowsHide: true });
   }
   return spawnSync('npm', npmArgs, { cwd, encoding: 'utf8', timeout: 180000 });
+}
+
+export function runNpmPrefixInstall(prefixDir, spec, cwd, platform = process.platform) {
+  if (!/^[a-zA-Z0-9@/._-]+$/.test(String(spec || ''))) return { status: 2, error: new Error('非法包名规格') };
+  mkdirSync(prefixDir, { recursive: true });
+  const pjPath = join(prefixDir, 'package.json');
+  if (!existsSync(pjPath)) writeJsonAtomic(pjPath, { name: 'donegate-pool-cell', private: true });
+  const first = wfdSpawnNpmOnce(prefixDir, spec, cwd, platform, []);
+  if (first.status !== 0 && /ERESOLVE|peer dep/i.test(`${first.stderr || ''}\n${first.stdout || ''}`)) {
+    return wfdSpawnNpmOnce(prefixDir, spec, cwd, platform, ['--legacy-peer-deps']);
+  }
+  return first;
 }
 
 function wfdReadJsonDocOrEmpty(filePath) {
@@ -638,11 +653,14 @@ function wfdApplyMarkedInstalledIds(markInstalledIds, itemById, useShared, now, 
 function wfdRunMissingNpmInstalls(root, missing, targetNpmPrefix, useShared, now, installed, sharedInstalled) {
   for (const m of missing) {
     if ((!isNpmLibItem(m) && !isNpmCliItem(m)) || !m.pkg) continue;
+    const isCli = isNpmCliItem(m);
+    const cellId = isCli ? sanitizeId(m.id) : '';
+    const prefix = (useShared && isCli) ? join(dirname(targetNpmPrefix), 'npm-cells', cellId) : targetNpmPrefix;
     const spec = m.version ? `${m.pkg}@${normalizeDepVer(m.version)}` : m.pkg;
-    const r = runNpmPrefixInstall(targetNpmPrefix, spec, root);
+    const r = runNpmPrefixInstall(prefix, spec, root);
     if (r.status !== 0) continue;
-    if (useShared && isNpmCliItem(m) && m.bin) {
-      writeSharedPoolLaunchers(root, { binName: m.bin, npmBin: true });
+    if (useShared && isCli && m.bin) {
+      writeSharedPoolLaunchers(root, { id: m.id, binName: m.bin, npmBin: true, npmCellId: cellId });
     }
     const cleanVer = normalizeDepVer(m.version);
     const sharedRec = {

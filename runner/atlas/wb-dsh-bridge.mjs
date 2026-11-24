@@ -182,6 +182,75 @@ function emitDshQuote(quoteObj) {
   showToast('❝ 已累加蓝色引用胶囊：' + quoteObj.summary.label);
 }
 
+function uiShEmitPromptQuoteToLead(quoteTarget, promptInstruction, toastMsg) {
+  if (!quoteTarget) return;
+  const enriched = {
+    ...quoteTarget,
+    text: quoteTarget.text + '\\n' + promptInstruction,
+    summary: { ...quoteTarget.summary, body: promptInstruction }
+  };
+  emitDshQuote(enriched);
+  const sideInp = document.getElementById('agent-input');
+  if (!IS_DSH_EMBED && sideInp && !sideInp.value) sideInp.value = promptInstruction;
+  showToast(toastMsg);
+}
+
+function uiShQuoteCustomNodeForConfig(nodeId) {
+  const nd = getActiveNodesList().find((n) => n.id === nodeId);
+  if (!nd) return;
+  const qt = buildDshQuoteTarget({
+    kind: 'card', id: nd.id, title: nd.title,
+    scopes: ['skill/adapters/'], firstFile: 'skill/new-adapter.mjs',
+    uiOwner: 'runner/atlas/wb-render-cards.mjs',
+    desc: '待配置自定义检查节点「' + nd.title + '」'
+  });
+  const instr = '请为当前工作流中的自定义节点「' + nd.title + '」（ID: ' + nd.id + '）绑定具体的检查规则或新建适配器脚本，并将 customConfigured 设为 true：';
+  uiShEmitPromptQuoteToLead(qt, instr, '❝ 已将「' + nd.title + '」引用至主对话，请直接描述你想检查什么规则');
+}
+
+function uiShQuoteFailedNodesToLead(onlyNodeIds) {
+  const pk = WORKFLOW_PACKS[state.activePackId];
+  const nodes = getActiveWorkshopGraph().nodes;
+  const idFilter = Array.isArray(onlyNodeIds) && onlyNodeIds.length ? new Set(onlyNodeIds) : null;
+  const failed = (state.lastRunFailedNodes || []).filter((f) => !idFilter || idFilter.has(f.nodeId));
+  const targets = failed.length > 0 ? failed : (idFilter ? [...idFilter].map((id) => {
+    const n = nodes.find((x) => x.id === id);
+    const t = (state.nodeTelemetry && state.nodeTelemetry[id]) || {};
+    return { nodeId: id, title: (n && n.title) || id, exitCode: t.exitCode || 1, reason: t.humanReason || t.diagSummary || '检查未通过' };
+  }) : []);
+  if (!targets.length) { showToast('当前没有待修复的拦截红卡'); return; }
+  const leadNode = nodes.find((x) => x.id === targets[0].nodeId) || nodes[0];
+  const meta = resolveNodeScopeMeta(leadNode);
+  const qt = buildDshQuoteTarget({
+    kind: targets.length > 1 ? 'multi' : 'card',
+    id: targets.map((t) => t.nodeId).join('+'),
+    title: targets.length > 1 ? (targets.length + '项检查拦截') : (targets[0].title + '(拦截)'),
+    contracts: meta.contracts, scopes: meta.scopes, firstFile: meta.firstFile,
+    uiOwner: 'runner/atlas/ui-shell.mjs',
+    desc: targets.map((t) => t.title + ': ' + t.reason).join('；')
+  });
+  const bulletLines = targets.map((t, idx) => (idx + 1) + '. 【' + t.title + '】(exit=' + t.exitCode + ')：' + t.reason).join('\\n');
+  const instr = '工作流「' + ((pk && pk.name) || state.activePackId) + '」运行检查拦截了 ' + targets.length + ' 个节点，请定位根因并派发编队修复后复跑验收：\\n' + bulletLines;
+  uiShEmitPromptQuoteToLead(qt, instr, '🔧 已将 ' + targets.length + ' 项拦截原因与定位胶囊填入主对话输入框');
+}
+
+function uiShRenderCheckFailBanner() {
+  const bar = document.getElementById('dg-check-fail-banner');
+  if (!bar) return;
+  const list = Array.isArray(state.lastRunFailedNodes) ? state.lastRunFailedNodes : [];
+  const show = state.page === 'workshop' && state.leftTab !== 'uiboard' && list.length > 0;
+  bar.classList.toggle('hidden', !show);
+  bar.classList.toggle('flex', show);
+  if (!show) { bar.innerHTML = ''; return; }
+  const names = list.slice(0, 2).map((x) => '「' + esc(x.title) + '」').join('、') + (list.length > 2 ? (' 等 ' + list.length + ' 项') : '');
+  const firstReason = esc(String(list[0].reason || '').slice(0, 56));
+  bar.innerHTML = '<span class="font-semibold shrink-0" style="color: var(--err);">⛔ 检查拦截 (' + list.length + ')</span>'
+    + '<span class="truncate min-w-0" style="color: var(--text-secondary);">' + names + (firstReason ? ('：' + firstReason) : '') + '</span>'
+    + '<button type="button" class="ghost-btn text-[11px] px-2 py-0.5 shrink-0" data-action="focus-first-failed-node">定位红卡</button>'
+    + '<button type="button" class="ghost-btn is-primary text-[11px] px-2.5 py-0.5 shrink-0" data-action="quote-fix-all-failed">🔧 一键汇总派主对话修</button>'
+    + '<button type="button" class="text-xs px-1 opacity-60 hover:opacity-100 shrink-0" data-action="dismiss-fail-banner" aria-label="关闭提示">✕</button>';
+}
+
 function openRightFilePreview(filePath, title, customDiff) {
   const cleanFile = String(filePath || 'runner/donegate.mjs').replace(/^\\/+/, '');
   const dshAddr = \`dsh-resource://file/session/\${encodeURIComponent(DSH_SESSION_ID)}/\${cleanFile}\`;
@@ -237,7 +306,7 @@ function resolveAnchorWorldPoint(anchor) {
       if (s && d) return { x: Math.round(((s.x || 0) + (d.x || 0)) / 2 + 120), y: Math.round(((s.y || 0) + (d.y || 0)) / 2 + 20) };
     }
   }
-  return { x: Math.round((-state.panX + 420) / state.scale), y: Math.round((-state.panY + 180) / state.scale) };
+  return { x: Math.round((-state.panX + 420) / (state.zoom || 1)), y: Math.round((-state.panY + 180) / (state.zoom || 1)) };
 }
 
 function renderDshCanvasAnchors() {
@@ -289,12 +358,13 @@ function flyCanvasToNode(nodeId) {
   if (!nd) return;
   const stage = document.getElementById('canvas-stage');
   const rect = stage ? stage.getBoundingClientRect() : { width: 900, height: 600 };
-  state.scale = Math.max(0.75, Math.min(1.15, state.scale || 1));
-  state.panX = Math.round(rect.width / 2 - ((nd.x || 0) + (nd.w || 252) / 2) * state.scale);
-  state.panY = Math.round(rect.height / 2 - ((nd.y || 0) + 90) * state.scale);
+  state.zoom = Math.max(0.75, Math.min(1.15, state.zoom || 1));
+  state.panX = Math.round(rect.width / 2 - ((nd.x || 0) + (nd.w || 252) / 2) * state.zoom);
+  state.panY = Math.round(rect.height / 2 - ((nd.y || 0) + 90) * state.zoom);
   state.selectedNodeIds.clear();
   state.selectedNodeIds.add(nd.id);
   renderAll();
+  if (typeof applyViewportTransform === 'function') applyViewportTransform();
   renderDshCanvasAnchors();
 }
 `;

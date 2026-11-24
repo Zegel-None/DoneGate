@@ -1,6 +1,12 @@
 // DSH 编排层纯叶节点契约门面（零 core/atlas 反向依赖，供工作台安全调用）
 export { resolveSafeWorkspaceFolders } from './win-paths.mjs';
 export {
+  SUBAGENT_HUMAN_ISOLATION_MSG,
+  buildClientSubagentReadOnlyComposerSource,
+  createSubagentHumanBlockedError,
+  installSubagentHumanIsolationGuard
+} from './subagent-isolation.mjs';
+export {
   buildElementQuotePayload,
   deriveSliceCmdFromUiOwner,
   formatQuoteCapsule,

@@ -115,8 +115,26 @@ describe('DoneGate 第二轮与第三轮工作台问题单回归验证', () => {
     }
   });
 
-  it('第三轮问题 #1：大型项目拆分为 10～16 张职责单一无环卡片，小型项目（<=18模块）严格一模块一卡片，且保留防拖拽穿透锁', () => {
-    const hostNodes = atlas.workbench.hostSandbox.nodes;
+  it('第三轮问题 #1 & 第四轮问题 #6：零魔法数字模块度自适应非均衡聚合（简单分支直出叶卡零空壳，复杂簇递归折叠子图，代码透视层完整保留无环 DAG）', () => {
+    const topBizNodes = atlas.workbench.hostSandbox.nodes;
+    expect(topBizNodes.length).toBeGreaterThanOrEqual(2);
+    expect(r2TestHasDirectedCycle(topBizNodes)).toBe(false);
+    // 非均衡检验：既包含模块度 ΔQ > 0 自动收拢的复杂业务子流，也允许独立叶卡同台并列（严禁单节点空套壳！）
+    const topSubgraphs = topBizNodes.filter((n) => n.isSubgraph === true);
+    expect(topSubgraphs.length).toBeGreaterThan(0);
+    const topById = new Map(topBizNodes.map((n) => [n.id, n]));
+    for (const bnd of topBizNodes) {
+      for (const tid of (bnd.nextIds || [])) {
+        const bdst = topById.get(tid);
+        expect(bdst, `业务层目标节点存在: ${tid}`).toBeDefined();
+        expect(bnd.x).toBeLessThan(bdst.x);
+      }
+    }
+    for (const sg of topSubgraphs) {
+      expect(sg.subgraph.nodes.length).toBeGreaterThanOrEqual(2);
+    }
+
+    const hostNodes = atlas.workbench.hostSandbox.codeUnitNodes;
     const byId = new Map(hostNodes.map((n) => [n.id, n]));
     expect(hostNodes.length).toBeGreaterThanOrEqual(10);
     expect(hostNodes.length).toBeLessThanOrEqual(16);

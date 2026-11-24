@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0",
+  "updatedAt": "2026-11-24T04:08:06.214Z",
+  "actions": [
+    {
+      "actionId": "act-create-order",
+      "label": "新建业务单据",
+      "blockId": "blk-hero",
+      "sourceFile": ".donegate/ui-prototype/index.html",
+      "sourceLine": 28,
+      "mockBehavior": "弹出新建单据抽屉预览提示",
+      "targetApi": "POST /api/orders/draft",
+      "targetTable": "orders",
+      "status": "mock"
+    },
+    {
+      "actionId": "act-submit-form",
+      "label": "提交并触发流转",
+      "blockId": "blk-form",
+      "sourceFile": ".donegate/ui-prototype/index.html",
+      "sourceLine": 56,
+      "mockBehavior": "校验非空并弹出提交成功模拟回执",
+      "targetApi": "POST /api/workflows/submit",
+      "targetTable": "workflow_submissions",
+      "status": "mock"
+    },
+    {
+      "actionId": "act-export-report",
+      "label": "导出筛选报表",
+      "blockId": "blk-table",
+      "sourceFile": ".donegate/ui-prototype/index.html",
+      "sourceLine": 82,
+      "mockBehavior": "前端模拟生成 CSV 下载提示",
+      "targetApi": "GET /api/reports/export",
+      "targetTable": "audit_logs",
+      "status": "mock"
+    }
+  ]
+}

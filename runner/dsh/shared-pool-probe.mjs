@@ -1,4 +1,4 @@
-// 共享底座池只读探针：多层级 manifest.json 兼容解析、_shared/npm 包入口验真与磁盘实体库存扫描
+// 共享底座池只读探针：多层级 manifest.json 兼容解析、_shared/{npm,npm-cells} 包入口验真与磁盘实体库存扫描
 import { existsSync, readdirSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -29,13 +29,34 @@ function pickPackageExportEntry(pkgJson) {
   return String(findStr(pkgJson?.exports) || pkgJson?.module || pkgJson?.main || '').trim().replace(/^\.\//, '');
 }
 
+function sppCollectNpmCellBases(root, pkgName) {
+  const cellsRoot = join(root, 'workflows', '.deps', '_shared', 'npm-cells');
+  if (!existsSync(cellsRoot)) return [];
+  const out = [];
+  const seen = new Set();
+  const pushCell = (name) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    out.push({ scope: 'shared', base: join(cellsRoot, name, 'node_modules') });
+  };
+  const pkgTail = String(pkgName || '').split('/').pop();
+  if (pkgTail) pushCell(sanitizePoolId(pkgTail));
+  try {
+    for (const ent of readdirSync(cellsRoot, { withFileTypes: true })) {
+      if (ent.isDirectory() && !ent.name.startsWith('.')) pushCell(ent.name);
+    }
+  } catch (err) { void err; }
+  return out;
+}
+
 export function verifyInstalledNpmPackage(projectRoot, pkgName, packId = null) {
   if (!projectRoot || !pkgName) return { ok: false, reason: 'missing-pkg' };
   const root = resolve(projectRoot);
   const segs = String(pkgName).split('/').filter(Boolean);
   const candidates = [
     { scope: 'shared', base: join(root, 'workflows', '.deps', '_shared', 'npm', 'node_modules') },
-    { scope: 'shared', base: join(root, 'workflows', '.deps', '_shared', 'node_modules') }
+    { scope: 'shared', base: join(root, 'workflows', '.deps', '_shared', 'node_modules') },
+    ...sppCollectNpmCellBases(root, pkgName)
   ];
   if (packId && packId !== '_shared') {
     const safeId = sanitizePoolId(packId);
@@ -51,13 +72,15 @@ export function verifyInstalledNpmPackage(projectRoot, pkgName, packId = null) {
     if (!r.ok || !r.value) continue;
     const entryRel = pickPackageExportEntry(r.value);
     const entryAbs = entryRel ? resolve(pkgDir, entryRel) : pkgJsonPath;
-    if (entryRel && !existsSync(entryAbs)) continue;
+    const hasBinDecl = Boolean(r.value.bin && (typeof r.value.bin === 'string' || Object.keys(r.value.bin).length > 0));
+    if (entryRel && !existsSync(entryAbs) && !hasBinDecl) continue;
+    const effectiveEntry = existsSync(entryAbs) ? entryAbs : pkgJsonPath;
     return {
       ok: true, scope: cand.scope, pkg: pkgName, version: normDepVer(r.value.version || ''),
       exportsCount: r.value.exports && typeof r.value.exports === 'object' ? Object.keys(r.value.exports).length : 1,
-      pkgJsonPath, entryPath: entryAbs,
+      pkgJsonPath, entryPath: effectiveEntry,
       relPkgJson: normalizeSlashes(pkgJsonPath.slice(root.length).replace(/^[\\/]+/, '')),
-      relEntry: normalizeSlashes(entryAbs.slice(root.length).replace(/^[\\/]+/, ''))
+      relEntry: normalizeSlashes(effectiveEntry.slice(root.length).replace(/^[\\/]+/, ''))
     };
   }
   return { ok: false, reason: 'not-found' };
@@ -186,6 +209,23 @@ export function parseFlexibleDepsManifest(rawDoc) {
   };
 }
 
+function sppScanNpmCellsMap(sharedDir) {
+  const cellMap = new Map();
+  const cellsDir = join(sharedDir, 'npm-cells');
+  if (!existsSync(cellsDir)) return cellMap;
+  try {
+    for (const ent of readdirSync(cellsDir, { withFileTypes: true })) {
+      if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+      const pj = readJsonStrict(join(cellsDir, ent.name, 'package.json'));
+      const deps = (pj.ok && pj.value && pj.value.dependencies && typeof pj.value.dependencies === 'object') ? pj.value.dependencies : {};
+      const firstPkg = Object.keys(deps)[0] || '';
+      const rawVer = firstPkg ? normDepVer(String(deps[firstPkg] || '').replace(/^[~^]/, '')) : '';
+      cellMap.set(ent.name.toLowerCase(), { cellId: ent.name, version: rawVer, relCell: `workflows/.deps/_shared/npm-cells/${ent.name}` });
+    }
+  } catch (err) { void err; }
+  return cellMap;
+}
+
 export function scanSharedPoolDiskInventory(projectRoot, platform = process.platform) {
   const root = resolve(projectRoot), sharedDir = join(root, 'workflows', '.deps', '_shared');
   const binDir = join(sharedDir, '.bin'), distsDir = join(sharedDir, 'dists'), reposDir = join(sharedDir, 'repos');
@@ -203,6 +243,7 @@ export function scanSharedPoolDiskInventory(projectRoot, platform = process.plat
       }
     } catch (err) { void err; }
   }
+  const cellMap = sppScanNpmCellsMap(sharedDir);
 
   const repoSet = new Set();
   if (existsSync(reposDir)) {
@@ -230,15 +271,15 @@ export function scanSharedPoolDiskInventory(projectRoot, platform = process.plat
     } catch (err) { void err; }
 
     for (const [key, g] of grouped.entries()) {
-      const distInfo = distMap.get(key) || null, hasRepo = repoSet.has(key);
-      const runnable = platform === 'win32' ? g.hasWin : (g.hasPosix || (g.hasWin && Boolean(distInfo || hasRepo)));
+      const distInfo = distMap.get(key) || null, cellInfo = cellMap.get(key) || null, hasRepo = repoSet.has(key);
+      const runnable = platform === 'win32' ? g.hasWin : (g.hasPosix || (g.hasWin && Boolean(distInfo || cellInfo || hasRepo)));
       if (!runnable) continue;
       const chosenFile = platform === 'win32' ? g.winFile : (g.posixFile || g.winFile);
       byKey.set(key, {
-        id: g.id, key, ready: true, version: distInfo?.version || '',
+        id: g.id, key, ready: true, version: distInfo?.version || cellInfo?.version || '',
         relBin: `workflows/.deps/_shared/.bin/${chosenFile}`,
         canonicalRelBin: `workflows/.deps/_shared/.bin/${g.id}`,
-        relDist: distInfo?.relDist || '',
+        relDist: distInfo?.relDist || cellInfo?.relCell || '',
         relRepo: hasRepo ? `workflows/.deps/_shared/repos/${g.id}` : ''
       });
     }

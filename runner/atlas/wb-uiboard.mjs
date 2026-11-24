@@ -33,6 +33,7 @@ function uibResolveSessionApiUrl(rawUrl) {
 const uiBoardState = {
   initialized: false,
   wasActiveTab: false,
+  loadedIframeKey: '',
   viewport: 'desktop',
   sourceMode: 'prototype',
   editorMode: 'builtin',
@@ -71,6 +72,7 @@ function syncGrillMeNodeToHostKanban(grillNode) {
     id: 'host-dom-grill-me',
     step: '00',
     title: 'grill me · 需求澄清与立约',
+    codeCapsule: { moduleCount: 1, sharedCount: 0, scopePaths: ['INTENT.md', 'contracts/'] },
     nextIds: (Array.isArray(grillNode.nextIds) && grillNode.nextIds.length) ? grillNode.nextIds : downstreamIds
   };
   if (existingIdx >= 0) {
@@ -119,7 +121,7 @@ function buildOfflineUiSrcdoc() {
   ].join('\\n');
 }
 
-async function syncUiBoardBackendStatus(forceReload) {
+async function syncUiBoardBackendStatus(forceBust) {
   if (!/^https?:$/i.test(location.protocol)) return null;
   try {
     const r = await fetch(uibResolveSessionApiUrl('/donegate/api/uiboard/status'));
@@ -140,7 +142,7 @@ async function syncUiBoardBackendStatus(forceReload) {
       if (!uiBoardState.devUrl && u.suggestedDevUrl) uiBoardState.devUrl = u.suggestedDevUrl;
       if (state.leftTab === 'uiboard') {
         renderLeftDrawer();
-        renderUiBoardStageDom(Boolean(forceReload));
+        renderUiBoardStageDom(Boolean(forceBust));
       }
       return u;
     }
@@ -150,19 +152,20 @@ async function syncUiBoardBackendStatus(forceReload) {
   return null;
 }
 
-function getUiBoardIframeUrl() {
+function getUiBoardIframeUrl(bustCache) {
   if (!/^https?:$/i.test(location.protocol) || IS_UIBOARD_SELF_EMBED) return '';
+  const bustSuffix = bustCache ? ('&t=' + Date.now()) : '';
   if (uiBoardState.sourceMode === 'proxy' && uiBoardState.devUrl.trim()) {
-    return uibResolveSessionApiUrl('/donegate/api/uiboard/proxy?url=' + encodeURIComponent(uiBoardState.devUrl.trim()));
+    return uibResolveSessionApiUrl('/donegate/api/uiboard/proxy?url=' + encodeURIComponent(uiBoardState.devUrl.trim()) + bustSuffix);
   }
   if (uiBoardState.editorMode === 'puck' && uiBoardState.puckInstalled) {
-    return uibResolveSessionApiUrl('/donegate/api/uiboard/prototype?editor=puck&theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now());
+    return uibResolveSessionApiUrl('/donegate/api/uiboard/prototype?editor=puck&theme=' + encodeURIComponent(uiBoardState.activeProposalId) + bustSuffix);
   }
   if (uiBoardState.isSelfDoneGate && uiBoardState.uiSourceKind !== 'custom-layout') {
     const hostTheme = (typeof state !== 'undefined' && state.theme) ? state.theme : 'light';
-    return uibResolveSessionApiUrl('/donegate/api/canvas?embed=uiboard&theme=' + encodeURIComponent(hostTheme) + '&t=' + Date.now());
+    return uibResolveSessionApiUrl('/donegate/api/canvas?embed=uiboard&theme=' + encodeURIComponent(hostTheme) + bustSuffix);
   }
-  return uibResolveSessionApiUrl('/donegate/api/uiboard/prototype?theme=' + encodeURIComponent(uiBoardState.activeProposalId) + '&t=' + Date.now());
+  return uibResolveSessionApiUrl('/donegate/api/uiboard/prototype?theme=' + encodeURIComponent(uiBoardState.activeProposalId) + bustSuffix);
 }
 
 function postToUiIframe(msg) {
@@ -170,13 +173,22 @@ function postToUiIframe(msg) {
   if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ source: 'donegate-uiboard', ...msg }, '*');
 }
 
-function reloadUiBoardIframe() {
+function reloadUiBoardIframe(forceBust) {
   if (IS_UIBOARD_SELF_EMBED) return;
   const ifr = document.getElementById('uiboard-iframe');
   if (!ifr) return;
-  const url = getUiBoardIframeUrl();
-  if (url) ifr.src = url;
-  else ifr.srcdoc = buildOfflineUiSrcdoc();
+  const baseKey = getUiBoardIframeUrl(false);
+  if (baseKey) {
+    if (!forceBust && ifr.getAttribute('data-loaded-key') === baseKey) return;
+    ifr.setAttribute('data-loaded-key', baseKey);
+    uiBoardState.loadedIframeKey = baseKey;
+    ifr.src = forceBust ? getUiBoardIframeUrl(true) : baseKey;
+  } else {
+    const docKey = 'srcdoc:' + uiBoardState.activeProposalId + ':' + (uiBoardState.isSelfDoneGate ? 'self' : 'ext');
+    if (!forceBust && ifr.getAttribute('data-loaded-key') === docKey) return;
+    ifr.setAttribute('data-loaded-key', docKey);
+    ifr.srcdoc = buildOfflineUiSrcdoc();
+  }
 }
 
 function renderUiBoardStageVisibility() {
@@ -196,11 +208,11 @@ function renderUiBoardStageVisibility() {
   uiBoardState.wasActiveTab = true;
   renderUiBoardStageDom(false);
   if (justEntered && !IS_UIBOARD_SELF_EMBED) {
-    syncUiBoardBackendStatus(true);
+    syncUiBoardBackendStatus(false);
   }
 }
 
-function renderUiBoardStageDom(forceReloadIframe) {
+function renderUiBoardStageDom(forceBustIframe) {
   const stageEl = document.getElementById('uiboard-stage');
   if (!stageEl) return;
   if (IS_UIBOARD_SELF_EMBED) {
@@ -257,9 +269,9 @@ function renderUiBoardStageDom(forceReloadIframe) {
       '  </div>',
       '</div>'
     ].join('\\n');
-    reloadUiBoardIframe();
-  } else if (forceReloadIframe) {
-    reloadUiBoardIframe();
+    reloadUiBoardIframe(Boolean(forceBustIframe));
+  } else {
+    reloadUiBoardIframe(Boolean(forceBustIframe));
   }
 
   const protoBtn = document.getElementById('uib-src-proto');
@@ -427,7 +439,7 @@ async function handleConveyRequirementsToKanban(requirementIds, wrapApi) {
   }
   if (typeof renderAll === 'function') renderAll();
   renderLeftDrawer();
-  if (!uiBoardState.isSelfDoneGate) reloadUiBoardIframe();
+  if (!uiBoardState.isSelfDoneGate) reloadUiBoardIframe(true);
   showToast('✓ 已传达到项目看板第 00 号「grill me · 需求澄清与立约」环节');
 }
 
@@ -488,7 +500,7 @@ document.addEventListener('change', (e) => {
     if (uiBoardState.sourceMode === 'proxy') {
       postToUiIframe({ type: 'dg-ui:apply-tokens', proposalId: pid, tokens: prop.tokens });
     } else {
-      reloadUiBoardIframe();
+      reloadUiBoardIframe(false);
     }
     renderLeftDrawer();
     showToast('🎨 已切换美学方案：「' + prop.name + '」');
@@ -513,13 +525,13 @@ document.addEventListener('click', async (e) => {
     if (!val) { showToast('请先输入本地服务地址，例如 http://127.0.0.1:5173'); return; }
     uiBoardState.devUrl = val;
     uiBoardState.sourceMode = 'proxy';
-    reloadUiBoardIframe();
+    reloadUiBoardIframe(true);
     renderUiBoardStageDom(false);
     showToast('🔗 正在通过同源注入桥接入：' + val);
   } else if (act === 'use-prototype') {
     uiBoardState.sourceMode = 'prototype';
     uiBoardState.editorMode = 'builtin';
-    reloadUiBoardIframe();
+    reloadUiBoardIframe(false);
     renderUiBoardStageDom(false);
     showToast(uiBoardState.isSelfDoneGate ? '已切换至完结门本仓实时界面预览' : '已切换至当前项目界面预览');
   } else if (act === 'use-puck') {
@@ -527,7 +539,7 @@ document.addEventListener('click', async (e) => {
     if (!uiBoardState.puckInstalled) { showToast('尚未检测到 @puckeditor/core，请先点击「📦 按需补齐 UI 增强套件」'); return; }
     uiBoardState.sourceMode = 'prototype';
     uiBoardState.editorMode = 'puck';
-    reloadUiBoardIframe();
+    reloadUiBoardIframe(false);
     renderUiBoardStageDom(false);
     showToast('已切换至完整 Puck 可视化积木编排画布');
   } else if (act === 'lock-theme') {
@@ -585,7 +597,7 @@ document.addEventListener('click', async (e) => {
     if (lblEl) lblEl.value = '';
     if (descEl) descEl.value = '';
     renderLeftDrawer();
-    if (!uiBoardState.isSelfDoneGate) reloadUiBoardIframe();
+    if (!uiBoardState.isSelfDoneGate) reloadUiBoardIframe(true);
     showToast('➕ 已记入「待传达功能记录」列表');
   } else if (act === 'convey-single' || act === 'convey-all') {
     const ids = act === 'convey-single' ? [actEl.getAttribute('data-req-id')] : [];

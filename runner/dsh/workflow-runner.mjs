@@ -29,6 +29,17 @@ function wfrUpsertDockItem(dockItems, item) {
   if (dockItems.length > 16) dockItems.pop();
 }
 
+function wfrSummarizeHumanReason(node, exitCode, rawDiag) {
+  if (exitCode === 0) return '';
+  const lines = String(rawDiag || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const keyLine = lines.find((l) => /FAIL|拦截|违例|error|Error|未通过|缺失|不可用/i.test(l)) || lines[0] || '';
+  const clean = keyLine.replace(/^\[[^\]]+\]\s*/, '').slice(0, 110);
+  if (clean) return clean;
+  return exitCode >= 2
+    ? `运行环境或工具异常 (exit ${exitCode})，请点「检查记录」查看详情`
+    : `检出代码或规则未达标项 (exit 1)，可交由主对话定位修复`;
+}
+
 function wfrApplyHubRecord(hubState, record) {
   const { recentEvents, activeCards, nodeTelemetry, dockItems } = hubState;
   recentEvents.push(record);
@@ -47,6 +58,7 @@ function wfrApplyHubRecord(hubState, record) {
       durationMs: record.durationMs || 0,
       cacheHit: Boolean(record.cacheHit),
       diagSummary: record.diagSummary || '',
+      humanReason: record.humanReason || '',
       updatedAt: record.ts
     });
   }
@@ -98,6 +110,13 @@ export function preflightWorkflowPack(pack, opts = {}) {
   const blankNode = pack.nodes.find((n) => (n.isBlank || n.tplId === 'tpl-blank') && !n.bypassed);
   if (blankNode) {
     return { ok: false, exitCode: 3, code: 'BLANK_NODE', nodeId: blankNode.id, reason: `节点「${blankNode.title || blankNode.id}」仍是空白待定节点，请先绑定节点或开启跳过` };
+  }
+  const uncfgCustom = pack.nodes.find((n) => n && n.isCustom && !n.customConfigured && !n.exec && !n.tool && !n.repoSlug && !n.bypassed);
+  if (uncfgCustom) {
+    return {
+      ok: false, exitCode: 3, code: 'UNCONFIGURED_CUSTOM_NODE', nodeId: uncfgCustom.id,
+      reason: `自定义节点「${uncfgCustom.title || uncfgCustom.id}」尚未配置检查规则，请先点击卡片「❝ 引用配规则」让主对话接入逻辑，或开启跳过`
+    };
   }
   if (opts.enforceDeps !== false) {
     const depReport = inspectWorkflowDeps(opts.projectRoot || process.cwd(), pack, opts.env ? { env: opts.env } : {});
@@ -243,6 +262,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   const loopCounters = new Map(Object.entries(cp.loopCounts || {}).map(([k, v]) => [k, Number(v)]));
   let lastExitCode = Number(cp.lastExitCode || 0);
   let lastDiag = '';
+  const failedGateRecords = [];
   let passedGates = Number(cp.passedGates || 0);
   let totalGates = Number(cp.totalGates || 0);
   let cacheHits = 0;
@@ -303,43 +323,66 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       continue;
     }
 
+    let stepExitCode = 0;
+    let stepDurationMs = 0;
+    let stepDiag = '';
+    let stepHumanReason = '';
+
     if (isHumanGateNode(current)) {
       logEvent({ type: 'human_gate_passed', nodeId: current.id, approvedBy: cp.approvedGates[current.id]?.by || '业主' });
       lastExitCode = 0;
-    } else if (isAgent && typeof hooks.runAgentStep === 'function') {
+    } else if (isAgent) {
       const t0 = Date.now();
-      const res = await hooks.runAgentStep({ node: current, round, handoff: lastDiag.slice(0, 16384), ticket, workCwd });
-      lastDiag = String(res?.summary || '');
-      logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: Date.now() - t0, diagSummary: lastDiag.slice(0, 240) });
-    } else if (!isAgent) {
+      if (typeof hooks.runAgentStep === 'function') {
+        const res = await hooks.runAgentStep({ node: current, round, handoff: lastDiag.slice(0, 16384), ticket, workCwd });
+        stepDiag = String(res?.summary || '');
+        lastDiag = stepDiag;
+      } else {
+        stepDiag = failedGateRecords.length > 0
+          ? `已汇总上游 ${failedGateRecords.length} 项拦截问题（${failedGateRecords.map((x) => x.title).join('、')}），可一键发往主对话派工修复`
+          : '上游门禁全部通过，无需生成额外修改指令';
+      }
+      stepDurationMs = Date.now() - t0;
+      stepExitCode = 0;
+      logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: stepDurationMs, diagSummary: stepDiag.slice(0, 240), humanReason: '' });
+    } else {
       totalGates++;
       const cacheKeyArgs = Array.isArray(current.exec?.nodeArgs)
         ? current.exec.nodeArgs
         : [resolvedSpec.entryRel || resolvedSpec.scriptRel || current.tplId || current.id, resolvedSpec.obligationId || ''];
       const cacheRes = (useCache && current.cacheable !== false) ? lookupFingerprintCache(root, workCwd, current, cacheKeyArgs) : { hit: false, fp: null };
       if (cacheRes.hit) {
+        stepExitCode = 0;
         lastExitCode = 0;
-        lastDiag = cacheRes.entry.diagSummary || '命中材料指纹缓存免跑通过';
+        stepDiag = `⚡ 命中指纹缓存免跑 (${cacheRes.fp.watchedCount} 文件未变)`;
+        lastDiag = cacheRes.entry.diagSummary || stepDiag;
         passedGates++;
         cacheHits++;
         cp.consecEnvFaults = 0;
-        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: 0, cacheHit: true, diagSummary: `⚡ 命中指纹缓存免跑 (${cacheRes.fp.watchedCount} 文件未变)` });
+        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: 0, durationMs: 0, cacheHit: true, diagSummary: stepDiag, humanReason: '' });
       } else {
         const execOut = executeBrickGateNode(root, workCwd, current, wfEnv);
-        lastExitCode = execOut.exitCode;
-        lastDiag = execOut.diagSummary;
-        if (lastExitCode === 0) {
+        stepExitCode = execOut.exitCode;
+        stepDurationMs = execOut.durationMs;
+        stepDiag = execOut.diagSummary || '';
+        lastExitCode = stepExitCode;
+        lastDiag = stepDiag;
+        if (stepExitCode === 0) {
           passedGates++;
           cp.consecEnvFaults = 0;
-          if (useCache && cacheRes.fp) recordFingerprintCache(root, cacheRes.fp, { durationMs: execOut.durationMs, diagSummary: lastDiag });
-        } else if (lastExitCode >= 2) {
-          cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
-          if (cp.consecEnvFaults >= maxEnvFaults) {
-            cp.totalGates = totalGates; cp.passedGates = passedGates; cp.lastExitCode = lastExitCode;
-            return abortWithBreaker(lastExitCode, 'ENV_OR_PROTOCOL_FAULT', current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${lastExitCode})，已自动熔断停机`);
+          if (useCache && cacheRes.fp) recordFingerprintCache(root, cacheRes.fp, { durationMs: stepDurationMs, diagSummary: stepDiag });
+        } else {
+          stepHumanReason = wfrSummarizeHumanReason(current, stepExitCode, stepDiag);
+          failedGateRecords.push({ nodeId: current.id, title: current.title || current.id, exitCode: stepExitCode, humanReason: stepHumanReason });
+          if (stepExitCode >= 2) {
+            cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
+            if (cp.consecEnvFaults >= maxEnvFaults) {
+              cp.totalGates = totalGates; cp.passedGates = passedGates; cp.lastExitCode = stepExitCode;
+              return abortWithBreaker(stepExitCode, 'ENV_OR_PROTOCOL_FAULT', current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${stepExitCode})：${stepHumanReason}`);
+            }
           }
         }
-        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: lastExitCode, durationMs: execOut.durationMs, cacheHit: false, diagSummary: lastDiag.slice(0, 240) });
+        logEvent({ type: 'gate_settled', nodeId: current.id, exitCode: stepExitCode, durationMs: stepDurationMs, cacheHit: false, diagSummary: stepDiag.slice(0, 320), humanReason: stepHumanReason });
       }
     }
 
@@ -350,7 +393,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       return abortWithBreaker(2, 'WRITE_SCOPE_VIOLATION', current.id, `越界修改了未授权范围文件：${stepScope.violated.join(', ')}`);
     }
 
-    const selfLoop = lastExitCode !== 0 && links.find((l) => l.fromNode === current.id && l.toNode === current.id && l.maxLoops);
+    const selfLoop = !isAgent && stepExitCode !== 0 && links.find((l) => l.fromNode === current.id && l.toNode === current.id && l.maxLoops);
     if (selfLoop) {
       const used = (loopCounters.get(selfLoop.id) || 0) + 1;
       if (used <= selfLoop.maxLoops) {
@@ -366,8 +409,16 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       return abortWithBreaker(lastExitCode, 'MAX_LOOPS_EXCEEDED', current.id, `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机`);
     }
 
-    cp.completedNodes.push({ nodeId: current.id, title: current.title || current.id, exitCode: lastExitCode, at: new Date().toISOString() });
-    cp.lastExitCode = lastExitCode;
+    cp.completedNodes.push({
+      nodeId: current.id,
+      title: current.title || current.id,
+      exitCode: stepExitCode,
+      durationMs: stepDurationMs,
+      diagSummary: stepDiag.slice(0, 320),
+      humanReason: stepHumanReason,
+      at: new Date().toISOString()
+    });
+    cp.lastExitCode = failedGateRecords.length > 0 ? failedGateRecords[0].exitCode : lastExitCode;
     cp.passedGates = passedGates;
     cp.totalGates = totalGates;
     cp.loopCounts = Object.fromEntries(loopCounters);
@@ -379,20 +430,22 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     saveAutopilotCheckpoint(root, cp);
   }
 
+  const finalExitCode = failedGateRecords.length > 0 ? failedGateRecords[0].exitCode : lastExitCode;
   const diff = collectGitDiffStats(workCwd);
-  cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, lastExitCode === 0 ? 'COMPLETED' : 'ABORTED', runId);
+  cp.sandboxWorktree = finalizeAutopilotWorktree(root, wtInfo, finalExitCode === 0 ? 'COMPLETED' : 'ABORTED', runId);
   cp.state = AUTOPILOT_STATES.COMPLETED;
   cp.cursorNodeId = null;
+  cp.lastExitCode = finalExitCode;
   saveAutopilotCheckpoint(root, cp);
 
   const card = buildMicroVerdictCard({
-    ticketId: runId, targetUri: ticket?.targetUri || null, exitCode: lastExitCode,
-    headline: ticket?.headline || (lastExitCode === 0 ? `${pack.name}验证通过` : `${pack.name}未通过拦截`),
+    ticketId: runId, targetUri: ticket?.targetUri || null, exitCode: finalExitCode,
+    headline: ticket?.headline || (finalExitCode === 0 ? `${pack.name}验证通过` : `${pack.name}未通过拦截`),
     passedGates, totalGates: Math.max(totalGates, 1),
     touchedFiles: diff.files, addedLines: diff.added, removedLines: diff.removed, canRollback: diff.files.length > 0
   });
   logEvent({ type: 'micro_card_ready', card });
   logEvent({ type: 'dock_item', item: { id: runId, kind: 'summary', tone: card.tone, title: `${card.headline} · ${card.gateBadge} · ${card.diffBadge}`, card } });
   const savedLog = existsSync(journalPath) ? readFileSync(journalPath, 'utf8').trim().split('\n').length : 0;
-  return { ok: lastExitCode === 0, exitCode: lastExitCode, state: cp.state, runId, cacheHits, sandboxWorktree: cp.sandboxWorktree, card, checkpoint: cp, eventCount: savedLog };
+  return { ok: finalExitCode === 0, exitCode: finalExitCode, failedNodes: failedGateRecords, state: cp.state, runId, cacheHits, sandboxWorktree: cp.sandboxWorktree, card, checkpoint: cp, eventCount: savedLog };
 }

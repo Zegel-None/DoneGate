@@ -6,7 +6,7 @@
 
 | 子包键名 | 职责边界 | 管辖模块 (`runner/atlas/*.mjs`（私有仓）) |
 |---|---|---|
-| `@scanner` | 全栈入口盘点、跨语言依赖图谱、Git 支线撞车雷达、看板注水与全景体检四视图 | `contract.mjs`, `index.mjs`, `assemble-atlas.mjs`, `scan-entries.mjs`, `scan-graph.mjs`, `scan-branches.mjs`, `hydrate-workbench.mjs`, `humanize.mjs`, `serve-atlas.mjs`, `ui-views.mjs` |
+| `@scanner` | 全栈入口盘点、跨语言依赖图谱、Git 支线撞车雷达、看板注水与全景体检四视图 | `contract.mjs`, `index.mjs`, `assemble-atlas.mjs`, `scan-entries.mjs`, `scan-graph.mjs`, `scan-branches.mjs`, `hydrate-workbench.mjs`, `modularity-hierarchy.mjs`, `humanize.mjs`, `serve-atlas.mjs`, `ui-views.mjs` |
 | `@canvas` | 无限画布引擎、样式与 DOM 骨架、卡片/连线/组合框渲染、拓扑自动整理、级联菜单、视口与 100 步撤销栈 | `render-html.mjs`, `wb-style-base.mjs`, `wb-style-canvas.mjs`, `wb-dom.mjs`, `wb-graph-engine.mjs`, `wb-layout-tidy.mjs`, `wb-render-cards.mjs`, `wb-render-wires.mjs`, `wb-snap-rulers.mjs`, `wb-menus-viewport.mjs`, `wb-viewport-ops.mjs`, `wb-events-wheel-drop.mjs`, `wb-events-pointer.mjs`, `wb-inline-rename.mjs`, `wb-events-actions.mjs`, `wb-history.mjs` |
 | `@uiboard` | Agent Native UI 看板前端控制器：实时换肤、同源代理预览、跨窗口拾取桥接收与假动作转真后端 | `wb-uiboard.mjs` |
 | `@workflow` | 预置工作流目录、节点级即时派生（JIT）弹窗、实时后端水合外壳与过夜挂机调度、会话子代理联动 | `wb-catalog.mjs`, `wb-jit-workflow.mjs`, `ui-shell.mjs`, `wb-subagent.mjs` |

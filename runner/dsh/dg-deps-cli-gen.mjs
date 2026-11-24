@@ -1,4 +1,4 @@
-// 生成并落盘目标工作区零外部依赖单文件 CLI：workflows/.deps/_shared/dg-deps-cli.mjs
+// 生成并落盘目标工作区零外部依赖单文件 CLI：workflows/.deps/_shared/dg-deps-cli.mjs（含 npm-cells 独立工具舱确定性安装）
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -8,7 +8,7 @@ export function renderStandaloneDepsCliSource() {
 // Auto-generated zero-dependency DoneGate shared-pool helper CLI (workflows/.deps/_shared/dg-deps-cli.mjs)
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,12 +28,21 @@ export function writeJsonAtomic(filePath, data) {
   return abs;
 }
 
+export function ensureDeclarativePkgJson(dirPath, pkgName = 'donegate-pool-cell') {
+  mkdirSync(dirPath, { recursive: true });
+  const pjPath = join(dirPath, 'package.json');
+  if (!existsSync(pjPath)) writeJsonAtomic(pjPath, { name: pkgName, private: true, description: 'DoneGate isolated dependency cell' });
+  return pjPath;
+}
+
 export function ensureSharedPoolSkeleton(projectRoot, opts = {}) {
   const root = resolve(projectRoot || process.cwd()), sharedDir = join(root, 'workflows', '.deps', '_shared');
-  const binDir = join(sharedDir, '.bin'), distsDir = join(sharedDir, 'dists'), reposDir = join(sharedDir, 'repos'), npmDir = join(sharedDir, 'npm'), gradleHomeDir = join(sharedDir, '.gradle-home');
-  for (const d of [binDir, distsDir, reposDir, npmDir]) mkdirSync(d, { recursive: true });
+  const binDir = join(sharedDir, '.bin'), distsDir = join(sharedDir, 'dists'), reposDir = join(sharedDir, 'repos');
+  const npmDir = join(sharedDir, 'npm'), npmCellsDir = join(sharedDir, 'npm-cells'), gradleHomeDir = join(sharedDir, '.gradle-home');
+  for (const d of [binDir, distsDir, reposDir, npmDir, npmCellsDir]) mkdirSync(d, { recursive: true });
+  ensureDeclarativePkgJson(npmDir, 'donegate-shared-npm-libs');
   if (opts.includeGradleHome || String(opts.binName || opts.toolId || '').toLowerCase() === 'gradle') mkdirSync(gradleHomeDir, { recursive: true });
-  return { root, sharedDir, binDir, distsDir, reposDir, npmDir, gradleHomeDir, manifestPath: join(sharedDir, 'manifest.json'), refreshStampPath: join(sharedDir, '.refresh-stamp.json'), rootRefreshStampPath: join(root, 'workflows', '.deps', '.refresh-stamp.json') };
+  return { root, sharedDir, binDir, distsDir, reposDir, npmDir, npmCellsDir, gradleHomeDir, manifestPath: join(sharedDir, 'manifest.json'), refreshStampPath: join(sharedDir, '.refresh-stamp.json'), rootRefreshStampPath: join(root, 'workflows', '.deps', '.refresh-stamp.json') };
 }
 
 function pickPkgEntryRel(pkgJson) {
@@ -51,7 +60,13 @@ function pickPkgEntryRel(pkgJson) {
 export function verifyInstalledNpmPkg(projectRoot, pkgName, workflowId = null) {
   if (!pkgName) return { ok: false, reason: 'missing-pkg-name' };
   const root = resolve(projectRoot || process.cwd()), segs = String(pkgName).split('/').filter(Boolean);
+  const cellsRoot = join(root, 'workflows', '.deps', '_shared', 'npm-cells');
   const bases = [{ scope: 'shared', dir: join(root, 'workflows', '.deps', '_shared', 'npm', 'node_modules') }, { scope: 'shared', dir: join(root, 'workflows', '.deps', '_shared', 'node_modules') }];
+  if (existsSync(cellsRoot)) {
+    const tail = sanitizeId(segs[segs.length - 1] || '');
+    if (tail) bases.push({ scope: 'shared', dir: join(cellsRoot, tail, 'node_modules') });
+    try { for (const d of readdirSync(cellsRoot, { withFileTypes: true })) if (d.isDirectory() && d.name !== tail) bases.push({ scope: 'shared', dir: join(cellsRoot, d.name, 'node_modules') }); } catch (e) { void e; }
+  }
   if (workflowId && workflowId !== '_shared') {
     const safeWf = sanitizeId(workflowId);
     bases.push({ scope: 'workflow', dir: join(root, 'workflows', '.deps', safeWf, 'npm', 'node_modules') }, { scope: 'workflow', dir: join(root, 'workflows', '.deps', safeWf, 'node_modules') });
@@ -60,8 +75,10 @@ export function verifyInstalledNpmPkg(projectRoot, pkgName, workflowId = null) {
     const pkgDir = join(b.dir, ...segs), pkgJsonPath = join(pkgDir, 'package.json'), pkgJson = readJsonSafe(pkgJsonPath);
     if (!pkgJson) continue;
     const entryRel = pickPkgEntryRel(pkgJson), entryAbs = entryRel ? resolve(pkgDir, entryRel) : pkgJsonPath;
-    if (entryRel && !existsSync(entryAbs)) continue;
-    return { ok: true, scope: b.scope, pkg: pkgName, version: normVer(pkgJson.version || ''), relPkgJson: normSlash(pkgJsonPath.slice(root.length).replace(/^[\\\\/]+/, '')), relEntry: normSlash(entryAbs.slice(root.length).replace(/^[\\\\/]+/, '')) };
+    const hasBin = Boolean(pkgJson.bin && (typeof pkgJson.bin === 'string' || Object.keys(pkgJson.bin).length > 0));
+    if (entryRel && !existsSync(entryAbs) && !hasBin) continue;
+    const effEntry = existsSync(entryAbs) ? entryAbs : pkgJsonPath;
+    return { ok: true, scope: b.scope, pkg: pkgName, version: normVer(pkgJson.version || ''), relPkgJson: normSlash(pkgJsonPath.slice(root.length).replace(/^[\\\\/]+/, '')), relEntry: normSlash(effEntry.slice(root.length).replace(/^[\\\\/]+/, '')) };
   }
   return { ok: false, reason: 'not-installed' };
 }
@@ -177,13 +194,19 @@ export function writeSharedPoolLaunchers(projectRoot, spec = {}) {
   const isGradle = Boolean(spec.useGradleHome || binName.toLowerCase() === 'gradle'), skel = ensureSharedPoolSkeleton(projectRoot, { includeGradleHome: isGradle });
   const rawComment = String(spec.comment || \`DoneGate shared-pool launcher for \${binName}\`);
   if (spec.strictAsciiInput && !/^[\\x00-\\x7F]*$/.test(rawComment)) throw new Error('NON_ASCII_BATCH_CONTENT');
-  const note = rawComment.replace(/[^\\x20-\\x7E]+/g, ' ').replace(/\\s+/g, ' ').trim() || \`DoneGate launcher \${binName}\`, npmBinBase = join(skel.npmDir, 'node_modules', '.bin');
-  const useNpmBin = Boolean(spec.npmBin === true || spec.kind === 'npm-cli' || (!spec.distSubdir && (existsSync(join(npmBinBase, binName)) || existsSync(join(npmBinBase, \`\${binName}.cmd\`)) || existsSync(join(npmBinBase, \`\${binName}.exe\`)))));
+  const note = rawComment.replace(/[^\\x20-\\x7E]+/g, ' ').replace(/\\s+/g, ' ').trim() || \`DoneGate launcher \${binName}\`;
+  const candCellId = spec.npmCellId ? sanitizeId(spec.npmCellId) : sanitizeId(spec.id || binName);
+  const cellBinBase = join(skel.npmCellsDir, candCellId, 'node_modules', '.bin');
+  const hasCellBin = Boolean(spec.npmCellId) || existsSync(join(cellBinBase, binName)) || existsSync(join(cellBinBase, \`\${binName}.cmd\`)) || existsSync(join(cellBinBase, \`\${binName}.exe\`));
+  const npmBinBase = hasCellBin ? cellBinBase : join(skel.npmDir, 'node_modules', '.bin');
+  const relNpmRootPosix = hasCellBin ? \`../npm-cells/\${candCellId}\` : '../npm';
+  const relNpmRootWin = hasCellBin ? \`..\\\\npm-cells\\\\\${candCellId}\` : '..\\\\npm';
+  const useNpmBin = Boolean(spec.npmBin === true || spec.kind === 'npm-cli' || hasCellBin || (!spec.distSubdir && (existsSync(join(npmBinBase, binName)) || existsSync(join(npmBinBase, \`\${binName}.cmd\`)) || existsSync(join(npmBinBase, \`\${binName}.exe\`)))));
   let shLines, batLines;
   if (useNpmBin) {
     const hasExe = existsSync(join(npmBinBase, \`\${binName}.exe\`));
-    shLines = ['#!/bin/sh', \`# \${note}\`, 'DG_BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"', \`exec "$DG_BIN_DIR/../npm/node_modules/.bin/\${binName}" "$@"\`, ''];
-    batLines = ['@echo off', 'setlocal', \`rem \${note}\`, 'set "DG_BIN_DIR=%~dp0"', 'for %%I in ("%DG_BIN_DIR%..\\\\npm\\\\node_modules\\\\.bin") do set "DG_NPM_BIN=%%~fI"', hasExe ? \`"%DG_NPM_BIN%\\\\\${binName}.exe" %*\` : \`call "%DG_NPM_BIN%\\\\\${binName}.cmd" %*\`, 'exit /b %ERRORLEVEL%', ''];
+    shLines = ['#!/bin/sh', \`# \${note}\`, 'DG_BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"', \`DG_NPM_ROOT="$(CDPATH= cd -- "$DG_BIN_DIR/\${relNpmRootPosix}" && pwd)"\`, 'NODE_PATH="$DG_NPM_ROOT/node_modules\${NODE_PATH:+:$NODE_PATH}"', 'export NODE_PATH', \`exec "$DG_NPM_ROOT/node_modules/.bin/\${binName}" "$@"\`, ''];
+    batLines = ['@echo off', 'setlocal', \`rem \${note}\`, 'set "DG_BIN_DIR=%~dp0"', \`for %%I in ("%DG_BIN_DIR%\${relNpmRootWin}") do set "DG_NPM_ROOT=%%~fI"\`, 'if defined NODE_PATH ( set "NODE_PATH=%DG_NPM_ROOT%\\\\node_modules;%NODE_PATH%" ) else ( set "NODE_PATH=%DG_NPM_ROOT%\\\\node_modules" )', hasExe ? \`"%DG_NPM_ROOT%\\\\node_modules\\\\.bin\\\\\${binName}.exe" %*\` : \`call "%DG_NPM_ROOT%\\\\node_modules\\\\.bin\\\\\${binName}.cmd" %*\`, 'exit /b %ERRORLEVEL%', ''];
   } else {
     const distSubdir = String(spec.distSubdir || '').trim(); if (!SAFE_RE.test(distSubdir)) throw new Error('Unsafe or missing distSubdir');
     const distBase = join(skel.distsDir, distSubdir), posixEntry = normSlash(spec.posixEntryRel || ([\`bin/\${binName}\`, binName].find((r) => existsSync(join(distBase, r))) || \`bin/\${binName}\`)).replace(/^\\/+/, '');
@@ -196,7 +219,83 @@ export function writeSharedPoolLaunchers(projectRoot, spec = {}) {
   const posixPath = join(skel.binDir, binName), batPath = join(skel.binDir, \`\${binName}.bat\`), cmdPath = join(skel.binDir, \`\${binName}.cmd\`);
   writeFileSync(posixPath, normLf(shLines.join('\\n')), 'utf8'); try { chmodSync(posixPath, 0o755); } catch (e) { void e; }
   writeFileSync(batPath, batContent, 'ascii'); writeFileSync(cmdPath, batContent, 'ascii');
-  return { ok: true, binName, mode: useNpmBin ? 'npm-cli' : 'archive-bin', posixPath, batPath, cmdPath, relBin: \`workflows/.deps/_shared/.bin/\${binName}\` };
+  return { ok: true, binName, mode: useNpmBin ? 'npm-cli' : 'archive-bin', npmCellId: hasCellBin ? candCellId : null, posixPath, batPath, cmdPath, relBin: \`workflows/.deps/_shared/.bin/\${binName}\` };
+}
+
+function runNpmExec(prefixDir, pkgSpec, cwd, extraFlags = [], npmCmdOverride = '') {
+  const args = ['install', '--no-audit', '--no-fund', '--save-exact', ...extraFlags, '--prefix', prefixDir, pkgSpec];
+  if (npmCmdOverride) return spawnSync(npmCmdOverride, args, { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });
+  const cliCands = [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')];
+  const npmCli = cliCands.find((p) => existsSync(p));
+  if (npmCli) return spawnSync(process.execPath, [npmCli, ...args], { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });
+  if (process.platform === 'win32') {
+    const cmdLine = \`"npm.cmd \${args.map((a) => \`"\${String(a).replace(/"/g, '')}"\`).join(' ')}"\`;
+    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], { cwd, encoding: 'utf8', timeout: 240000, windowsVerbatimArguments: true, windowsHide: true });
+  }
+  return spawnSync('npm', args, { cwd, encoding: 'utf8', timeout: 240000 });
+}
+
+function repairEsbuildPostinstall(prefixDir) {
+  const installScript = join(prefixDir, 'node_modules', 'esbuild', 'install.js');
+  if (!existsSync(installScript)) return false;
+  const esbBin = join(prefixDir, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild');
+  if (existsSync(esbBin)) {
+    const probe = process.platform === 'win32'
+      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', \`""\${esbBin}" --version"\`], { encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true })
+      : spawnSync(esbBin, ['--version'], { encoding: 'utf8' });
+    if (probe.status === 0) return false;
+  }
+  const fix = spawnSync(process.execPath, [installScript], { cwd: prefixDir, encoding: 'utf8', timeout: 120000, windowsHide: true });
+  return fix.status === 0;
+}
+
+function probeBinDetectedVersion(binExec, cwd) {
+  for (const flag of ['--version', 'version', '-V']) {
+    const vr = process.platform === 'win32'
+      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', \`""\${binExec}" \${flag}"\`], { cwd, encoding: 'utf8', timeout: 45000, windowsVerbatimArguments: true, windowsHide: true })
+      : spawnSync(binExec, [flag], { cwd, encoding: 'utf8', timeout: 45000 });
+    const combined = \`\${vr.stdout || ''}\\n\${vr.stderr || ''}\`;
+    const m = combined.match(/v?(\\d+\\.\\d+(?:\\.\\d+)?(?:-[0-9A-Za-z.-]+)?)/);
+    if (vr.status === 0 && m) return { ok: true, version: m[1], output: normLf(combined).trim() };
+    if (vr.status === 0) return { ok: true, version: '', output: normLf(combined).trim() };
+  }
+  return { ok: false, version: '', output: '' };
+}
+
+export function installSharedPoolNpmDep(projectRoot, spec = {}) {
+  const root = resolve(projectRoot || process.cwd()), depId = String(spec.id || spec.binName || spec.pkg || '').trim();
+  const pkgName = String(spec.pkg || depId).trim(), wantVer = normVer(spec.version || '');
+  if (!depId || !pkgName || !/^[a-zA-Z0-9@/._-]+$/.test(pkgName)) return { ok: false, stage: 'validate', error: 'Invalid --id or --pkg' };
+  const isCli = Boolean(spec.kind === 'npm-cli' || (spec.binName && spec.kind !== 'npm-lib'));
+  const binName = isCli ? String(spec.binName || depId).trim() : '';
+  const skel = ensureSharedPoolSkeleton(root), cellId = isCli ? sanitizeId(depId) : '';
+  const prefixDir = isCli ? join(skel.npmCellsDir, cellId) : skel.npmDir;
+  ensureDeclarativePkgJson(prefixDir, isCli ? \`dg-cell-\${cellId}\` : 'donegate-shared-npm-libs');
+  const pkgSpec = wantVer ? \`\${pkgName}@\${wantVer}\` : pkgName;
+  let r = runNpmExec(prefixDir, pkgSpec, root, [], spec.npmCmdOverride || process.env.DG_DEPS_NPM_BIN || '');
+  let usedLegacyPeerDeps = false;
+  if (r.status !== 0 && /ERESOLVE|peer dep/i.test(\`\${r.stderr || ''}\\n\${r.stdout || ''}\`)) {
+    usedLegacyPeerDeps = true;
+    r = runNpmExec(prefixDir, pkgSpec, root, ['--legacy-peer-deps'], spec.npmCmdOverride || process.env.DG_DEPS_NPM_BIN || '');
+  }
+  if (r.status !== 0) return { ok: false, stage: 'npm-install', exitCode: r.status ?? 2, stderr: normLf(r.stderr || r.stdout || '').slice(0, 2000) };
+  const esbuildRepaired = repairEsbuildPostinstall(prefixDir);
+  const pkgJsonInstalled = readJsonSafe(join(prefixDir, 'node_modules', ...pkgName.split('/'), 'package.json'));
+  const pkgVer = normVer(pkgJsonInstalled?.version || '');
+  let launchers = null, detVer = pkgVer || wantVer;
+  if (isCli && binName) {
+    launchers = writeSharedPoolLaunchers(root, { id: depId, binName, kind: 'npm-cli', npmCellId: cellId });
+    const binExec = process.platform === 'win32' ? launchers.batPath : launchers.posixPath;
+    const verProbe = probeBinDetectedVersion(binExec, root);
+    if (!verProbe.ok && !pkgVer) return { ok: false, stage: 'verify-launcher', launchers };
+    if (pkgVer) detVer = pkgVer; else if (verProbe.version) detVer = normVer(verProbe.version);
+  }
+  const recorded = recordSharedPoolDepReady(root, {
+    id: depId, label: spec.label || '', workflowLabel: spec.workflowLabel || '', kind: isCli ? 'npm-cli' : 'npm-lib',
+    pkg: pkgName, binName: binName || depId, workflowId: spec.workflowId || '', version: wantVer, detectedVersion: detVer,
+    bin: launchers ? launchers.relBin : '', distSubdir: ''
+  });
+  return { ...recorded, prefixRel: normSlash(prefixDir.slice(root.length).replace(/^[\\\\/]+/, '')), isolatedCell: isCli ? cellId : null, usedLegacyPeerDeps, esbuildRepaired, launchers };
 }
 
 function extractExistingEntries(doc) {
@@ -241,7 +340,7 @@ export function refreshWorkflowDepsStamp(projectRoot, meta = {}) {
   const skel = ensureSharedPoolSkeleton(projectRoot), now = new Date().toISOString(), prevShared = readJsonSafe(skel.manifestPath) || {}, nextInstalled = {};
   for (const [id, rec] of Object.entries(extractExistingEntries(prevShared))) {
     if (!rec || typeof rec !== 'object') continue;
-    const wantVer = normVer(rec.version), isNpmLib = rec.kind === 'npm-lib' || (rec.pkg && !rec.bin), npmProbe = isNpmLib ? verifyInstalledNpmPkg(skel.root, rec.pkg || id, meta.workflowId) : null;
+    const wantVer = normVer(rec.version), isNpmLib = rec.kind === 'npm-lib' || (rec.pkg && !rec.bin), npmProbe = (isNpmLib || rec.pkg) ? verifyInstalledNpmPkg(skel.root, rec.pkg || id, meta.workflowId) : null;
     const detVer = rec.detectedVersion !== undefined && String(rec.detectedVersion).trim() !== '' ? normVer(rec.detectedVersion) : (npmProbe?.ok ? npmProbe.version : wantVer);
     const verMismatch = (wantVer && (!detVer || wantVer !== detVer)) || rec.status === 'version-mismatch', binRel = normSlash(rec.bin || \`workflows/.deps/_shared/.bin/\${id}\`);
     const onDisk = isNpmLib ? Boolean(npmProbe?.ok) : (existsSync(resolve(skel.root, binRel)) || existsSync(resolve(skel.root, \`\${binRel}.bat\`)) || existsSync(resolve(skel.root, \`\${binRel}.cmd\`)));
@@ -257,16 +356,25 @@ export async function runStandaloneCli(argv = process.argv.slice(2)) {
   const root = resolve(pull('--project', pull('--root', process.cwd())));
   if (cmd === 'download') { const url = pull('--url', ''), dest = pull('--dest', pull('--out', '')); return (!url || !dest) ? { exitCode: 3, payload: { ok: false, error: 'download requires --url and --dest' } } : { exitCode: 0, payload: await downloadWithRangeResume(url, resolve(root, dest), { expectedSha256: pull('--sha256', ''), chunkSize: Number(pull('--chunk-size', DEFAULT_RANGE_CHUNK_BYTES)) }) }; }
   if (cmd === 'repair-git') { const repo = pull('--repo', ''); if (!repo) return { exitCode: 3, payload: { ok: false, error: 'repair-git requires --repo' } }; const out = repairGitRepoCleanIndex(resolve(root, repo)); return { exitCode: out.ok ? 0 : 1, payload: out }; }
-  if (cmd === 'write-launchers') { const binName = pull('--bin', pull('--id', '')), distSubdir = pull('--dist', ''), npmBin = argv.includes('--npm-bin') || pull('--kind', '') === 'npm-cli'; return (!binName || (!distSubdir && !npmBin)) ? { exitCode: 3, payload: { ok: false, error: 'write-launchers requires --bin and (--dist or --npm-bin)' } } : { exitCode: 0, payload: writeSharedPoolLaunchers(root, { binName, distSubdir, npmBin, comment: pull('--comment', '') }) }; }
+  if (cmd === 'install-npm') {
+    const out = installSharedPoolNpmDep(root, {
+      id: pull('--id', pull('--bin', '')), kind: pull('--kind', pull('--bin', '') ? 'npm-cli' : 'npm-lib'),
+      pkg: pull('--pkg', ''), version: pull('--version', ''), binName: pull('--bin', pull('--bin-name', '')),
+      workflowId: pull('--workflow', pull('--pack', '')), label: pull('--label', ''),
+      workflowLabel: pull('--workflow-label', ''), npmCmdOverride: pull('--npm-cmd', '')
+    });
+    return { exitCode: out.ok ? 0 : 1, payload: out };
+  }
+  if (cmd === 'write-launchers') { const binName = pull('--bin', pull('--id', '')), distSubdir = pull('--dist', ''), npmCellId = pull('--npm-cell', ''), npmBin = argv.includes('--npm-bin') || Boolean(npmCellId) || pull('--kind', '') === 'npm-cli'; return (!binName || (!distSubdir && !npmBin)) ? { exitCode: 3, payload: { ok: false, error: 'write-launchers requires --bin and (--dist or --npm-bin)' } } : { exitCode: 0, payload: writeSharedPoolLaunchers(root, { id: pull('--id', binName), binName, distSubdir, npmBin, npmCellId, comment: pull('--comment', '') }) }; }
   if (cmd === 'verify-npm') { const pkg = pull('--pkg', pull('--id', '')); if (!pkg) return { exitCode: 3, payload: { ok: false, error: 'verify-npm requires --pkg' } }; const res = verifyInstalledNpmPkg(root, pkg, pull('--workflow', null)), want = normVer(pull('--version', '')), ok = res.ok && (!want || res.version === want); return { exitCode: ok ? 0 : 1, payload: { ...res, ok } }; }
   if (cmd === 'mark-ready') {
     const id = pull('--id', ''), kind = pull('--kind', ''); if (!id) return { exitCode: 3, payload: { ok: false, error: 'mark-ready requires --id' } };
     let detVer = pull('--detected-version', undefined);
     if (argv.includes('--run-verify') && kind !== 'npm-lib') {
       const binName = pull('--bin-name', id), binExec = join(root, 'workflows', '.deps', '_shared', '.bin', process.platform === 'win32' ? \`\${binName}.bat\` : binName);
-      const vr = process.platform === 'win32' ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', \`""\${binExec}" --version"\`], { cwd: root, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true }) : spawnSync(binExec, ['--version'], { cwd: root, encoding: 'utf8' });
-      if (vr.status !== 0) return { exitCode: 1, payload: { ok: false, stage: 'verify', stderr: vr.stderr || vr.stdout } };
-      const m = String(vr.stdout || '').match(/v?(\\d+\\.\\d+(?:\\.\\d+)?(?:-[0-9A-Za-z.-]+)?)/); if (m && detVer === undefined) detVer = m[1];
+      const vp = probeBinDetectedVersion(binExec, root);
+      if (!vp.ok) return { exitCode: 1, payload: { ok: false, stage: 'verify', stderr: vp.output } };
+      if (vp.version && detVer === undefined) detVer = vp.version;
     }
     return { exitCode: 0, payload: recordSharedPoolDepReady(root, { id, label: pull('--label', ''), workflowLabel: pull('--workflow-label', ''), kind, pkg: pull('--pkg', ''), binName: pull('--bin-name', id), workflowId: pull('--workflow', pull('--pack', '')), version: pull('--version', ''), detectedVersion: detVer, tag: pull('--tag', ''), commit: pull('--commit', ''), repo: pull('--repo', ''), bin: pull('--bin', ''), distSubdir: pull('--dist', ''), pending: argv.includes('--pending') }) };
   }

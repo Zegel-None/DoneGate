@@ -9,8 +9,9 @@ import { buildDshFileResourceAddress, normalizeSlashes, openInWindowsOrHostExplo
 import { executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import {
   inspectAllKnownWorkflowPacks, inspectWorkflowDeps, provisionWorkflowDeps,
-  readSharedRefreshStamp, readWorkflowDepsStatus, reconcileSharedPoolOnRefresh
+  readSharedRefreshStamp, readWorkflowDepsStatus, reconcileSharedPoolOnRefresh, writeStandaloneDepsCli
 } from './workflow-deps.mjs';
+export { writeStandaloneDepsCli };
 import { loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import { loadCampaignCheckpoint } from './campaign-autopilot.mjs';
 import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
@@ -20,6 +21,8 @@ import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
 import { buildJitBootstrapSummary } from './workflow-jit.mjs';
 import { starGitHubRepo } from './github-star.mjs';
 import { importExternalProject, initWorkspaceProject } from './project-ops.mjs';
+import { SUBAGENT_HUMAN_ISOLATION_MSG, installSubagentHumanIsolationGuard } from './subagent-isolation.mjs';
+export { SUBAGENT_HUMAN_ISOLATION_MSG, installSubagentHumanIsolationGuard };
 
 const DONEGATE_INSTALL_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 

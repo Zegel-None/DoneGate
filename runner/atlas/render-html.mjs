@@ -77,6 +77,7 @@ export function renderAtlasWorkbenchHtml(atlas) {
     '  <meta charset="UTF-8">',
     '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
     `  <title>${projName} · 完结门工作台（DeepSeek Harness Web 视图）</title>`,
+    '  <script>(function(){try{var q=new URLSearchParams(location.search).get("theme");var t=(q==="dark"||q==="light")?q:localStorage.getItem("dg_v5_theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(err){void err;}})();</script>',
     '  <style>',
     cssText,
     '  </style>',

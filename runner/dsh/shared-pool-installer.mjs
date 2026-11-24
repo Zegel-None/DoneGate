@@ -49,9 +49,11 @@ export function ensureSharedPoolSkeleton(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const sharedDir = join(root, 'workflows', '.deps', '_shared');
   const binDir = join(sharedDir, '.bin'), distsDir = join(sharedDir, 'dists');
-  const reposDir = join(sharedDir, 'repos'), npmDir = join(sharedDir, 'npm');
+  const reposDir = join(sharedDir, 'repos'), npmDir = join(sharedDir, 'npm'), npmCellsDir = join(sharedDir, 'npm-cells');
   const gradleHomeDir = join(sharedDir, '.gradle-home');
-  for (const d of [binDir, distsDir, reposDir, npmDir]) mkdirSync(d, { recursive: true });
+  for (const d of [binDir, distsDir, reposDir, npmDir, npmCellsDir]) mkdirSync(d, { recursive: true });
+  const npmPkgPath = join(npmDir, 'package.json');
+  if (!existsSync(npmPkgPath)) writeJsonAtomic(npmPkgPath, { name: 'donegate-shared-npm-libs', private: true });
   const needGradle = Boolean(opts.includeGradleHome || String(opts.toolId || '').toLowerCase() === 'gradle' || String(opts.binName || '').toLowerCase() === 'gradle');
   if (needGradle) mkdirSync(gradleHomeDir, { recursive: true });
   for (const extra of (Array.isArray(opts.extraSandboxDirs) ? opts.extraSandboxDirs : [])) {
@@ -61,7 +63,7 @@ export function ensureSharedPoolSkeleton(projectRoot, opts = {}) {
     ? { cliPath: join(sharedDir, 'dg-deps-cli.mjs'), cliRelPath: 'workflows/.deps/_shared/dg-deps-cli.mjs' }
     : writeStandaloneDepsCli(root);
   return {
-    root, sharedRelDir: 'workflows/.deps/_shared', sharedDir, binDir, distsDir, reposDir, npmDir,
+    root, sharedRelDir: 'workflows/.deps/_shared', sharedDir, binDir, distsDir, reposDir, npmDir, npmCellsDir,
     gradleHomeDir, manifestPath: join(sharedDir, 'manifest.json'),
     refreshStampPath: join(sharedDir, '.refresh-stamp.json'),
     rootRefreshStampPath: join(root, 'workflows', '.deps', '.refresh-stamp.json'),
@@ -97,17 +99,24 @@ export function buildSharedPoolLauncherScripts(spec = {}) {
 
   let shLines, batLines;
   if (useNpmBin) {
+    const cellId = spec.npmCellId ? sanitizePoolId(spec.npmCellId) : '';
+    const relRootPosix = cellId ? `../npm-cells/${cellId}` : '../npm';
+    const relRootWin = cellId ? `..\\npm-cells\\${cellId}` : '..\\npm';
     const winTarget = spec.preferNpmExe ? `${binName}.exe` : `${binName}.cmd`;
     shLines = [
       '#!/bin/sh', `# ${note}`,
       'DG_BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-      `exec "$DG_BIN_DIR/../npm/node_modules/.bin/${binName}" "$@"`, ''
+      `DG_NPM_ROOT="$(CDPATH= cd -- "$DG_BIN_DIR/${relRootPosix}" && pwd)"`,
+      'NODE_PATH="$DG_NPM_ROOT/node_modules${NODE_PATH:+:$NODE_PATH}"',
+      'export NODE_PATH',
+      `exec "$DG_NPM_ROOT/node_modules/.bin/${binName}" "$@"`, ''
     ];
     batLines = [
       '@echo off', 'setlocal', `rem ${note}`,
       'set "DG_BIN_DIR=%~dp0"',
-      'for %%I in ("%DG_BIN_DIR%..\\npm\\node_modules\\.bin") do set "DG_NPM_BIN=%%~fI"',
-      spec.preferNpmExe ? `"%DG_NPM_BIN%\\${winTarget}" %*` : `call "%DG_NPM_BIN%\\${winTarget}" %*`,
+      `for %%I in ("%DG_BIN_DIR%${relRootWin}") do set "DG_NPM_ROOT=%%~fI"`,
+      'if defined NODE_PATH ( set "NODE_PATH=%DG_NPM_ROOT%\\node_modules;%NODE_PATH%" ) else ( set "NODE_PATH=%DG_NPM_ROOT%\\node_modules" )',
+      spec.preferNpmExe ? `"%DG_NPM_ROOT%\\node_modules\\.bin\\${winTarget}" %*` : `call "%DG_NPM_ROOT%\\node_modules\\.bin\\${winTarget}" %*`,
       'exit /b %ERRORLEVEL%', ''
     ];
   } else {
@@ -177,13 +186,16 @@ export function writeSharedPoolLaunchers(projectRoot, spec = {}) {
   const binName = String(spec.binName || spec.id || '').trim();
   const isGradle = Boolean(spec.useGradleHome || binName.toLowerCase() === 'gradle' || String(spec.toolId || '').toLowerCase() === 'gradle');
   const skel = ensureSharedPoolSkeleton(projectRoot, { includeGradleHome: isGradle });
-  const npmBinDir = join(skel.npmDir, 'node_modules', '.bin');
-  const autoNpm = !spec.distSubdir && (existsSync(join(npmBinDir, binName)) || existsSync(join(npmBinDir, `${binName}.cmd`)) || existsSync(join(npmBinDir, `${binName}.exe`)));
+  const candCellId = spec.npmCellId ? sanitizePoolId(spec.npmCellId) : sanitizePoolId(spec.id || binName);
+  const cellBinDir = join(skel.npmCellsDir, candCellId, 'node_modules', '.bin');
+  const hasCellBin = Boolean(spec.npmCellId) || existsSync(join(cellBinDir, binName)) || existsSync(join(cellBinDir, `${binName}.cmd`)) || existsSync(join(cellBinDir, `${binName}.exe`));
+  const npmBinDir = hasCellBin ? cellBinDir : join(skel.npmDir, 'node_modules', '.bin');
+  const autoNpm = !spec.distSubdir && (hasCellBin || existsSync(join(npmBinDir, binName)) || existsSync(join(npmBinDir, `${binName}.cmd`)) || existsSync(join(npmBinDir, `${binName}.exe`)));
   const useNpmBin = Boolean(spec.npmBin === true || spec.kind === 'npm-cli' || autoNpm);
   const preferNpmExe = useNpmBin && existsSync(join(npmBinDir, `${binName}.exe`));
   const detected = useNpmBin ? { posixEntryRel: null, winEntryRel: null } : detectDistEntries(skel.distsDir, spec.distSubdir || '', binName);
   const built = buildSharedPoolLauncherScripts({
-    ...spec, binName, npmBin: useNpmBin, preferNpmExe,
+    ...spec, binName, npmBin: useNpmBin, npmCellId: hasCellBin ? candCellId : '', preferNpmExe,
     posixEntryRel: spec.posixEntryRel || detected.posixEntryRel,
     winEntryRel: spec.winEntryRel || detected.winEntryRel
   });

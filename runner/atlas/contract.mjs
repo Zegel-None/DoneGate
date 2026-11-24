@@ -2,6 +2,7 @@
 export { buildProjectAtlas, writeAtlasSidecars } from './assemble-atlas.mjs';
 export { renderAtlasWorkbenchHtml, WB_CONCAT_MANIFEST } from './render-html.mjs';
 export { hydrateWorkbenchData, readSavedWorkbenchState } from './hydrate-workbench.mjs';
+export { buildAdaptiveBusinessHierarchy } from './modularity-hierarchy.mjs';
 
 export const ATLAS_SUBPACKS = Object.freeze({
   '@scanner': Object.freeze([
@@ -12,6 +13,7 @@ export const ATLAS_SUBPACKS = Object.freeze({
     'runner/atlas/scan-graph.mjs',
     'runner/atlas/scan-branches.mjs',
     'runner/atlas/hydrate-workbench.mjs',
+    'runner/atlas/modularity-hierarchy.mjs',
     'runner/atlas/humanize.mjs',
     'runner/atlas/serve-atlas.mjs',
     'runner/atlas/ui-views.mjs'

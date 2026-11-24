@@ -175,7 +175,8 @@ export function executeBrickGateNode(projectRoot, workCwd, node, wfEnv) {
         });
         const vExit = typeof rVer.status === 'number' ? rVer.status : 2;
         const vDiag = normalizeLf((rVer.stdout || '') + '\n' + (rVer.stderr || '')).trim();
-        return { exitCode: vExit, durationMs: Date.now() - t0, diagSummary: vDiag || adpOut, watchArgs: adpArgs };
+        const obsHint = vExit !== 0 ? `${spec.tool} 门禁拦截 (${spec.obligationId})：${(vDiag || adpOut).split('\n').find((l) => l.trim()) || '发现未达标代码项'}` : (vDiag || adpOut);
+        return { exitCode: vExit, durationMs: Date.now() - t0, diagSummary: obsHint, watchArgs: adpArgs };
       }
       const obsFileHard = join(workCwd, '.donegate', 'adapters', spec.tool, 'observation.json');
       const obsResHard = existsSync(obsFileHard) ? readJsonStrict(obsFileHard) : { ok: false };
