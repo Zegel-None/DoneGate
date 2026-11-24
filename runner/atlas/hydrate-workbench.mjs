@@ -77,7 +77,7 @@ const E2E_ADAPTER_TOOLS = new Set(['playwright', 'maestro', 'vitest']);
 
 function defaultSavedState() {
   return {
-    schemaVersion: '1.0', hostLayoutVer: 2, customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
+    schemaVersion: '1.0', hostLayoutVer: 3, customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
     collapsedWfGroups: [], collapsedNodeCats: [], workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
     starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'], updatedAt: null
   };
@@ -89,18 +89,26 @@ export function readSavedWorkbenchState(projectRoot) {
   const r = readJsonStrict(p);
   if (!r.ok || !r.value || typeof r.value !== 'object') return defaultSavedState();
   const merged = { ...defaultSavedState(), ...r.value };
-  if (r.value.hostLayoutVer !== 2 && merged.hostNodeLayouts && typeof merged.hostNodeLayouts === 'object') {
+  if (r.value.hostLayoutVer !== 3 && merged.hostNodeLayouts && typeof merged.hostNodeLayouts === 'object') {
     const cleaned = {};
     for (const [k, v] of Object.entries(merged.hostNodeLayouts)) {
       if (v && typeof v === 'object') {
-        const { x: _x, y: _y, ...rest } = v;
+        const { x: _x, y: _y, expanded: _exp, ...rest } = v;
         void _x;
         void _y;
+        void _exp;
         cleaned[k] = rest;
       }
     }
     merged.hostNodeLayouts = cleaned;
-    merged.hostLayoutVer = 2;
+    merged.hostLayoutVer = 3;
+  }
+  if (merged.componentWorkflows && typeof merged.componentWorkflows === 'object') {
+    for (const b of Object.values(merged.componentWorkflows)) {
+      if (b && typeof b.baseName === 'string') {
+        b.baseName = b.baseName.replace(/护栏包|开发包|开发流/g, '工作流'); // dg-term-allow: 清洗历史落盘旧名
+      }
+    }
   }
   return merged;
 }
@@ -412,7 +420,7 @@ function hydWbBuildHostUnitNode(unit, idx, ctx) {
     workflowBinding: (savedState.componentWorkflows || {})[nodeId] || null,
     bypassed: Boolean(saved.bypassed),
     collapsed: Boolean(saved.collapsed),
-    expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : unit.mods.length <= 4,
+    expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : false,
     color: saved.color || 'none',
     x: typeof saved.x === 'number' ? saved.x : 56 + col * 316,
     y: typeof saved.y === 'number' ? saved.y : 68 + rowIdx * 238,
@@ -439,7 +447,8 @@ function buildHostSandboxFromAtlas(baseAtlas, savedState, projectRoot = null) {
     hasRoot: sortedUnits.some((u) => u.isRoot)
   };
   const codeUnitNodes = sortedUnits.map((unit, idx) => hydWbBuildHostUnitNode(unit, idx, ctx));
-  const hasInitializedIntent = Boolean(projectRoot && existsSync(join(resolve(projectRoot), 'INTENT.md')));
+  const absProj = projectRoot ? resolve(projectRoot) : null;
+  const hasInitializedIntent = Boolean(absProj && (existsSync(join(absProj, 'INTENT.md')) || existsSync(join(absProj, 'contracts')) || existsSync(join(absProj, 'donegate', 'SKILL.md'))));
   const businessNodes = buildAdaptiveBusinessHierarchy(codeUnitNodes, savedState, hasInitializedIntent);
   return {
     id: 'host-workspace',

@@ -1,7 +1,9 @@
-import { existsSync, unlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { hydrateWorkbenchData } from '../runner/atlas/hydrate-workbench.mjs';
 import { buildProjectAtlas, renderAtlasWorkbenchHtml } from '../runner/atlas/index.mjs';
 import { buildAdaptiveBusinessHierarchy } from '../runner/atlas/modularity-hierarchy.mjs';
 
@@ -50,7 +52,57 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
     expect(subgraphs[0].codeCapsule.sharedCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('passes real headless Chromium click-through across all 8 Round-4 UI issues with zero pageerrors', async () => {
+  it('migrates pre-existing hostLayoutVer:2 workbench-state.json without disabling Louvain communities or scanning .deps', () => {
+    const tmpWs = mkdtempSync(join(tmpdir(), 'dg-louvain-saved-ws-'));
+    try {
+      cpSync(join(REPO_ROOT, 'package.json'), join(tmpWs, 'package.json'));
+      cpSync(join(REPO_ROOT, 'vitest.config.mjs'), join(tmpWs, 'vitest.config.mjs'));
+      cpSync(join(REPO_ROOT, 'donegate'), join(tmpWs, 'donegate'), { recursive: true });
+      cpSync(join(REPO_ROOT, 'runner'), join(tmpWs, 'runner'), { recursive: true });
+      cpSync(join(REPO_ROOT, 'skill'), join(tmpWs, 'skill'), { recursive: true });
+      mkdirSync(join(tmpWs, 'workflows', '.deps', '_shared'), { recursive: true });
+      writeFileSync(join(tmpWs, 'workflows', '.deps', '_shared', 'dg-deps-cli.mjs'), '// Auto-generated zero-dependency tool\nexport const x = 1;\n');
+
+      const legacySuffix = ['护', '栏包'].join('');
+      const legacyHostLayouts = {};
+      for (const key of [
+        'host-dom-root', 'host-dom-runner', 'host-dom-runner-lib', 'host-dom-runner-contracts',
+        'host-dom-runner-atlas', 'host-dom-runner-dsh', 'host-dom-runner-host', 'host-dom-runner-slice',
+        'host-dom-runner-verifiers', 'host-dom-skill', 'host-dom-skill-gates', 'host-dom-skill-lib',
+        'host-dom-skill-templates', 'host-dom-workflows'
+      ]) {
+        legacyHostLayouts[key] = { x: 120, y: 240, expanded: true, collapsed: false };
+      }
+      mkdirSync(join(tmpWs, '.donegate'), { recursive: true });
+      writeFileSync(
+        join(tmpWs, '.donegate', 'workbench-state.json'),
+        JSON.stringify({
+          schemaVersion: '1.0',
+          hostLayoutVer: 2,
+          hostNodeLayouts: legacyHostLayouts,
+          componentWorkflows: {
+            'host-dom-runner': { baseId: 'pack-core-logic', baseName: `核心纯逻辑${legacySuffix}` }
+          }
+        }, null, 2)
+      );
+
+      const baseAtlas = buildProjectAtlas(tmpWs);
+      const wb = hydrateWorkbenchData(tmpWs, baseAtlas);
+      const hostWs = wb.hostSandbox;
+      expect(hostWs.nodes.length).toBeGreaterThanOrEqual(4);
+      expect(hostWs.nodes.length).toBeLessThanOrEqual(6);
+      expect(hostWs.nodes.every((n) => Boolean(n.isSubgraph))).toBe(true);
+      expect(hostWs.nodes[0].title).toContain('澄清用户意图');
+      expect(hostWs.nodes[0].subgraph.nodes.some((sn) => sn.id === 'host-dom-grill-me')).toBe(true);
+      expect(hostWs.codeUnitNodes.some((rn) => String(rn.sublinePath || '').includes('workflows/.deps'))).toBe(false);
+      expect(hostWs.codeUnitNodes.some((rn) => String(rn.title || '').includes('workflows'))).toBe(false);
+      expect(wb.savedState.componentWorkflows['host-dom-runner'].baseName).toBe('核心纯逻辑工作流');
+    } finally {
+      rmSync(tmpWs, { recursive: true, force: true });
+    }
+  });
+
+  it('passes real headless Chromium click-through across all Round-4 UI & Louvain DAG checks with zero pageerrors', async () => {
     const pw = loadPlaywrightOptional();
     const chromiumBin = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => existsSync(p));
     if (!pw || !chromiumBin) return;
@@ -116,7 +168,7 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
       }
       expect(labelsSeen).toEqual(['横向', '纵向', 'S型', '拓扑']);
 
-      // Issue #7: Multi-select 3 cards -> "合并 (3)" button has clean transparent background (not muted grey)
+      // Issue #7: Multi-select 3 cards -> "合并 (3)" button has clean transparent background
       await page.click('[data-switch-pack="pack-core-logic"]');
       const mergeInfo = await page.evaluate(async () => {
         const ids = getActiveWorkshopGraph().nodes.filter((n) => !n.isBoundary).slice(0, 3).map((n) => n.id);
@@ -125,7 +177,9 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
         renderSelectionFloatingToolbox();
         await new Promise((r) => requestAnimationFrame(r));
         const btn = document.querySelector('[data-tb-act="merge-subgraph"]');
-        return { count: ids.length, bg: btn ? getComputedStyle(btn).backgroundColor : null, txt: btn ? btn.textContent.trim() : '' };
+        const bg = btn ? getComputedStyle(btn).backgroundColor : null;
+        const txt = btn ? btn.textContent.trim() : '';
+        return { count: ids.length, bg, txt };
       });
       expect(mergeInfo.count).toBeGreaterThanOrEqual(2);
       expect(mergeInfo.bg).toBe('rgba(0, 0, 0, 0)');
@@ -176,9 +230,10 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
       const failState = await page.evaluate(() => {
         const activeList = getActiveWorkshopGraph().nodes.filter((n) => !n.bypassed && !n.isBoundary);
         const lastNd = activeList[activeList.length - 1];
+        const lastState = lastNd ? state.nodeTelemetry[lastNd.id]?.state : null;
         return {
           failBoxText: document.querySelector('.dg-card-fail-box')?.textContent || '',
-          lastState: lastNd ? state.nodeTelemetry[lastNd.id]?.state : null,
+          lastState,
           bannerVisible: !document.getElementById('dg-check-fail-banner').classList.contains('hidden')
         };
       });
@@ -191,8 +246,41 @@ describe('Round 4 Zero-Magic-Number Modularity & Headless Browser Interactive Sm
       expect(quotedText).toContain('[DG-TARGET');
       expect(quotedText).toContain('空 catch 静默吞异常违规');
 
-      // Issue #6: Project Board Louvain subgraphs -> in-place fisheye expand -> Code X-Ray view toggle
+      // Issue #6 + Louvain Business Hierarchy & Transitive Reduction verification on Project Board
       await page.click('[data-rail-tab="assets"]');
+      const topBoardStats = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('#cards-layer .node-card'));
+        const nodesText = cards.map((el) => el.textContent || '').join('\n');
+        const wireCount = document.querySelectorAll('#wires-svg path.wire-hit').length;
+        return {
+          cardCount: cards.length,
+          hasCodeCapsuleOnTop: nodesText.includes('关联 ') && nodesText.includes('个代码模块'),
+          wireCount
+        };
+      });
+      expect(topBoardStats.cardCount).toBeGreaterThanOrEqual(4);
+      expect(topBoardStats.cardCount).toBeLessThanOrEqual(6);
+      expect(topBoardStats.hasCodeCapsuleOnTop).toBe(false);
+      expect(topBoardStats.wireCount).toBeGreaterThanOrEqual(4);
+      expect(topBoardStats.wireCount).toBeLessThanOrEqual(8);
+
+      // Drill into nested subgraph until bottom leaf layer -> verify leaf code capsules appear ONLY at bottom layer
+      for (let guard = 0; guard < 5; guard++) {
+        const enterCount = await page.locator('[data-action="enter-subgraph"]').count();
+        if (enterCount === 0) break;
+        await page.locator('[data-action="enter-subgraph"]').first().click();
+      }
+      const bottomLeafHasCapsule = await page.evaluate(() => {
+        const txt = Array.from(document.querySelectorAll('#cards-layer .node-card')).map((el) => el.textContent || '').join('\n');
+        return txt.includes('关联 ') && txt.includes('个代码模块');
+      });
+      expect(bottomLeafHasCapsule).toBe(true);
+
+      // Return to top level -> test in-place fisheye expand + Code X-Ray 2D view toggle
+      await page.evaluate(() => {
+        state.sbSubgraphStack = [];
+        renderAll();
+      });
       const hasSubgraphBtn = await page.locator('[data-action="fisheye-expand-subgraph"]').count();
       expect(hasSubgraphBtn).toBeGreaterThan(0);
       await page.locator('[data-action="fisheye-expand-subgraph"]').first().click();

@@ -5,7 +5,7 @@ import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { extractHumanTitleFromSource, translateSlugToChinese } from './humanize.mjs';
 
 const SKIP_DIRS = new Set([
-  '.git', 'node_modules', '.donegate', '.codegraph', '.stryker-tmp',
+  '.git', 'node_modules', '.donegate', '.dsh', '.deps', '.codegraph', '.stryker-tmp',
   'dist', 'build', '_dist', '.next', 'out', 'coverage', 'reports',
   '__pycache__', '.venv', 'venv', 'env', '.pytest_cache', '.mypy_cache', '.ruff_cache',
   'vendor', '参考', '归档', '证据', '设计'

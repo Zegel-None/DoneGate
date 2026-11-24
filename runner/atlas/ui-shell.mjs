@@ -666,7 +666,7 @@ function collectPersistedSnapshot() {
     });
   }
   return {
-    hostLayoutVer: 2, customPacks, importedSandboxes, nodeCatOverrides: state.nodeCatOverrides || {}, componentWorkflows: state.componentWorkflows || {}, hostNodeLayouts,
+    hostLayoutVer: 3, customPacks, importedSandboxes, nodeCatOverrides: state.nodeCatOverrides || {}, componentWorkflows: state.componentWorkflows || {}, hostNodeLayouts,
     hostGroups: (hostRepo && Array.isArray(hostRepo.groups)) ? hostRepo.groups : [], starredRepos: [...state.starredRepos],
     collapsedWfGroups: state.collapsedWfGroups instanceof Set ? [...state.collapsedWfGroups] : [],
     collapsedNodeCats: state.collapsedNodeCats instanceof Set ? [...state.collapsedNodeCats] : [],

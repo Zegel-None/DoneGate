@@ -1,4 +1,6 @@
-// 零魔法数字项目看板拓扑生长引擎：基于 Newman-Girvan 模块度增益 (ΔQ > 0) 的非均衡递归业务子图与多对多代码胶囊绑定
+// 零魔法数字项目看板拓扑生长引擎：
+// 1. Blondel et al. (2008) 多尺度 Louvain 社团发现 (ΔQ > 0) 识别非均衡递归业务子图（纯线性稀疏小项目保持 100% 平铺）；
+// 2. Serrano et al. (PNAS 2009) 主干流提取 + Eades-Lin-Smyth 净流向无环排序 + Aho-Garey-Ullman (1972) 精确传递约简，保留并行分流、消除跨层蜘蛛网连线。
 import { basename } from 'node:path';
 
 const HUMAN_CAPABILITY_TITLES = {
@@ -13,18 +15,51 @@ const HUMAN_CAPABILITY_TITLES = {
   'host-dom-dsh-deps': '共享依赖池与按需工作流派生',
   'host-dom-dsh-uiboard': 'UI 看板实时预览与点选拾取',
   'host-dom-dsh-host': 'DSH 主从隔离调度与断点沙箱',
-  'host-dom-skill-adapters': '22 类开源检查工具转接套件',
+  'host-dom-skill-adapters': '开源检查工具转接套件',
   'host-dom-skill-gates': '四维认知复杂度与代码合规门禁',
-  'host-dom-skill-kit': '公共底座原语与安装包构建',
+  'host-dom-skill-kit': '公共底座原语与分发构建',
   'host-dom-tools': '规格一致性与文档防腐化巡检'
 };
 
-const CLUSTER_DOMAIN_LABELS = [
-  { test: (ids) => ids.some((id) => id.includes('grill-me') || id.includes('uiboard') || id.includes('slice')), title: '用户意图澄清与需求切片', colorKey: 'blue' },
-  { test: (ids) => ids.some((id) => id.includes('atlas-')), title: '可视化看板与画布编排', colorKey: 'teal' },
-  { test: (ids) => ids.some((id) => id.includes('dsh-')), title: '主从隔离调度与挂机运行时', colorKey: 'emerald' },
-  { test: (ids) => ids.some((id) => id.includes('skill-') || id.includes('verdict') || id.includes('cmds') || id.includes('tools')), title: '确定性门禁与工具体检底座', colorKey: 'amber' }
+const DOMAIN_ARCHETYPES = [
+  {
+    key: 'intent',
+    match: (id) => id === 'host-dom-grill-me' || id === 'host-dom-root' || id.includes('openspec'),
+    title: '澄清用户意图与工程立约',
+    colorKey: 'blue',
+    baseTier: 0
+  },
+  {
+    key: 'atlas',
+    match: (id) => id.includes('atlas-'),
+    title: '可视化项目看板与画布编排',
+    colorKey: 'teal',
+    baseTier: 2
+  },
+  {
+    key: 'dsh',
+    match: (id) => id.includes('dsh-'),
+    title: '宿主隔离调度与 UI 看板预览',
+    colorKey: 'emerald',
+    baseTier: 2
+  },
+  {
+    key: 'core',
+    match: (id) => id === 'host-dom-runner' || id.includes('core-'),
+    title: '契约切片路由与确定性判定核',
+    colorKey: 'indigo',
+    baseTier: 3
+  },
+  {
+    key: 'gates',
+    match: (id) => id.includes('skill-') || id.includes('tools'),
+    title: '四维门禁与开源检查工具套件',
+    colorKey: 'amber',
+    baseTier: 5
+  }
 ];
+
+const GENERIC_SUBGRAPH_PALETTE = ['blue', 'teal', 'emerald', 'indigo', 'amber'];
 
 export function createGrillMeCapabilityNode(savedGrill, downstreamIds = []) {
   const base = (savedGrill && typeof savedGrill === 'object') ? savedGrill : {};
@@ -34,8 +69,9 @@ export function createGrillMeCapabilityNode(savedGrill, downstreamIds = []) {
     ...base,
     id: 'host-dom-grill-me',
     step: '00',
+    archTier: 0,
     title: 'grill me · 需求澄清与立约',
-    sublinePath: '.donegate/grill-me-inbox.jsonl',
+    sublinePath: 'INTENT.md',
     tip: base.tip || '把模糊想法或 UI 看板拾取记录追问澄清为可验收契约边界（contract.json）',
     scopePaths: scopes,
     contractIds: Array.isArray(base.contractIds) ? base.contractIds : [],
@@ -45,9 +81,9 @@ export function createGrillMeCapabilityNode(savedGrill, downstreamIds = []) {
     expanded: false,
     color: 'blue',
     colorKey: 'blue',
-    x: 56,
-    y: 88,
-    w: 256,
+    x: 64,
+    y: 120,
+    w: 268,
     h: null,
     nextIds: downstreamIds,
     modules: Array.isArray(base.modules) && base.modules.length ? base.modules : defaultMods
@@ -66,11 +102,17 @@ function collectNodeNormalizedPaths(nd) {
 function countSharedModulesMap(unitNodes) {
   const counts = new Map();
   for (const nd of unitNodes) {
-    for (const p of collectNodeNormalizedPaths(nd)) {
-      counts.set(p, (counts.get(p) || 0) + 1);
-    }
+    for (const p of collectNodeNormalizedPaths(nd)) counts.set(p, (counts.get(p) || 0) + 1);
   }
   return counts;
+}
+
+function inferNodeArchTier(nd) {
+  if (typeof nd.archTier === 'number') return nd.archTier;
+  if (nd.id === 'host-dom-grill-me' || nd.id === 'host-dom-root') return 0;
+  if (nd.id === 'host-dom-runner') return 1;
+  const hit = DOMAIN_ARCHETYPES.find((d) => d.match(nd.id));
+  return hit ? hit.baseTier : 2;
 }
 
 function toLeafBusinessNode(nd, sharedMap) {
@@ -81,6 +123,7 @@ function toLeafBusinessNode(nd, sharedMap) {
   const friendly = HUMAN_CAPABILITY_TITLES[nd.id] || nd.title || basename(nd.sublinePath || nd.id);
   return {
     ...nd,
+    archTier: inferNodeArchTier(nd),
     nextIds: [...(nd.nextIds || [])],
     title: friendly,
     isBusinessLeaf: true,
@@ -93,192 +136,325 @@ function toLeafBusinessNode(nd, sharedMap) {
   };
 }
 
-export function enrichLeafBusinessCapabilityNodes(codeUnitNodes, savedState = {}) {
+export function enrichLeafBusinessCapabilityNodes(codeUnitNodes, savedState = {}, includeGrillMe = false) {
   const sharedMap = countSharedModulesMap(codeUnitNodes);
   const leaves = codeUnitNodes.map((nd) => toLeafBusinessNode(nd, sharedMap));
-  if (!savedState?.grillMeNode) return leaves;
-  const firstTarget = leaves[0] ? [leaves[0].id] : [];
-  return [createGrillMeCapabilityNode(savedState.grillMeNode, firstTarget), ...leaves];
+  if (!includeGrillMe && !savedState?.grillMeNode) return leaves;
+  const entryTargets = leaves
+    .filter((n) => n.archTier <= 2 || n.id.includes('slice') || n.id.includes('root'))
+    .map((n) => n.id);
+  const fallbackTargets = entryTargets.length > 0 ? entryTargets : (leaves[0] ? [leaves[0].id] : []);
+  return [createGrillMeCapabilityNode(savedState?.grillMeNode, fallbackTargets), ...leaves];
 }
 
 function computeSemanticAffinity(na, nb) {
+  if ((na.id === 'host-dom-grill-me' && nb.id === 'host-dom-root') || (nb.id === 'host-dom-grill-me' && na.id === 'host-dom-root')) {
+    return 8.0;
+  }
   const pa = String(na.sublinePath || '').replace(/^\.\//, '').split('/').filter(Boolean);
   const pb = String(nb.sublinePath || '').replace(/^\.\//, '').split('/').filter(Boolean);
   let w = 0;
-  if (pa.length >= 2 && pb.length >= 2 && pa[0] === pb[0] && pa[1] === pb[1]) w += 3.2;
-  else if (pa.length >= 1 && pb.length >= 1 && pa[0] === pb[0]) w += 1.8;
+  if (pa.length >= 2 && pb.length >= 2 && pa[0] === pb[0] && pa[1] === pb[1]) w += 5.4;
+  else if (pa.length >= 1 && pb.length >= 1 && pa[0] === pb[0]) w += 2.6;
   const ca = new Set(na.contractIds || []);
-  if ((nb.contractIds || []).some((c) => ca.has(c))) w += 2.0;
+  if (ca.size > 0 && (nb.contractIds || []).some((c) => ca.has(c))) w += 3.0;
   return w;
 }
 
-function addDirectedEdgesToCoupling(nodes, idxById, symW, dirAdj) {
-  for (let i = 0; i < nodes.length; i++) {
+function buildCouplingMatrices(nodes) {
+  const n = nodes.length;
+  const idxById = new Map(nodes.map((nd, i) => [nd.id, i]));
+  const symW = Array.from({ length: n }, () => new Array(n).fill(0));
+  const dirW = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
     for (const tid of (nodes[i].nextIds || [])) {
       const j = idxById.get(tid);
       if (j === undefined || i === j) continue;
-      dirAdj[i].add(j);
-      symW[i][j] += 2.0;
-      symW[j][i] += 2.0;
+      dirW[i][j] += 1;
+      if (nodes[i].id !== 'host-dom-grill-me') {
+        symW[i][j] += 1.4;
+        symW[j][i] += 1.4;
+      }
     }
   }
-}
-
-function addSemanticEdgesToCoupling(nodes, symW) {
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
       const sem = computeSemanticAffinity(nodes[i], nodes[j]);
       if (sem <= 0) continue;
       symW[i][j] += sem;
       symW[j][i] += sem;
     }
   }
+  return { symW, dirW };
 }
 
-function buildCouplingMatrix(nodes) {
-  const n = nodes.length;
-  const idxById = new Map(nodes.map((nd, i) => [nd.id, i]));
-  const symW = Array.from({ length: n }, () => new Array(n).fill(0));
-  const dirAdj = Array.from({ length: n }, () => new Set());
-  addDirectedEdgesToCoupling(nodes, idxById, symW, dirAdj);
-  addSemanticEdgesToCoupling(nodes, symW);
-  return { symW, dirAdj };
-}
-
-function buildCondensedGroupAdjacency(groups, dirAdj) {
-  const gCount = groups.length;
-  const groupOf = new Map();
-  groups.forEach((members, gi) => members.forEach((u) => groupOf.set(u, gi)));
-  const gAdj = Array.from({ length: gCount }, () => new Set());
-  groups.forEach((members, gi) => {
-    for (const u of members) {
-      for (const v of dirAdj[u]) {
-        const gj = groupOf.get(v);
-        if (gj !== undefined && gj !== gi) gAdj[gi].add(gj);
-      }
-    }
-  });
-  return gAdj;
-}
-
-function dfsFindCycle(u, gAdj, visitState) {
-  visitState[u] = 1;
-  for (const v of gAdj[u]) {
-    if (visitState[v] === 1) return true;
-    if (visitState[v] === 0 && dfsFindCycle(v, gAdj, visitState)) return true;
+function computeCommEdgeSum(nodeIdx, targetComm, commOf, symW) {
+  let sum = 0;
+  for (let j = 0; j < commOf.length; j++) {
+    if (j !== nodeIdx && commOf[j] === targetComm) sum += symW[nodeIdx][j];
   }
-  visitState[u] = 2;
-  return false;
+  return sum;
 }
 
-function hasCondensedDagCycle(groups, dirAdj) {
-  const gAdj = buildCondensedGroupAdjacency(groups, dirAdj);
-  const visitState = new Array(groups.length).fill(0);
-  for (let i = 0; i < groups.length; i++) {
-    if (visitState[i] === 0 && dfsFindCycle(i, gAdj, visitState)) return true;
-  }
-  return false;
-}
+function findBestCommunityMove(i, commOf, commSize, sigmaTot, deg, symW, twoM, gamma) {
+  const n = commOf.length;
+  const curC = commOf[i];
+  const ki = deg[i];
+  const kiOut = computeCommEdgeSum(i, curC, commOf, symW);
+  const sigmaOldWithout = sigmaTot[curC] - ki;
+  const tested = new Set([curC]);
+  let bestC = curC;
+  let bestDeltaQ = 1e-6;
 
-function computeModularityDelta(membersA, membersB, symW, deg, twoM) {
-  let eAB = 0;
-  for (const u of membersA) {
-    for (const v of membersB) eAB += symW[u][v];
-  }
-  if (eAB <= 0) return -1;
-  const kA = membersA.reduce((s, u) => s + deg[u], 0);
-  const kB = membersB.reduce((s, u) => s + deg[u], 0);
-  return (2 * eAB) / twoM - (2 * kA * kB) / (twoM * twoM);
-}
-
-function evaluateCandidateMerge(groups, a, b, ctx, bestGain) {
-  if (groups[a].some((u) => ctx.pinnedIdxSet.has(u)) || groups[b].some((u) => ctx.pinnedIdxSet.has(u))) return -1;
-  const maxGroupSize = Math.ceil(ctx.n * 0.62);
-  if (groups[a].length + groups[b].length > maxGroupSize) return -1;
-  const gain = computeModularityDelta(groups[a], groups[b], ctx.symW, ctx.deg, ctx.twoM);
-  if (gain <= bestGain) return -1;
-  const nextGroups = groups.filter((_, idx) => idx !== a && idx !== b);
-  nextGroups.push([...groups[a], ...groups[b]]);
-  return hasCondensedDagCycle(nextGroups, ctx.dirAdj) ? -1 : gain;
-}
-
-function findBestModularityMerge(groups, ctx) {
-  let bestGain = 0.015;
-  let bestPair = null;
-  for (let a = 0; a < groups.length; a++) {
-    for (let b = a + 1; b < groups.length; b++) {
-      const gain = evaluateCandidateMerge(groups, a, b, ctx, bestGain);
-      if (gain > bestGain) {
-        bestGain = gain;
-        bestPair = [a, b];
-      }
+  for (let j = 0; j < n; j++) {
+    if (symW[i][j] <= 0) continue;
+    const candC = commOf[j];
+    if (tested.has(candC)) continue;
+    tested.add(candC);
+    if (commSize[candC] + 1 >= n) continue;
+    const kiIn = computeCommEdgeSum(i, candC, commOf, symW);
+    const deltaEdge = (2 * (kiIn - kiOut)) / twoM;
+    const deltaNull = gamma * ((2 * ki * (sigmaTot[candC] - sigmaOldWithout)) / (twoM * twoM));
+    const deltaQ = deltaEdge - deltaNull;
+    if (deltaQ > bestDeltaQ) {
+      bestDeltaQ = deltaQ;
+      bestC = candC;
     }
   }
-  return bestPair;
+  return bestC;
 }
 
-function partitionByModularityGain(nodes, pinnedLeafIds = new Set()) {
+function partitionByLouvainModularity(nodes, depth = 0) {
   const n = nodes.length;
   if (n <= 3) return nodes.map((_, i) => [i]);
-  const { symW, dirAdj } = buildCouplingMatrix(nodes);
+  const { symW, dirW } = buildCouplingMatrices(nodes);
   const deg = symW.map((row) => row.reduce((a, b) => a + b, 0));
   const twoM = deg.reduce((a, b) => a + b, 0);
-  // 纯稀疏线性短链（无内聚团块）直接保持平铺，绝不硬套空盒
-  if (twoM <= 0 || twoM / Math.max(1, n) <= 2.75) return nodes.map((_, i) => [i]);
-
-  const pinnedIdxSet = new Set();
-  nodes.forEach((nd, i) => { if (pinnedLeafIds.has(nd.id)) pinnedIdxSet.add(i); });
-  const ctx = { n, symW, dirAdj, deg, twoM, pinnedIdxSet };
-  let groups = nodes.map((_, i) => [i]);
-  while (groups.length > 2) {
-    const bestPair = findBestModularityMerge(groups, ctx);
-    if (!bestPair) break;
-    const [a, b] = bestPair;
-    const merged = [...groups[a], ...groups[b]];
-    groups = groups.filter((_, idx) => idx !== a && idx !== b);
-    groups.push(merged);
+  if (twoM <= 0 || twoM / Math.max(1, n) <= 2.9) {
+    return { groups: nodes.map((_, i) => [i]), dirW };
   }
-  return groups;
+
+  const gamma = 1 + depth * 0.42;
+  const commOf = nodes.map((_, i) => i);
+  const commSize = new Array(n).fill(1);
+  const sigmaTot = [...deg];
+
+  for (let pass = 0; pass < 16; pass++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      const prevC = commOf[i];
+      const nextC = findBestCommunityMove(i, commOf, commSize, sigmaTot, deg, symW, twoM, gamma);
+      if (nextC !== prevC) {
+        commOf[i] = nextC;
+        commSize[prevC] -= 1;
+        commSize[nextC] += 1;
+        sigmaTot[prevC] -= deg[i];
+        sigmaTot[nextC] += deg[i];
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  const bucketMap = new Map();
+  commOf.forEach((c, idx) => {
+    if (!bucketMap.has(c)) bucketMap.set(c, []);
+    bucketMap.get(c).push(idx);
+  });
+  return { groups: [...bucketMap.values()], dirW };
+}
+
+function collectLeafIds(memberNodes) {
+  return memberNodes.flatMap((n) => (n.isSubgraph && n.subgraph ? collectLeafIds(n.subgraph.nodes) : [n.id]));
 }
 
 function toScopeSlug(rawStr) {
   return String(rawStr || '').replace(/^\.?\//, '').replace(/\/+$/, '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 24);
 }
 
-function resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx, savedKeys) {
-  const candidateSlugs = [
+function resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx) {
+  const slugs = [
     ...[...(scopePaths || [])].filter((s) => s && s !== './').sort().map(toScopeSlug),
     ...[...allIds].sort().map(toScopeSlug)
   ].filter(Boolean);
-  for (const slug of candidateSlugs) {
-    const candidateId = `sg-mod-d${depth}-${slug}`;
-    if (savedKeys.has(candidateId)) return candidateId;
-  }
-  const primary = candidateSlugs[0] || `g${seqIdx}`;
-  return `sg-mod-d${depth}-${primary}`;
+  return `sg-mod-d${depth}-${slugs[0] || `g${seqIdx}`}`;
 }
 
-function deriveSubgraphMeta(memberNodes, scopePaths, depth, seqIdx, savedKeys) {
-  const allIds = memberNodes.flatMap((n) => (n.isSubgraph && n.subgraph ? n.subgraph.nodes.map((c) => c.id) : [n.id]));
-  const hit = CLUSTER_DOMAIN_LABELS.find((d) => d.test(allIds));
-  const leadTitle = String(memberNodes[0]?.title || '业务环节').replace(/\s*[·(（].*$/, '');
-  const title = (depth === 0 && hit) ? hit.title : `${leadTitle}等业务流 (${memberNodes.length} 步)`;
-  const colorKey = hit ? hit.colorKey : (memberNodes[0]?.colorKey || 'teal');
-  const id = resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx, savedKeys);
+function pickUniqueArchetype(allIds, usedTitles) {
+  let best = null;
+  let bestHits = 0;
+  for (const arch of DOMAIN_ARCHETYPES) {
+    if (usedTitles.has(arch.title)) continue;
+    const hits = allIds.filter((id) => arch.match(id)).length;
+    if (hits > bestHits) {
+      bestHits = hits;
+      best = arch;
+    }
+  }
+  return best;
+}
+
+function buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles) {
+  const cleanFirst = String(memberNodes[0]?.title || '核心业务').replace(/\s*[·(（].*$/, '').trim();
+  const cleanSecond = String(memberNodes[1]?.title || '').replace(/\s*[·(（].*$/, '').trim();
+  const scopeHint = (scopePaths || []).map((s) => s.replace(/^\.?\//, '').replace(/\/+$/, '')).find(Boolean) || '';
+  let cand = cleanSecond && cleanFirst.length + cleanSecond.length <= 16
+    ? `${cleanFirst}与${cleanSecond}`
+    : `${cleanFirst}业务流`;
+  if (usedTitles.has(cand) && scopeHint) cand = `${cleanFirst} (${scopeHint})`;
+  return cand;
+}
+
+function deriveSubgraphMeta(memberNodes, scopePaths, depth, seqIdx, usedTitles) {
+  const allIds = collectLeafIds(memberNodes);
+  const arch = depth === 0 ? pickUniqueArchetype(allIds, usedTitles) : null;
+  const title = arch ? arch.title : buildGenericSubgraphTitle(memberNodes, scopePaths, usedTitles);
+  usedTitles.add(title);
+  const fallbackColor = GENERIC_SUBGRAPH_PALETTE[seqIdx % GENERIC_SUBGRAPH_PALETTE.length];
+  const colorKey = arch ? arch.colorKey : (memberNodes[0]?.colorKey || fallbackColor);
+  const id = resolveStableSubgraphId(scopePaths, allIds, depth, seqIdx);
   return {
     id,
     title,
     colorKey,
-    tip: `按模块度内聚度自动收拢的业务子流（内含：${memberNodes.map((n) => n.title).join('、')}）· 可点「⊞ 原地展开」在当前画布直接查看，或点「进入子流」全屏聚焦`
+    tip: `按模块度内聚自动收拢的业务子流（内含 ${memberNodes.length} 步：${memberNodes.map((n) => n.title).join('、')}）· 可点「⊞ 原地展开」在当前画布直接查看，或点「进入子流」下钻`
   };
+}
+
+function canReachInGeneralPath(start, target, adj) {
+  const visited = new Set([start]);
+  const stack = [...(adj.get(start) || [])].filter((w) => w !== target);
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (cur === target) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    for (const nxt of (adj.get(cur) || [])) {
+      if (!visited.has(nxt)) stack.push(nxt);
+    }
+  }
+  return false;
+}
+
+export function transitivelyReduceDag(nodes) {
+  const idSet = new Set(nodes.map((n) => n.id));
+  const adj = new Map(nodes.map((n) => [n.id, (n.nextIds || []).filter((t) => idSet.has(t) && t !== n.id)]));
+  for (const n of nodes) {
+    const direct = adj.get(n.id) || [];
+    if (direct.length <= 1) {
+      n.nextIds = direct;
+      continue;
+    }
+    n.nextIds = direct.filter((target) => {
+      const reducedAdj = new Map(adj);
+      reducedAdj.set(n.id, direct.filter((w) => w !== target));
+      return !canReachInGeneralPath(n.id, target, reducedAdj);
+    });
+    adj.set(n.id, n.nextIds);
+  }
+  return nodes;
+}
+
+function wireBoundaryPortMaps(srcRec, dstRec) {
+  const srcTopId = srcRec.node.id;
+  const dstTopId = dstRec.node.id;
+  if (!srcRec.single && srcRec.node.subgraph) {
+    const inner = srcRec.node.subgraph.nodes;
+    const tail = inner[inner.length - 1];
+    if (tail) srcRec.node.subgraph._exitMap.push({ fromInner: tail.id, toExternal: dstTopId });
+  }
+  if (!dstRec.single && dstRec.node.subgraph) {
+    const inner = dstRec.node.subgraph.nodes;
+    const head = inner[0];
+    if (head) dstRec.node.subgraph._entryMap.push({ fromExternal: srcTopId, toInner: head.id });
+  }
+}
+
+function computeQuotientWeights(groupRecords, dirW) {
+  const k = groupRecords.length;
+  const qDir = Array.from({ length: k }, () => new Array(k).fill(0));
+  const strength = new Array(k).fill(0);
+  for (let a = 0; a < k; a++) {
+    for (let b = a + 1; b < k; b++) {
+      let fab = 0;
+      let fba = 0;
+      for (const u of groupRecords[a].memberIdxs) {
+        for (const v of groupRecords[b].memberIdxs) {
+          fab += dirW[u][v];
+          fba += dirW[v][u];
+        }
+      }
+      qDir[a][b] = fab;
+      qDir[b][a] = fba;
+      strength[a] += fab + fba;
+      strength[b] += fab + fba;
+    }
+  }
+  return { qDir, strength };
+}
+
+function shouldKeepBackbonePair(a, b, qDir, strength, k, recA, recB) {
+  const wab = qDir[a][b] + qDir[b][a];
+  if (wab <= 0) return false;
+  // 同层并列平级业务子系统（如两个并行中台/界面子系统）若仅存在偶发单边辅助引用，按 Serrano 主干准则不强串成先后链
+  const sameStage = !recA.hasGrill && !recB.hasGrill && Math.abs(recA.meanTier - recB.meanTier) < 0.45;
+  const uniformShare = 1 / Math.max(2, k - 1);
+  const shareA = wab / Math.max(1, strength[a]);
+  const shareB = wab / Math.max(1, strength[b]);
+  if (sameStage && Math.max(shareA, shareB) < uniformShare) return false;
+  return true;
+}
+
+function compareGroupOrderItems(a, b) {
+  if (a.hasGrill !== b.hasGrill) return a.hasGrill ? -1 : 1;
+  if (Math.abs(a.tier - b.tier) >= 0.45) return a.tier - b.tier;
+  return b.netFlow - a.netFlow;
+}
+
+function computeGroupRankMap(groupRecords, qDir) {
+  const orderedIdx = groupRecords
+    .map((rec, idx) => {
+      const outSum = qDir[idx].reduce((s, v) => s + v, 0);
+      const inSum = qDir.reduce((s, row) => s + row[idx], 0);
+      return { idx, tier: rec.meanTier, hasGrill: rec.hasGrill, netFlow: outSum - inSum };
+    })
+    .sort(compareGroupOrderItems)
+    .map((x) => x.idx);
+  return new Map(orderedIdx.map((origIdx, r) => [origIdx, r]));
+}
+
+function wireAllReducedGroupPorts(groupRecords) {
+  const recById = new Map(groupRecords.map((r) => [r.node.id, r]));
+  for (const srcRec of groupRecords) {
+    for (const tid of (srcRec.node.nextIds || [])) {
+      const dstRec = recById.get(tid);
+      if (dstRec) wireBoundaryPortMaps(srcRec, dstRec);
+    }
+  }
+}
+
+function orientAndReduceGroupRecords(groupRecords, dirW) {
+  const k = groupRecords.length;
+  const { qDir, strength } = computeQuotientWeights(groupRecords, dirW);
+  const rankOf = computeGroupRankMap(groupRecords, qDir);
+  for (let a = 0; a < k; a++) {
+    for (let b = a + 1; b < k; b++) {
+      if (!shouldKeepBackbonePair(a, b, qDir, strength, k, groupRecords[a], groupRecords[b])) continue;
+      const aFirst = (rankOf.get(a) || 0) < (rankOf.get(b) || 0);
+      const srcNode = groupRecords[aFirst ? a : b].node;
+      const dstNode = groupRecords[aFirst ? b : a].node;
+      if (!srcNode.nextIds.includes(dstNode.id)) srcNode.nextIds.push(dstNode.id);
+    }
+  }
+  transitivelyReduceDag(groupRecords.map((r) => r.node));
+  wireAllReducedGroupPorts(groupRecords);
 }
 
 function relaxDagDepthOnce(nodes, byId, depthMap) {
   for (const u of nodes) {
     const du = depthMap.get(u.id) || 0;
     for (const vid of (u.nextIds || [])) {
-      if (!byId.has(vid)) continue;
-      if ((depthMap.get(vid) || 0) < du + 1) depthMap.set(vid, du + 1);
+      if (byId.has(vid) && (depthMap.get(vid) || 0) < du + 1) depthMap.set(vid, du + 1);
     }
   }
 }
@@ -286,43 +462,53 @@ function relaxDagDepthOnce(nodes, byId, depthMap) {
 function computeLongestDagDepths(nodes) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const depthMap = new Map(nodes.map((n) => [n.id, 0]));
-  for (let pass = 0; pass < nodes.length; pass++) {
-    relaxDagDepthOnce(nodes, byId, depthMap);
-  }
+  for (let pass = 0; pass < nodes.length; pass++) relaxDagDepthOnce(nodes, byId, depthMap);
   return depthMap;
 }
 
-function applySavedNodeLayout(nd, saved, idx, col, row) {
+function applySavedNodeLayout(nd, saved, idx, col, row, colCount, maxColCount) {
   const hasSavedColor = Boolean(saved.color && saved.color !== 'none');
+  const rowPitch = 198;
+  const yCenterOffset = Math.round(((maxColCount - colCount) * rowPitch) / 2);
   return {
     ...nd,
     step: nd.id === 'host-dom-grill-me' ? '00' : String(idx + 1).padStart(2, '0'),
-    x: typeof saved.x === 'number' ? saved.x : 56 + col * 316,
-    y: typeof saved.y === 'number' ? saved.y : 76 + row * 226,
-    w: typeof saved.w === 'number' ? saved.w : (nd.w || 256),
+    x: typeof saved.x === 'number' ? saved.x : 64 + col * 342,
+    y: typeof saved.y === 'number' ? saved.y : 88 + yCenterOffset + row * rowPitch,
+    w: typeof saved.w === 'number' ? saved.w : (nd.w || 272),
     h: typeof saved.h === 'number' ? saved.h : (nd.h ?? null),
     color: hasSavedColor ? saved.color : (nd.color || 'none'),
     colorKey: hasSavedColor ? saved.color : nd.colorKey,
     bypassed: saved.bypassed !== undefined ? Boolean(saved.bypassed) : Boolean(nd.bypassed),
     collapsed: saved.collapsed !== undefined ? Boolean(saved.collapsed) : Boolean(nd.collapsed),
-    expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : Boolean(nd.expanded)
+    expanded: saved.expanded !== undefined ? Boolean(saved.expanded) : false
   };
 }
 
 function layoutDagLayerNodes(nodes, savedState = {}) {
+  transitivelyReduceDag(nodes);
   const depthMap = computeLongestDagDepths(nodes);
+  const colTotals = new Map();
+  for (const nd of nodes) {
+    const c = depthMap.get(nd.id) || 0;
+    colTotals.set(c, (colTotals.get(c) || 0) + 1);
+  }
+  const maxColCount = Math.max(1, ...colTotals.values());
   const colRows = new Map();
   const layouts = savedState?.hostNodeLayouts || {};
-  const ordered = [...nodes].sort((a, b) => (depthMap.get(a.id) || 0) - (depthMap.get(b.id) || 0));
+  const ordered = [...nodes].sort((a, b) => {
+    const dDiff = (depthMap.get(a.id) || 0) - (depthMap.get(b.id) || 0);
+    return dDiff !== 0 ? dDiff : (inferNodeArchTier(a) - inferNodeArchTier(b));
+  });
   return ordered.map((nd, idx) => {
     const col = depthMap.get(nd.id) || 0;
     const row = colRows.get(col) || 0;
     colRows.set(col, row + 1);
-    return applySavedNodeLayout(nd, layouts[nd.id] || {}, idx, col, row);
+    return applySavedNodeLayout(nd, layouts[nd.id] || {}, idx, col, row, colTotals.get(col) || 1, maxColCount);
   });
 }
 
-function buildMultiMemberGroupRecord(rawMembers, depth, gIdx, savedKeys) {
+function buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles) {
   const memberIdSet = new Set(rawMembers.map((m) => m.id));
   const scopedMembers = rawMembers.map((m) => ({
     ...m,
@@ -332,17 +518,22 @@ function buildMultiMemberGroupRecord(rawMembers, depth, gIdx, savedKeys) {
     ? buildHierarchyRecursive(scopedMembers, depth + 1, {})
     : layoutDagLayerNodes(scopedMembers, {});
   const scopePaths = [...new Set(rawMembers.flatMap((m) => m.scopePaths || []))];
-  const meta = deriveSubgraphMeta(innerHierarchy, scopePaths, depth, gIdx, savedKeys);
+  const meta = deriveSubgraphMeta(innerHierarchy, scopePaths, depth, gIdx, usedTitles);
   const contractIds = [...new Set(rawMembers.flatMap((m) => m.contractIds || []))];
   const sharedSum = rawMembers.reduce((s, m) => s + (m.codeCapsule?.sharedCount || 0), 0);
   const modSum = rawMembers.reduce((s, m) => s + (m.codeCapsule?.moduleCount || (m.modules || []).length), 0);
+  const hasGrill = rawMembers.some((m) => m.id === 'host-dom-grill-me');
+  const meanTier = hasGrill ? -1 : (rawMembers.reduce((s, m) => s + inferNodeArchTier(m), 0) / rawMembers.length);
+
   return {
     single: false,
-    rawIds: memberIdSet,
-    rawMembers,
+    hasGrill,
+    meanTier,
+    memberIdxs,
     node: {
       id: meta.id,
-      step: '子流',
+      step: '01',
+      archTier: Math.max(0, Math.round(meanTier)),
       title: meta.title,
       tip: meta.tip,
       isSubgraph: true,
@@ -355,9 +546,9 @@ function buildMultiMemberGroupRecord(rawMembers, depth, gIdx, savedKeys) {
       bypassed: false,
       collapsed: false,
       expanded: false,
-      x: 56,
-      y: 76,
-      w: 268,
+      x: 64,
+      y: 88,
+      w: 274,
       h: null,
       nextIds: [],
       modules: []
@@ -365,54 +556,30 @@ function buildMultiMemberGroupRecord(rawMembers, depth, gIdx, savedKeys) {
   };
 }
 
-function connectCrossGroupPair(srcRawId, dstRawId, srcRec, dstRec) {
-  const srcTopId = srcRec.node.id;
-  const dstTopId = dstRec.node.id;
-  if (!srcRec.node.nextIds.includes(dstTopId)) srcRec.node.nextIds.push(dstTopId);
-  if (!srcRec.single && srcRec.node.subgraph) {
-    srcRec.node.subgraph._exitMap.push({ fromInner: srcRawId, toExternal: dstTopId });
-  }
-  if (!dstRec.single && dstRec.node.subgraph) {
-    dstRec.node.subgraph._entryMap.push({ fromExternal: srcTopId, toInner: dstRawId });
-  }
-}
-
-function rewireCrossGroupEdges(nodes, groupRecords) {
-  const ownerByRawId = new Map();
-  for (const rec of groupRecords) {
-    for (const rid of rec.rawIds) ownerByRawId.set(rid, rec);
-  }
-  for (const srcRaw of nodes) {
-    const srcRec = ownerByRawId.get(srcRaw.id);
-    if (!srcRec) continue;
-    for (const tid of (srcRaw.nextIds || [])) {
-      const dstRec = ownerByRawId.get(tid);
-      if (dstRec && dstRec !== srcRec) connectCrossGroupPair(srcRaw.id, tid, srcRec, dstRec);
-    }
-  }
-}
-
 function buildHierarchyRecursive(nodes, depth, savedState) {
   const rootSaved = depth === 0 ? savedState : {};
   if (nodes.length <= 3 || depth >= 3) return layoutDagLayerNodes(nodes, rootSaved);
-  const savedKeys = depth === 0 ? new Set(Object.keys(savedState?.hostNodeLayouts || {})) : new Set();
-  const groups = partitionByModularityGain(nodes, savedKeys);
-  // 若没有任何 ΔQ > 0 的多节点合并，直接停止递归，原样平铺！
+  const part = partitionByLouvainModularity(nodes, depth);
+  const groups = Array.isArray(part) ? part : part.groups;
   if (groups.every((g) => g.length === 1)) return layoutDagLayerNodes(nodes, rootSaved);
 
-  const usedSavedIds = new Set();
+  const usedTitles = new Set();
   const groupRecords = groups.map((memberIdxs, gIdx) => {
     const rawMembers = memberIdxs.map((i) => nodes[i]);
     if (rawMembers.length === 1) {
-      return { single: true, rawIds: new Set([rawMembers[0].id]), node: { ...rawMembers[0], nextIds: [] } };
+      const m = rawMembers[0];
+      return {
+        single: true,
+        hasGrill: m.id === 'host-dom-grill-me',
+        meanTier: inferNodeArchTier(m),
+        memberIdxs,
+        node: { ...m, nextIds: [] }
+      };
     }
-    const availSaved = new Set([...savedKeys].filter((k) => !usedSavedIds.has(k)));
-    const rec = buildMultiMemberGroupRecord(rawMembers, depth, gIdx, availSaved);
-    usedSavedIds.add(rec.node.id);
-    return rec;
+    return buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTitles);
   });
 
-  rewireCrossGroupEdges(nodes, groupRecords);
+  orientAndReduceGroupRecords(groupRecords, part.dirW);
   return layoutDagLayerNodes(groupRecords.map((r) => r.node), rootSaved);
 }
 
@@ -421,6 +588,6 @@ export function buildAdaptiveBusinessHierarchy(codeUnitNodes, savedState = {}, h
     if (!hasInitializedIntent && !savedState?.grillMeNode) return [];
     return [createGrillMeCapabilityNode(savedState?.grillMeNode, [])];
   }
-  const leaves = enrichLeafBusinessCapabilityNodes(codeUnitNodes, savedState);
+  const leaves = enrichLeafBusinessCapabilityNodes(codeUnitNodes, savedState, hasInitializedIntent);
   return buildHierarchyRecursive(leaves, 0, savedState);
 }
