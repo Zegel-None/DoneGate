@@ -57,4 +57,21 @@ describe('Stage 3 · 跨文件 UI 锚点/导出符号影响面雷达 (impact) �
       rmSync(tmpMockRoot, { recursive: true, force: true });
     }
   });
+
+  it('donegate impact 按语法类别边界消歧：不将 data-snap-kind="align" 或 /autopilot/status 拆成裸词污染无关模块', () => {
+    const rSnap = dispatchCommand(['impact', 'runner/atlas/wb-snap-rulers.mjs', '--json'], REPO_ROOT);
+    expect(rSnap.exitCode).toBe(0);
+    const snapImpact = JSON.parse(rSnap.stdout);
+    const allHitTokens = snapImpact.affectedProdFiles.flatMap((p) => p.hits.map((h) => h.token));
+    expect(allHitTokens).not.toContain('align');
+    expect(snapImpact.affectedProdFiles.length).toBeLessThan(8);
+
+    const rStatusRoute = dispatchCommand(['impact', '/donegate/api/autopilot/status', '--json'], REPO_ROOT);
+    expect(rStatusRoute.exitCode).toBe(0);
+    const statusImpact = JSON.parse(rStatusRoute.stdout);
+    const statusHitTokens = statusImpact.affectedTests.flatMap((t) => t.hits.map((h) => h.token));
+    expect(statusHitTokens).not.toContain('status');
+    expect(statusImpact.affectedProdFiles.some((p) => p.file === 'runner/dsh/autopilot-routes.mjs')).toBe(true);
+    expect(statusImpact.affectedProdFiles.some((p) => p.file === 'runner/atlas/ui-shell.mjs')).toBe(true);
+  });
 });

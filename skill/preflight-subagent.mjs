@@ -5,7 +5,7 @@
 // 用法：
 //   node skill/preflight-subagent.mjs [--root <dir>] [--expect-branch <branch>] [--node <nodeId>] [--json]
 //   node skill/preflight-subagent.mjs --stamp-lease [--root <dir>] [--expect-branch <branch>] [--node <nodeId>]
-//   node runner/donegate.mjs preflight [--stamp-lease] [--expect-branch <branch>] [--node <nodeId>] [--json]
+//   node runner/donegate.mjs preflight [--stamp-lease] [--expect-branch <branch>] [--node <nodeId> | --target-node <nodeId>] [--json]
 //   node skill/preflight-subagent.mjs --red-self-test
 //
 // 退出码：
@@ -228,7 +228,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const res = cmdPreflight(root, {
     stampLease: argv.includes('--stamp-lease'),
     expectBranch: getOpt('--expect-branch'),
-    nodeId: getOpt('--node'),
+    nodeId: getOpt('--node') || getOpt('--target-node'),
     json: argv.includes('--json')
   });
   if (res.stdout) console.log(res.stdout);

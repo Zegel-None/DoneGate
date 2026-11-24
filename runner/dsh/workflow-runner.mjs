@@ -6,8 +6,8 @@ import { buildMicroVerdictCard } from './quote-protocol.mjs';
 import { normalizeLf, normalizeSlashes, normalizeWinDriveKey } from './win-paths.mjs';
 import { buildWorkflowDepEnv, inspectWorkflowDeps } from './workflow-deps.mjs';
 import {
-  AUTOPILOT_STATES, createInitialCheckpoint, isHumanGateNode,
-  loadAutopilotCheckpoint, saveAutopilotCheckpoint, tripAutopilotBreaker
+  AUTOPILOT_BREAKER_CODES, AUTOPILOT_DEFAULT_MAX_ENV_FAULTS, AUTOPILOT_STATES,
+  createInitialCheckpoint, isHumanGateNode, loadAutopilotCheckpoint, saveAutopilotCheckpoint, tripAutopilotBreaker
 } from './autopilot-state.mjs';
 import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot-worktree.mjs';
 import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-cache.mjs';
@@ -223,9 +223,9 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   if (hooks.requireCleanGit === true) {
     const st = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', env: cleanGitEnv(), windowsHide: true });
     if (st.status !== 0 || st.stdout.trim() !== '') {
-      tripAutopilotBreaker(root, cp, { code: 'DIRTY_WORKTREE_FAULT', nodeId: cp.cursorNodeId, reason: '挂机前检测到脏工作区或未提交文件，已触发安全隔离熔断' });
+      tripAutopilotBreaker(root, cp, { code: AUTOPILOT_BREAKER_CODES.DIRTY_WORKTREE_FAULT, nodeId: cp.cursorNodeId, reason: '挂机前检测到脏工作区或未提交文件，已触发安全隔离熔断' });
       logEvent({ type: 'dock_item', item: { id: runId, kind: 'blocked', tone: 'bad', title: cp.morningSummaryLine } });
-      return { ok: false, exitCode: 3, code: 'DIRTY_WORKTREE_FAULT', state: cp.state, reason: cp.breaker.reason, runId, checkpoint: cp };
+      return { ok: false, exitCode: 3, code: AUTOPILOT_BREAKER_CODES.DIRTY_WORKTREE_FAULT, state: cp.state, reason: cp.breaker.reason, runId, checkpoint: cp };
     }
   }
 
@@ -266,7 +266,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   let passedGates = Number(cp.passedGates || 0);
   let totalGates = Number(cp.totalGates || 0);
   let cacheHits = 0;
-  const maxEnvFaults = Number(hooks.maxConsecEnvFaults || 2);
+  const maxEnvFaults = Number(hooks.maxConsecEnvFaults || AUTOPILOT_DEFAULT_MAX_ENV_FAULTS);
   let stepGuard = 0;
 
   while (current && stepGuard < 36) {
@@ -311,7 +311,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
         const used = (loopCounters.get(matchedLink.id) || 0) + 1;
         if (used > matchedLink.maxLoops) {
           cp.loopCounts = Object.fromEntries(loopCounters);
-          return abortWithBreaker(1, 'MAX_LOOPS_EXCEEDED', current.id, `单判据连续回跳已达上限 (${matchedLink.maxLoops} 次) 仍未过关，自动熔断防空烧 Token`);
+          return abortWithBreaker(1, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `单判据连续回跳已达上限 (${matchedLink.maxLoops} 次) 仍未过关，自动熔断防空烧 Token`);
         }
         loopCounters.set(matchedLink.id, used);
         cp.loopCounts = Object.fromEntries(loopCounters);
@@ -378,7 +378,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
             cp.consecEnvFaults = (cp.consecEnvFaults || 0) + 1;
             if (cp.consecEnvFaults >= maxEnvFaults) {
               cp.totalGates = totalGates; cp.passedGates = passedGates; cp.lastExitCode = stepExitCode;
-              return abortWithBreaker(stepExitCode, 'ENV_OR_PROTOCOL_FAULT', current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${stepExitCode})：${stepHumanReason}`);
+              return abortWithBreaker(stepExitCode, AUTOPILOT_BREAKER_CODES.ENV_OR_PROTOCOL_FAULT, current.id, `节点「${current.title}」连续 ${cp.consecEnvFaults} 次报环境/协议异常 (exit ${stepExitCode})：${stepHumanReason}`);
             }
           }
         }
@@ -390,7 +390,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     const newlyTouched = stepDiff.files.filter((f) => !baselineFiles.has(f));
     const stepScope = checkWriteScopeMandate(newlyTouched, ticket?.mandate?.allowedWriteScopes || cp.ticket?.allowedWriteScopes);
     if (!stepScope.ok) {
-      return abortWithBreaker(2, 'WRITE_SCOPE_VIOLATION', current.id, `越界修改了未授权范围文件：${stepScope.violated.join(', ')}`);
+      return abortWithBreaker(2, AUTOPILOT_BREAKER_CODES.WRITE_SCOPE_VIOLATION, current.id, `越界修改了未授权范围文件：${stepScope.violated.join(', ')}`);
     }
 
     const selfLoop = !isAgent && stepExitCode !== 0 && links.find((l) => l.fromNode === current.id && l.toNode === current.id && l.maxLoops);
@@ -406,7 +406,7 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       }
       cp.loopCounts = Object.fromEntries(loopCounters);
       cp.lastExitCode = lastExitCode; cp.passedGates = passedGates; cp.totalGates = totalGates;
-      return abortWithBreaker(lastExitCode, 'MAX_LOOPS_EXCEEDED', current.id, `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机`);
+      return abortWithBreaker(lastExitCode, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机`);
     }
 
     cp.completedNodes.push({

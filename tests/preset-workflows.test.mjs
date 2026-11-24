@@ -237,4 +237,36 @@ describe('DoneGate 预置十阶段工作流、懒加载依赖门禁与适配器�
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('过夜挂机状态机支持 POST /donegate/api/autopilot/stop 落盘停止、导出三重熔断枚举与 --resume 恢复', async () => {
+    const { AUTOPILOT_BREAKER_CODES, createInitialCheckpoint, resumeAutopilotBreaker, tripAutopilotBreaker } = await import('../runner/dsh/autopilot-state.mjs');
+    const { createDoneGateWebRouteHandler } = await import('../runner/dsh/host-routes.mjs');
+    const tmp = mkdtempSync(join(tmpdir(), 'dg-ap-stop-'));
+    try {
+      expect(AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED).toBe('MAX_LOOPS_EXCEEDED');
+      expect(AUTOPILOT_BREAKER_CODES.ENV_OR_PROTOCOL_FAULT).toBe('ENV_OR_PROTOCOL_FAULT');
+      expect(AUTOPILOT_BREAKER_CODES.WRITE_SCOPE_VIOLATION).toBe('WRITE_SCOPE_VIOLATION');
+      const cp = createInitialCheckpoint(tmp, 'run-stop-1', { id: 'wf1', name: '夜间工作流' });
+      let status = 0, payload = '';
+      const handler = createDoneGateWebRouteHandler(tmp);
+      const req = { method: 'POST', url: '/donegate/api/autopilot/stop', on(ev, fn) { if (ev === 'end') fn(); } };
+      const res = { writeHead(sc) { status = sc; }, end(str) { payload = str; } };
+      const handled = await handler(req, res, '/autopilot/stop');
+      expect(handled).toBe(true);
+      expect(status).toBe(200);
+      const parsed = JSON.parse(payload);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.autopilot.state).toBe(AUTOPILOT_STATES.STOPPED);
+
+      tripAutopilotBreaker(tmp, cp, { code: AUTOPILOT_BREAKER_CODES.ENV_OR_PROTOCOL_FAULT, nodeId: 'n1', reason: 'env fault' });
+      const cliRes = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/autopilot-state.mjs'), '--resume', '--run-id', 'run-stop-1', '--root', tmp], { encoding: 'utf8' });
+      expect(cliRes.status).toBe(0);
+      const resumed = resumeAutopilotBreaker(tmp, { runId: 'run-stop-1' });
+      expect(resumed.ok).toBe(true);
+      expect(resumed.checkpoint.state).toBe(AUTOPILOT_STATES.RUNNING);
+      expect(resumed.checkpoint.breaker).toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

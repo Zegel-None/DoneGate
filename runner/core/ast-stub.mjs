@@ -47,11 +47,54 @@ function extractJsClassMethods(rawBlock, maskedBlock) {
   return methods;
 }
 
+function astStubReadPropertyAt(masked, i, closeBrace, keys) {
+  const m = masked.slice(i, Math.min(closeBrace, i + 120)).match(/^(?:async\s+)?([A-Za-z_$][\w$]*)\s*([:(])/);
+  if (m && m[1] !== 'function') keys.add(m[1]);
+  return m ? m[0].length : 1;
+}
+
+function astStubStepBracketDepth(ch, depth) {
+  if (ch === '{' || ch === '[' || ch === '(') return depth + 1;
+  if (ch === '}' || ch === ']' || ch === ')') return Math.max(0, depth - 1);
+  return depth;
+}
+
+function astStubExtractTopObjectKeys(masked, openBrace, closeBrace) {
+  const keys = new Set();
+  let depth = 0, expectKey = true, i = openBrace + 1;
+  while (i < closeBrace) {
+    const ch = masked[i];
+    const nextDepth = astStubStepBracketDepth(ch, depth);
+    if (nextDepth !== depth) {
+      depth = nextDepth;
+      i++;
+    } else if (depth === 0 && (ch === ',' || ch === ';')) {
+      expectKey = true;
+      i++;
+    } else if (depth === 0 && expectKey && /[A-Za-z_$]/.test(ch)) {
+      expectKey = false;
+      i += astStubReadPropertyAt(masked, i, closeBrace, keys);
+    } else {
+      if (depth === 0 && !/\s/.test(ch)) expectKey = false;
+      i++;
+    }
+  }
+  return [...keys];
+}
+
+function astStubUnwrapFreezeStart(masked, rhsStart) {
+  let p = rhsStart;
+  while (p < masked.length && /\s/.test(masked[p])) p++;
+  const fm = masked.slice(p, p + 32).match(/^Object\s*\.\s*freeze\s*\(\s*/);
+  return fm ? p + fm[0].length : p;
+}
+
 function astStubFormatVarExport(source, masked, m) {
   const [kind, name, rawType] = [m[1], m[2], m[3] ? compactWs(m[3]) : ''];
   const doc = extractLeadingJsDoc(source, m.index, m[0]);
   const typeSuffix = rawType ? `: ${rawType}` : '';
-  const rhsStart = m.index + m[0].length, rhsSlice = masked.slice(rhsStart, rhsStart + 200);
+  const rhsStart = astStubUnwrapFreezeStart(masked, m.index + m[0].length);
+  const rhsSlice = masked.slice(rhsStart, rhsStart + 200);
   const arrowParen = rhsSlice.match(/^(async\s+)?\(/), arrowIdent = rhsSlice.match(/^(async\s+)?([A-Za-z_$][\w$]*)\s*=>/);
   const fnExpr = rhsSlice.match(/^(async\s+)?function\s*\(/);
   if (arrowParen || fnExpr) {
@@ -64,12 +107,14 @@ function astStubFormatVarExport(source, masked, m) {
     const asyncPref = arrowIdent[1] ? 'async ' : '';
     return { symbol: name, doc, signature: `export ${asyncPref}function ${name}(${arrowIdent[2]});` };
   }
-  if (rhsSlice.trimStart().startsWith('{')) {
-    const openBrace = rhsStart + rhsSlice.indexOf('{'), closeBrace = findBalancedEnd(masked, openBrace, '{', '}');
-    const objSlice = closeBrace > openBrace ? masked.slice(openBrace + 1, Math.min(closeBrace, openBrace + 2400)) : '';
-    const keys = [...objSlice.matchAll(/(?:^|[,{\n])\s*([A-Za-z_$][\w$]*)\s*(?::|\()/g)].map((k) => k[1]).slice(0, 24);
+  if (rhsSlice.startsWith('{')) {
+    const closeBrace = findBalancedEnd(masked, rhsStart, '{', '}');
+    const keys = closeBrace > rhsStart ? astStubExtractTopObjectKeys(masked, rhsStart, closeBrace) : [];
     const inferredType = keys.length > 0 ? `{ ${keys.join(', ')} }` : 'Record<string, unknown>';
     return { symbol: name, doc, signature: `export ${kind} ${name}: ${rawType || inferredType};` };
+  }
+  if (rhsSlice.startsWith('[')) {
+    return { symbol: name, doc, signature: `export ${kind} ${name}: ${rawType || 'unknown[]'};` };
   }
   return { symbol: name, doc, signature: `export ${kind} ${name}${typeSuffix};` };
 }

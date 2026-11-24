@@ -128,6 +128,7 @@ export function cmdGraph(projectRoot) {
       `覆盖率 ${pct}%（${claimed.length}/${codeFiles.length}，低于 ${thresholds.coverageMinPct}% 拒绝出图，INV-09 退 1）`,
       `孤儿代码 ${orphans.length} 个 | 空契约 ${emptyContracts.length} 个 | 测试文件 ${testFiles.length} 个（不计入分母） | 过大文件 ${oversizedFiles.length} 个`,
       edgeSummary,
+      ...(active.length === 0 ? ['提示：当前仓库尚未建立 contracts/ 契约（零契约公开/轻量模式）；浏览全仓业务域与模块拓扑请运行 node runner/donegate.mjs brief 或 zoom all'] : []),
       '孤儿清单（覆盖 80% 孤儿所需最少 scope 增补建议）：',
       ...orphans.slice(0, needCount).map((o) => `  - ${o}`)
     ];

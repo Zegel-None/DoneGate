@@ -46,12 +46,14 @@ const HELP_TEXT = [
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
   '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/导出符号影响面雷达（含 1-Hop 单测自动推导）',
-  '· preflight [--stamp-lease] [--expect-branch <b>] [--target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
+  '· preflight [--stamp-lease] [--expect-branch <b>] [--node <id> | --target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
 function dgConsumeLongFlag(flags, argv, idx) {
   const k = argv[idx].slice(2);
-  if (BOOLEAN_FLAGS.has(k)) {
+  const nextTok = argv[idx + 1];
+  const isValuedPreflightNode = k === 'node' && argv[0] === 'preflight' && nextTok !== undefined && !nextTok.startsWith('--');
+  if (BOOLEAN_FLAGS.has(k) && !isValuedPreflightNode) {
     flags[k] = true;
     return idx;
   }
@@ -112,7 +114,7 @@ function dgCmdSubagentTools(cmd, root, pos, flags) {
     return cmdPreflight(root, {
       stampLease: Boolean(flags['stamp-lease']),
       expectBranch: typeof flags['expect-branch'] === 'string' ? flags['expect-branch'] : undefined,
-      nodeId: typeof flags['target-node'] === 'string' ? flags['target-node'] : pos[1],
+      nodeId: typeof flags['target-node'] === 'string' ? flags['target-node'] : (typeof flags.node === 'string' ? flags.node : pos[1]),
       json: Boolean(flags.json)
     });
   }

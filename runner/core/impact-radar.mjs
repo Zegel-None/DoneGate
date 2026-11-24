@@ -1,4 +1,4 @@
-// 跨文件语义与 UI 锚点影响面雷达（支持含点号配置文件锚点与 1-Hop 生产模块关联单测自动推导，<= 350 行）
+// 跨文件语义与 UI 锚点影响面雷达（基于语法类别词法边界消歧与 1-Hop 生产模块关联单测自动推导，<= 350 行）
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
@@ -9,11 +9,35 @@ const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
 const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
 const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json', '.cmd']);
 const IR_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$|^runner\/self-test\.mjs$/i;
-const IR_GENERIC_ANCHORS = new Set(['app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer', 'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false', 'index', 'contract', 'shared']);
+const IR_GENERIC_ANCHORS = new Set([
+  'app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer',
+  'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false', 'index', 'contract', 'shared'
+]);
 
 function irIsSpecificAnchor(token) {
-  if (!token || token.length < 4) return false;
-  return !IR_GENERIC_ANCHORS.has(token.toLowerCase());
+  const clean = String(token || '').trim();
+  if (!clean) return false;
+  return !IR_GENERIC_ANCHORS.has(clean.toLowerCase());
+}
+
+function irRegisterApiRouteVariants(addFn, rawRoute) {
+  const clean = rawRoute.replace(/\/+$/, '');
+  addFn(clean, 'api-route');
+  if (clean.startsWith('/donegate/api/')) {
+    addFn(clean.slice('/donegate/api'.length), 'sub-route');
+  }
+}
+
+function irScanDomAndRouteAnchors(raw, addAnchor) {
+  for (const m of raw.matchAll(/\bid=(?:\\)?["']([A-Za-z][A-Za-z0-9_-]+)(?:\\)?["']/g)) {
+    if (!m[1].includes('${')) addAnchor(m[1], 'dom-id');
+  }
+  for (const m of raw.matchAll(/\b(data-[a-z][a-z0-9-]*)=(?:\\)?["']([A-Za-z0-9_-]+)(?:\\)?["']/g)) {
+    if (m[1] !== 'data-tip' && !m[2].includes('${')) addAnchor(`${m[1]}="${m[2]}"`, 'data-attr');
+  }
+  for (const m of raw.matchAll(/(\/(?:donegate\/)?api\/[A-Za-z0-9_./-]+)/g)) {
+    irRegisterApiRouteVariants(addAnchor, m[1]);
+  }
 }
 
 function irExtractAnchorsFromFile(raw, relPath) {
@@ -22,50 +46,43 @@ function irExtractAnchorsFromFile(raw, relPath) {
     if (irIsSpecificAnchor(token) && !anchors.has(token)) anchors.set(token, kind);
   };
   const baseName = basename(relPath);
-  if (baseName.length >= 6 && /\.(json|jsonl|cmd)$/i.test(baseName)) addAnchor(baseName, 'config-file');
+  if (/\.(json|jsonl|cmd)$/i.test(baseName)) addAnchor(baseName, 'config-file');
   if (/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(relPath)) {
-    const stub = extractFileInterfaceStub(raw, relPath);
-    for (const ex of stub.exports) {
+    for (const ex of extractFileInterfaceStub(raw, relPath).exports) {
       if (ex.symbol && !ex.symbol.startsWith('reexport:')) addAnchor(ex.symbol, 'export');
     }
   }
-  for (const m of raw.matchAll(/\bid=(?:\\)?["']([A-Za-z][A-Za-z0-9_-]{3,})(?:\\)?["']/g)) {
-    if (!m[1].includes('${')) addAnchor(m[1], 'dom-id');
-  }
-  for (const m of raw.matchAll(/\b(data-[a-z][a-z0-9-]*)=(?:\\)?["']([A-Za-z0-9_-]{2,})(?:\\)?["']/g)) {
-    const attrName = m[1], attrVal = m[2];
-    if (attrName === 'data-tip' || attrVal.includes('${')) continue;
-    addAnchor(`${attrName}="${attrVal}"`, 'data-attr');
-    if (attrVal.length >= 5) addAnchor(attrVal, attrName);
-  }
-  for (const m of raw.matchAll(/(\/(?:donegate\/)?api\/[A-Za-z0-9_/-]{3,})/g)) {
-    addAnchor(m[1].replace(/\/+$/, ''), 'api-route');
-  }
+  irScanDomAndRouteAnchors(raw, addAnchor);
   const stem = baseName.replace(/\.[a-z0-9]+$/i, '');
-  if (stem && stem.length >= 5 && !IR_GENERIC_ANCHORS.has(stem.toLowerCase())) addAnchor(stem, 'module-stem');
+  if (stem && !IR_GENERIC_ANCHORS.has(stem.toLowerCase())) addAnchor(stem, 'module-stem');
   return anchors;
+}
+
+function irAddSingleRawTarget(root, rawTarget, selfFiles, put) {
+  const candAbs = resolve(root, rawTarget);
+  if (existsSync(candAbs)) {
+    const rel = relative(root, candAbs).split(sep).join('/');
+    selfFiles.add(rel);
+    for (const [tok, kind] of irExtractAnchorsFromFile(readFileSync(candAbs, 'utf8'), rel).entries()) {
+      put(tok, kind, rel);
+    }
+    return;
+  }
+  if (rawTarget.startsWith('/donegate/api/') || rawTarget.startsWith('/api/')) {
+    irRegisterApiRouteVariants((tok, kind) => put(tok, kind, 'cli'), rawTarget);
+    return;
+  }
+  const isDomHash = rawTarget.startsWith('#');
+  put(isDomHash ? rawTarget.slice(1) : rawTarget, isDomHash ? 'dom-id' : 'literal', 'cli');
 }
 
 function irResolveSearchAnchors(root, rawTargets) {
   const selfFiles = new Set();
   const anchorMap = new Map();
-  for (const rawTarget of rawTargets) {
-    const candAbs = resolve(root, rawTarget);
-    if (existsSync(candAbs)) {
-      const rel = relative(root, candAbs).split(sep).join('/');
-      selfFiles.add(rel);
-      const raw = readFileSync(candAbs, 'utf8');
-      for (const [tok, kind] of irExtractAnchorsFromFile(raw, rel).entries()) {
-        anchorMap.set(tok, { token: tok, kind, source: rel });
-      }
-    } else if (irIsSpecificAnchor(rawTarget)) {
-      anchorMap.set(rawTarget, { token: rawTarget, kind: 'literal', source: 'cli' });
-      const strippedRoute = rawTarget.replace(/^\/(?:donegate\/)?api\/(?:uiboard|autopilot|jit)\//, '');
-      if (strippedRoute !== rawTarget && strippedRoute.length >= 5) {
-        anchorMap.set(strippedRoute, { token: strippedRoute, kind: 'sub-route', source: 'cli' });
-      }
-    }
-  }
+  const put = (tok, kind, source) => {
+    if (irIsSpecificAnchor(tok) && !anchorMap.has(tok)) anchorMap.set(tok, { token: tok, kind, source });
+  };
+  for (const rawTarget of rawTargets) irAddSingleRawTarget(root, rawTarget, selfFiles, put);
   return { selfFiles, anchors: [...anchorMap.values()] };
 }
 
@@ -86,13 +103,44 @@ function irCollectRepoCandidateFiles(root, selfFiles) {
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
+function irCheckKindBoundary(raw, idx, endIdx, kind) {
+  const prev = idx > 0 ? raw[idx - 1] : '';
+  const next = endIdx < raw.length ? raw[endIdx] : '';
+  if (kind === 'sub-route') return /['"`]/.test(prev) && /['"`?#]/.test(next);
+  if (kind === 'api-route') return !/[A-Za-z0-9_./-]/.test(next);
+  if (kind === 'module-stem' || kind === '1hop-module') {
+    return /['"`/\\]/.test(prev) && (next === '.' || /['"`/]/.test(next));
+  }
+  if (kind === 'dom-id') return /[#='"`]/.test(prev) && !/[A-Za-z0-9_-]/.test(next);
+  if (kind === 'config-file') return !/[A-Za-z0-9_.-]/.test(prev) && !/[A-Za-z0-9_.-]/.test(next);
+  return !/[A-Za-z0-9_$-]/.test(prev) && !/[A-Za-z0-9_$-]/.test(next);
+}
+
+function irFindFirstBoundedHit(raw, anchor) {
+  const { token, kind } = anchor;
+  if (kind === 'data-attr') {
+    const eqIdx = token.indexOf('=');
+    const attr = token.slice(0, eqIdx), val = token.slice(eqIdx + 2, -1);
+    for (const pat of [`${attr}="${val}"`, `${attr}='${val}'`, `${attr}=\\"${val}\\"`]) {
+      const pIdx = raw.indexOf(pat);
+      if (pIdx >= 0) return pIdx;
+    }
+    return -1;
+  }
+  let pos = raw.indexOf(token);
+  while (pos >= 0) {
+    if (irCheckKindBoundary(raw, pos, pos + token.length, kind)) return pos;
+    pos = raw.indexOf(token, pos + 1);
+  }
+  return -1;
+}
+
 function irFindAnchorHitsInText(raw, anchors) {
   const matched = [];
   for (const a of anchors) {
-    const idx = raw.indexOf(a.token);
+    const idx = irFindFirstBoundedHit(raw, a);
     if (idx < 0) continue;
-    const lineNo = raw.slice(0, idx).split('\n').length;
-    matched.push({ token: a.token, kind: a.kind, line: lineNo });
+    matched.push({ token: a.token, kind: a.kind, line: raw.slice(0, idx).split('\n').length });
   }
   return matched;
 }
@@ -105,7 +153,7 @@ function irInferTransitiveTests(candidates, affectedProdFiles, directTestSet) {
   const prodStems = [...new Set(
     affectedProdFiles
       .map((p) => basename(p.file).replace(/\.[a-z0-9]+$/i, ''))
-      .filter((s) => s.length >= 5 && !IR_GENERIC_ANCHORS.has(s.toLowerCase()))
+      .filter((s) => s && !IR_GENERIC_ANCHORS.has(s.toLowerCase()))
   )];
   if (prodStems.length === 0) return [];
   const stemAnchors = prodStems.map((s) => ({ token: s, kind: '1hop-module' }));
@@ -130,10 +178,7 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
   const selfContracts = new Set([...selfFiles].flatMap((sf) => irResolveOwners(sf, nodes)));
   const candidates = irCollectRepoCandidateFiles(root, selfFiles);
 
-  const affectedTests = [];
-  const affectedProdFiles = [];
-  const crossContractSet = new Set();
-
+  const affectedTests = [], affectedProdFiles = [], crossContractSet = new Set();
   for (const { abs, rel } of candidates) {
     const hits = irFindAnchorHitsInText(readFileSync(abs, 'utf8'), anchors);
     if (hits.length === 0) continue;

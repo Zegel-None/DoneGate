@@ -85,6 +85,18 @@ export function loadCampaignCheckpoint(projectRoot, campaignId = null) {
   return r.ok ? r.value : null;
 }
 
+export function stopCampaignAutopilot(projectRoot, { campaignId = null, by = '业主', note = '手动停止项目拓扑挂机' } = {}) {
+  const cur = loadCampaignCheckpoint(projectRoot, campaignId);
+  if (!cur) return { ok: true, noop: true, campaign: null };
+  if (cur.state === 'COMPLETED') return { ok: true, noop: true, campaign: cur };
+  const stopped = saveCampaignState(projectRoot, {
+    ...cur,
+    state: 'STOPPED',
+    stoppedInfo: { by, note, at: new Date().toISOString() }
+  });
+  return { ok: true, noop: false, campaign: stopped };
+}
+
 async function runSingleCampaignComponent(ctx, comp) {
   const { root, hub, campaignId, workCwd, existing, bindingsByNode, spec, hooks } = ctx;
   let binding = bindingsByNode[comp.id];

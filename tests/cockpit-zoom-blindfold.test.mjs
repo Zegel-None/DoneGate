@@ -26,7 +26,7 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(res.stdout).toContain('[01] 沟通需求与定好验收标准');
     expect(res.stdout).toContain('[02] 界面实时预览与分派助手');
     expect(res.stdout).toContain('物理目录：`runner/dsh/`');
-    expect(res.stdout).toMatch(/HTTP 路由：(49|50|51) 条/);
+    expect(res.stdout).toContain('HTTP 路由：52 条');
     expect(res.stdout).toContain('[03] 可视化项目看板与过夜挂机');
     expect(res.stdout).toContain('exportDashboardHtml(projectRoot, outPath, opts)');
     expect(res.stdout).not.toContain("dashboard.html'), opts)");
@@ -108,5 +108,78 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     const routeData = JSON.parse(routeImpact.stdout);
     expect(routeData.affectedProdFiles.some((p) => p.file === 'runner/dsh/ui-board-routes.mjs')).toBe(true);
     expect(routeData.transitiveTests.some((t) => t.file === 'tests/round3-dsh-uiboard.test.mjs')).toBe(true);
+  });
+
+  it('跨进程单飞文件锁缓存：回收死进程残留锁并防止多子进程冷启动惊群重算，且提取顶层箭头函数与 %~dp0 路径', async () => {
+    const { mkdtempSync, rmSync, writeFileSync, readdirSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { spawn } = await import('node:child_process');
+    const cacheDir = mkdtempSync(join(tmpdir(), 'dg-sf-cache-'));
+    try {
+      const { computeQuickRepoFingerprint, CK_CACHE_SCHEMA } = await import('../runner/core/cockpit-cache.mjs');
+      const { spawnSync } = await import('node:child_process');
+      const head = (spawnSync('git', ['-C', REPO_ROOT, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim();
+      const fp = computeQuickRepoFingerprint(REPO_ROOT, head);
+      writeFileSync(join(cacheDir, `dg-${CK_CACHE_SCHEMA}-${fp}.json.lock`), JSON.stringify({ pid: 99999999 }), 'utf8');
+
+      const runChild = (target) => new Promise((resolveChild) => {
+        const ch = spawn(process.execPath, [join(REPO_ROOT, 'runner/donegate.mjs'), 'zoom', target, '--root', REPO_ROOT], {
+          cwd: REPO_ROOT,
+          env: { ...process.env, DONEGATE_COCKPIT_CACHE_DIR: cacheDir }
+        });
+        let out = '';
+        ch.stdout.on('data', (d) => { out += d.toString(); });
+        ch.on('close', (code) => resolveChild({ code, out }));
+      });
+
+      const results = await Promise.all([runChild('01'), runChild('02'), runChild('03'), runChild('rules')]);
+      for (const r of results) expect(r.code).toBe(0);
+      const remainingLocks = readdirSync(cacheDir).filter((f) => f.endsWith('.lock'));
+      expect(remainingLocks).toEqual([]);
+
+      const skillsZoom = dispatchCommand(['zoom', 'skill/check-skills.mjs'], REPO_ROOT);
+      expect(skillsZoom.exitCode).toBe(0);
+      expect(skillsZoom.stdout).toContain('function parseFrontmatter(text)');
+      expect(skillsZoom.stdout).toContain('function checkSkill(dir)');
+      expect(skillsZoom.stdout).toContain('function runCheck(root)');
+
+      const cmdZoom = dispatchCommand(['zoom', 'install-dsh-web.cmd'], REPO_ROOT);
+      expect(cmdZoom.exitCode).toBe(0);
+      expect(cmdZoom.stdout).toContain('skill/verify-install.mjs');
+      expect(cmdZoom.stdout).not.toContain('dp0skill/verify-install.mjs');
+      expect(cmdZoom.stdout).not.toContain('Node.js');
+
+      const verZoom = dispatchCommand(['zoom', 'skill/verify-install.mjs'], REPO_ROOT);
+      expect(verZoom.stdout).toContain('runner/atlas/index.mjs');
+      expect(verZoom.stdout).toContain('runner/dsh/workflow-deps.mjs');
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('闭世界引用完整性：zoom all、单测文件、根配置文件均可直接下钻，且无 export re-export 或 export cmd 冗余前缀', () => {
+    const allRes = dispatchCommand(['zoom', 'all'], REPO_ROOT);
+    expect(allRes.exitCode).toBe(0);
+    expect(allRes.stdout).toContain('[01]');
+    expect(allRes.stdout).toContain('[05]');
+
+    const testZoom = dispatchCommand(['zoom', 'tests/verify-install.test.mjs', 'stryker.config.mjs', 'vitest.config.mjs'], REPO_ROOT);
+    expect(testZoom.exitCode).toBe(0);
+    expect(testZoom.stdout).toContain('=== [Zoom-2 单文件结构大纲] tests/verify-install.test.mjs ===');
+    expect(testZoom.stdout).toContain('=== [Zoom-2 单文件结构大纲] stryker.config.mjs ===');
+    expect(testZoom.stdout).toContain('=== [Zoom-2 单文件结构大纲] vitest.config.mjs ===');
+
+    const dshIdxZoom = dispatchCommand(['zoom', 'runner/dsh/index.mjs'], REPO_ROOT);
+    expect(dshIdxZoom.exitCode).toBe(0);
+    expect(dshIdxZoom.stdout).not.toContain('export re-export');
+
+    const cmdZoom = dispatchCommand(['zoom', 'install-dsh-web.cmd'], REPO_ROOT);
+    expect(cmdZoom.stdout).toContain('批处理执行步骤');
+    expect(cmdZoom.stdout).not.toContain('export cmd:');
+
+    const pfZoom = dispatchCommand(['zoom', 'skill/preflight-subagent.mjs'], REPO_ROOT);
+    expect(pfZoom.stdout).toContain('--expect-branch');
+    expect(pfZoom.stdout).toContain('--node');
+    expect(pfZoom.stdout).toContain('--target-node');
   });
 });

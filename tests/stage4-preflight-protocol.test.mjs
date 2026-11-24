@@ -25,6 +25,14 @@ describe('Stage 4 · 子代理工作树失联 1 秒熔断守卫 (preflight) 与 
       const rStamp = dispatchCommand(['preflight', '--stamp-lease', '--expect-branch', 'feat/card-a'], wtGood);
       expect(rStamp.exitCode).toBe(0);
 
+      mkdirSync(join(wtGood, 'contracts/c1'), { recursive: true });
+      writeFileSync(join(wtGood, 'contracts/c1/contract.json'), JSON.stringify({ id: 'c1', scope: ['src/'], obligations: [] }));
+      const rNodeAlias1 = dispatchCommand(['preflight', '--node', 'c1', '--json'], wtGood);
+      const rNodeAlias2 = dispatchCommand(['preflight', '--target-node', 'c1', '--json'], wtGood);
+      expect(rNodeAlias1.exitCode).toBe(0);
+      expect(rNodeAlias2.exitCode).toBe(0);
+      expect(JSON.parse(rNodeAlias1.stdout).nodeId).toBe('c1');
+      expect(JSON.parse(rNodeAlias2.stdout).nodeId).toBe('c1');
       const rOk = dispatchCommand(['preflight', '--json'], wtGood);
       expect(rOk.exitCode).toBe(0);
       const parsedOk = JSON.parse(rOk.stdout);

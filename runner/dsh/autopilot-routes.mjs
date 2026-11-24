@@ -1,9 +1,10 @@
 // 过夜挂机 HTTP 子路由：承接单工作流挂机与项目看板多组件拓扑挂机（Campaign Autopilot）
-import { approveAutopilotHumanGate, loadAutopilotCheckpoint } from './autopilot-state.mjs';
+import { approveAutopilotHumanGate, loadAutopilotCheckpoint, stopAutopilotRun } from './autopilot-state.mjs';
 import {
   approveAndResumeCampaignAutopilot,
   executeProjectCampaignAutopilot,
-  loadCampaignCheckpoint
+  loadCampaignCheckpoint,
+  stopCampaignAutopilot
 } from './campaign-autopilot.mjs';
 import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
 
@@ -88,6 +89,14 @@ export async function handleAutopilotSubRoute(req, res, cleanPath, root, readJso
       return true;
     }
     sendJson(res, 200, app);
+    return true;
+  }
+
+  if (cleanPath === '/autopilot/stop' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const singleOut = stopAutopilotRun(root, { runId: body.runId || null, by: body.by || '业主', note: body.note });
+    const campOut = stopCampaignAutopilot(root, { campaignId: body.campaignId || null, by: body.by || '业主', note: body.note });
+    sendJson(res, 200, { ok: true, stopped: true, autopilot: singleOut.checkpoint, campaign: campOut.campaign });
     return true;
   }
 

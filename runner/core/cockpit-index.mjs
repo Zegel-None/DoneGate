@@ -1,6 +1,5 @@
-// 零魔法数字主控三级按需变焦索引器（含 tmpdir 指纹缓存 × 画布双生拓扑 × 作用域 ADR 挂载，<= 350 行）
-import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+// 零魔法数字主控三级按需变焦索引器（闭世界文件注册 × 单飞缓存委托 × 作用域 ADR 挂载，<= 350 行）
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadHygieneBudgets } from '../../skill/commit-hygiene-metrics.mjs';
@@ -10,17 +9,13 @@ import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { ATLAS_SUBPACKS, buildProjectAtlas } from '../atlas/contract.mjs';
 import { extractHttpRouteContracts } from './barrel-stub-enrich.mjs';
 import { collectGapsList } from './cmd-inspect.mjs';
+import { CK_SKIP_DIRS, listRootRegularFiles, runWithSingleflightCache } from './cockpit-cache.mjs';
 import { buildSingleFileOutline, extractFullHeaderComment } from './cockpit-file-outline.mjs';
 import { computeContractKneedleHubs, kneedleElbowCount } from './cockpit-hubs.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs';
 import { computeProjectStatus } from './gates.mjs';
 
 export { kneedleElbowCount };
-
-const CK_CACHE_SCHEMA = 'cockpit-idx-v4';
-const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools', 'contracts', 'decisions'];
-const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
-const CK_ROOT_CFGS = ['thresholds.json', 'adapters.registry.json', 'ledger.json', 'batches.jsonl', 'package.json', 'install-dsh-web.cmd'];
 
 const CK_ADR_KEYWORD_HINTS = [
   { test: (r) => r.includes('runner/dsh') || r.includes('DeepSeek-Harness'), dom: '02', cid: 'dsh-orchestrator' },
@@ -29,28 +24,6 @@ const CK_ADR_KEYWORD_HINTS = [
   { test: (r) => r.includes('skill/adapters'), dom: '05', cid: 'masonry-adapters' },
   { test: (r) => r.includes('wiring-baseline') || r.includes('capabilities.json') || r.includes('advisory'), dom: '05', cid: 'brick-observations' }
 ];
-
-function ckComputeQuickRepoFingerprint(root, gitHead) {
-  let count = 0, maxMtime = 0, totalSize = 0;
-  const bump = (abs) => {
-    try {
-      const st = statSync(abs);
-      count++;
-      totalSize += st.size;
-      if (st.mtimeMs > maxMtime) maxMtime = Math.floor(st.mtimeMs);
-    } catch { /* ignore */ }
-  };
-  for (const cfg of [...CK_ROOT_CFGS, 'INTENT.md', 'CONSTRAINTS.md']) {
-    const p = join(root, cfg);
-    if (existsSync(p)) bump(p);
-  }
-  for (const d of [...CK_SCAN_DIRS, 'tests']) {
-    const absD = join(root, d);
-    if (!existsSync(absD)) continue;
-    for (const f of walk(absD, { skipDirs: CK_SKIP_DIRS }).files) bump(f);
-  }
-  return sha256(`${CK_CACHE_SCHEMA}|${root}|${gitHead}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
-}
 
 function ckRegisterPathOwners(rel, graphNodes, allFiles, fileOwners) {
   allFiles.add(rel);
@@ -62,7 +35,16 @@ function ckRegisterPathOwners(rel, graphNodes, allFiles, fileOwners) {
   }
 }
 
-function ckCollectProjectFileOwners(root, graphNodes) {
+function ckCollectHsNodeModulePaths(nodes, out) {
+  for (const nd of nodes || []) {
+    for (const m of nd.modules || []) {
+      if (m.path) out.push(m.path);
+    }
+    if (nd.subgraph?.nodes) ckCollectHsNodeModulePaths(nd.subgraph.nodes, out);
+  }
+}
+
+function ckCollectProjectFileOwners(root, graphNodes, hsNodes) {
   const allFiles = new Set(), fileOwners = new Map();
   for (const n of graphNodes) {
     for (const sf of n.stub?.scopeFiles || []) ckRegisterPathOwners(sf, graphNodes, allFiles, fileOwners);
@@ -74,8 +56,11 @@ function ckCollectProjectFileOwners(root, graphNodes) {
       ckRegisterPathOwners(absF.slice(root.length + 1).replace(/\\/g, '/'), graphNodes, allFiles, fileOwners);
     }
   }
-  for (const cfg of CK_ROOT_CFGS) {
-    if (existsSync(join(root, cfg))) ckRegisterPathOwners(cfg, graphNodes, allFiles, fileOwners);
+  for (const cfg of listRootRegularFiles(root)) ckRegisterPathOwners(cfg, graphNodes, allFiles, fileOwners);
+  const hsPaths = [];
+  ckCollectHsNodeModulePaths(hsNodes, hsPaths);
+  for (const hp of hsPaths) {
+    if (existsSync(join(root, hp))) ckRegisterPathOwners(hp, graphNodes, allFiles, fileOwners);
   }
   return { allFiles, fileOwners };
 }
@@ -188,12 +173,16 @@ function ckAppendRouteEntry(routesByFile, r) {
   if (!routesByFile.get(r.file).includes(label)) routesByFile.get(r.file).push(label);
 }
 
-function ckCollectUncoveredCodeFiles(root, allFiles, covered) {
-  const uncovRaw = new Map();
+function ckReadUncoveredCodeEntries(root, allFiles, covered) {
+  const entries = [];
+  let hasDgPrefix = false;
   for (const f of allFiles) {
-    if (!covered.has(f) && /\.(?:mjs|cjs|js|ts)$/.test(f)) uncovRaw.set(f, readMaybe(join(root, f)) || '');
+    if (covered.has(f) || !/\.(?:mjs|cjs|js|ts)$/.test(f)) continue;
+    const raw = readMaybe(join(root, f)) || '';
+    if (raw.includes('/donegate/api')) hasDgPrefix = true;
+    entries.push([f, raw]);
   }
-  return uncovRaw;
+  return { entries, hasDgPrefix };
 }
 
 function ckBuildRoutesByFile(root, graphNodes, allFiles) {
@@ -202,7 +191,10 @@ function ckBuildRoutesByFile(root, graphNodes, allFiles) {
     for (const sf of n.stub?.scopeFiles || []) covered.add(sf);
     for (const r of n.stub?.httpRoutes || []) ckAppendRouteEntry(routesByFile, r);
   }
-  for (const r of extractHttpRouteContracts(ckCollectUncoveredCodeFiles(root, allFiles, covered))) ckAppendRouteEntry(routesByFile, r);
+  const { entries, hasDgPrefix } = ckReadUncoveredCodeEntries(root, allFiles, covered);
+  for (const [f, raw] of entries) {
+    for (const r of extractHttpRouteContracts(new Map([[f, raw]]), { hasDgPrefix })) ckAppendRouteEntry(routesByFile, r);
+  }
   return routesByFile;
 }
 
@@ -227,20 +219,14 @@ function ckEnrichDomainTree(nodes, fileOutlines, fileOwners, hasIntentFile) {
   }));
 }
 
-export function buildCockpitGraphIndex(projectRoot) {
-  const root = resolve(projectRoot);
-  const gitHead = (spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim() || 'uncommitted';
-  const cacheFile = join(tmpdir(), `dg-${CK_CACHE_SCHEMA}-${ckComputeQuickRepoFingerprint(root, gitHead)}.json`);
-  const cached = existsSync(cacheFile) ? readJsonStrict(cacheFile) : null;
-  if (cached?.ok && cached.value?.root === root) return cached.value;
-
+function ckComputeFullIndex(root, gitHead) {
   const atlas = buildProjectAtlas(root);
   const graph = discoverHermeticGraph(root);
   const status = computeProjectStatus(root);
   const gaps = collectGapsList(root, status);
   const hsNodes = atlas.workbench?.hostSandbox?.nodes || [];
   const gNodes = graph.nodes || [];
-  const { allFiles, fileOwners } = ckCollectProjectFileOwners(root, gNodes);
+  const { allFiles, fileOwners } = ckCollectProjectFileOwners(root, gNodes, hsNodes);
   const routesByFile = ckBuildRoutesByFile(root, gNodes, allFiles);
   const fileOutlines = {};
   for (const f of [...allFiles].sort()) {
@@ -249,7 +235,7 @@ export function buildCockpitGraphIndex(projectRoot) {
   }
   const hasIntentFile = existsSync(join(root, 'INTENT.md'));
   const intentRaw = readMaybe(join(root, 'INTENT.md')) || '', constraintsRaw = readMaybe(join(root, 'CONSTRAINTS.md')) || '';
-  const built = {
+  return {
     root, atlas, graph, status, gaps, gitHead,
     hasDecisionsDir: existsSync(join(root, 'decisions')),
     hasThresholdsFile: existsSync(join(root, 'thresholds.json')),
@@ -264,10 +250,10 @@ export function buildCockpitGraphIndex(projectRoot) {
     liveMeta: ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines),
     fileOutlines
   };
-  try {
-    const tmpWrite = `${cacheFile}.${process.pid}.tmp`;
-    writeFileSync(tmpWrite, JSON.stringify(built), 'utf8');
-    renameSync(tmpWrite, cacheFile);
-  } catch { /* ignore tmpdir write contention */ }
-  return built;
+}
+
+export function buildCockpitGraphIndex(projectRoot) {
+  const root = resolve(projectRoot);
+  const gitHead = (spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim() || 'uncommitted';
+  return runWithSingleflightCache(root, gitHead, () => ckComputeFullIndex(root, gitHead));
 }

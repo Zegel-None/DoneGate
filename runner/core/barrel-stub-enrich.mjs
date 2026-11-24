@@ -7,7 +7,7 @@ const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'];
 const REEXPORT_SIG_RE = /^export\s+(\*(?:\s+as\s+([A-Za-z_$][\w$]*))?|\{[\s\S]+?\})(?:\s+from\s+['"]([^'"]+)['"])?\s*;?$/;
 const ROUTE_FULL_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)?(\/(?:donegate\/api|api)\/[A-Za-z0-9/_:${}.-]+)\1|\/(\^?\\\/(?:donegate\\\/api|api)\\\/[^\s/;]+)\/[gimsuy]*/g;
 const ROUTE_SUB_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)(\/[A-Za-z0-9/_:${}.-]+)\1|(?:sub|p|rel|subPath|subRoute|routePath|relPath|apiPath|pathname|route|cleanPath)\s*[!=]==?\s*(['"`])(\/[A-Za-z0-9/_:${}.-]+)\4/g;
-const SERVER_SIGNAL_RE = /\b(?:req\.method|req\.url|res\.writeHead|res\.end|createServer|pathname|router\.|app\.(?:get|post|put|delete))\b/;
+const SERVER_SIGNAL_RE = /\b(?:req\.method|req\.url|res\.writeHead|res\.end|createServer|router\.|app\.(?:get|post|put|delete))\b/;
 const compactSig = (t) => t.replace(/\s+/g, ' ').replace(/\s*([(),:;])\s*/g, '$1 ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
 
 function findBal(text, startIdx, openCh, closeCh) {
@@ -206,8 +206,8 @@ export function enrichBarrelFacadeExports(facadeFiles, rawByFile, fileMetrics, s
 function normRoute(rawRoute, prefix = '') {
   const full = prefix && rawRoute.startsWith('/') && !rawRoute.startsWith('/donegate/api') && !rawRoute.startsWith('/api/') ? `${prefix}${rawRoute}` : String(rawRoute || '');
   const clean = full.replace(/\\\//g, '/').replace(/^\^+|\$+$/g, '').replace(/\$\{([A-Za-z_$][\w$]*)(?:[^}]*)\}/g, ':$1').replace(/\$\{[^}]+\}|\(\?:[^)]+\)|\([^)]+\)/g, ':param').split(/[?#]/)[0].replace(/\/+$/, '');
-  const m = clean.match(/^(\/(?:donegate\/api|api)\/[A-Za-z0-9/_:-]+)/);
-  return (m && !/\.(?:mjs|js|ts|cjs|css|png|svg)$/i.test(m[1])) ? m[1] : null;
+  const m = clean.match(/^(\/(?:donegate\/api|api)\/[A-Za-z0-9/_:.-]+)/);
+  return (m && !/\.(?:mjs|ts|cjs|css|png|svg)$/i.test(m[1])) ? m[1] : null;
 }
 
 function inferMethods(cleanSrc, matchIdx, nextIdx) {
@@ -264,9 +264,9 @@ function bseRecordRouteHits(cleanSrc, hits, pickRoute, relFile, seen) {
   }
 }
 
-export function extractHttpRouteContracts(rawByFile) {
+export function extractHttpRouteContracts(rawByFile, opts = {}) {
   const seen = new Map();
-  const cardHasDgPrefix = [...rawByFile.values()].some((v) => v && v.includes('/donegate/api'));
+  const cardHasDgPrefix = Boolean(opts.hasDgPrefix) || [...rawByFile.values()].some((v) => v && v.includes('/donegate/api'));
   for (const [relFile, raw] of [...rawByFile.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const prep = bsePrepareRouteSource(relFile, raw);
     if (!prep) continue;

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 过夜挂机确定性持久状态机（checkpoint 断点续跑 + 三重防烧钱熔断 + human-gate 挂起早间拍板简报，<= 235 行）
+// 过夜挂机确定性持久状态机（checkpoint 断点续跑 + 三重防烧钱熔断 + human-gate 挂起/手动停机与早间简报，<= 260 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +11,18 @@ export const AUTOPILOT_STATES = Object.freeze({
   RUNNING: 'RUNNING',
   SUSPENDED_HUMAN_GATE: 'SUSPENDED_HUMAN_GATE',
   TRIPPED_CIRCUIT_BREAKER: 'TRIPPED_CIRCUIT_BREAKER',
+  STOPPED: 'STOPPED',
   COMPLETED: 'COMPLETED'
 });
+
+export const AUTOPILOT_BREAKER_CODES = Object.freeze({
+  MAX_LOOPS_EXCEEDED: 'MAX_LOOPS_EXCEEDED',
+  ENV_OR_PROTOCOL_FAULT: 'ENV_OR_PROTOCOL_FAULT',
+  WRITE_SCOPE_VIOLATION: 'WRITE_SCOPE_VIOLATION',
+  DIRTY_WORKTREE_FAULT: 'DIRTY_WORKTREE_FAULT'
+});
+
+export const AUTOPILOT_DEFAULT_MAX_ENV_FAULTS = 2;
 
 export function isHumanGateNode(node) {
   if (!node || typeof node !== 'object') return false;
@@ -75,6 +85,7 @@ export function buildMorningBriefMarkdown(cp) {
     COMPLETED: '✅ 已自动跑通收工',
     SUSPENDED_HUMAN_GATE: '⏸ 停在人工闸门等你拍板',
     TRIPPED_CIRCUIT_BREAKER: '🛑 触发防烧钱熔断护栏已安全停机',
+    STOPPED: '⏹ 已手动停止挂机（已完成断点已保留）',
     RUNNING: '⚡ 正在后台持续推进',
     PREFLIGHT: '🔍 预检阶段'
   }[cp.state] || cp.state;
@@ -123,9 +134,11 @@ export function saveAutopilotCheckpoint(projectRoot, cp) {
     ? `⏸ 挂机已停在人工闸门「${cp.pendingHumanGate?.title}」（已完成 ${cp.completedNodes.length} 步），批准后从断点续跑`
     : (cp.state === AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER
         ? `🛑 触发熔断 [${cp.breaker?.code}]：${cp.breaker?.reason}`
-        : (cp.state === AUTOPILOT_STATES.COMPLETED
-            ? `🌅 挂机圆满完成：${cp.packName}（过关门禁 ${cp.passedGates}/${Math.max(cp.totalGates, 1)}）`
-            : `⚡ 挂机推进中：已完成 ${cp.completedNodes.length} 个节点`));
+        : (cp.state === AUTOPILOT_STATES.STOPPED
+            ? `⏹ 挂机已手动停止：${cp.packName}（已保留 ${cp.completedNodes.length} 个节点断点）`
+            : (cp.state === AUTOPILOT_STATES.COMPLETED
+                ? `🌅 挂机圆满完成：${cp.packName}（过关门禁 ${cp.passedGates}/${Math.max(cp.totalGates, 1)}）`
+                : `⚡ 挂机推进中：已完成 ${cp.completedNodes.length} 个节点`)));
   writeFileSync(paths.checkpointPath, JSON.stringify(cp, null, 2) + '\n', 'utf8');
   writeFileSync(paths.briefPath, briefMd, 'utf8');
   writeFileSync(paths.activePtrPath, JSON.stringify({
@@ -176,6 +189,32 @@ export function tripAutopilotBreaker(projectRoot, cp, { code, nodeId = null, rea
   return saveAutopilotCheckpoint(projectRoot, cp);
 }
 
+export function stopAutopilotRun(projectRoot, { runId = null, by = '业主', note = '手动停止挂机（保留已完成节点断点）' } = {}) {
+  const cp = loadAutopilotCheckpoint(projectRoot, runId);
+  if (!cp) return { ok: true, exitCode: 0, noop: true, runId: null, checkpoint: null };
+  if (cp.state !== AUTOPILOT_STATES.COMPLETED) {
+    cp.state = AUTOPILOT_STATES.STOPPED;
+    cp.stoppedInfo = { by, note, at: new Date().toISOString() };
+    delete cp.briefMarkdown;
+    delete cp.checkpointFile;
+    saveAutopilotCheckpoint(projectRoot, cp);
+  }
+  return { ok: true, exitCode: 0, noop: false, runId: cp.runId, checkpoint: cp };
+}
+
+export function resumeAutopilotBreaker(projectRoot, { runId = null, by = '业主', note = '已修复阻塞项从断点恢复' } = {}) {
+  const cp = loadAutopilotCheckpoint(projectRoot, runId);
+  if (!cp) return { ok: false, exitCode: 3, reason: '找不到待恢复的挂机检查点' };
+  cp.breaker = null;
+  cp.consecEnvFaults = 0;
+  cp.state = AUTOPILOT_STATES.RUNNING;
+  cp.resumedInfo = { by, note, at: new Date().toISOString() };
+  delete cp.briefMarkdown;
+  delete cp.checkpointFile;
+  saveAutopilotCheckpoint(projectRoot, cp);
+  return { ok: true, exitCode: 0, runId: cp.runId, cursorNodeId: cp.cursorNodeId, checkpoint: cp };
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const pull = (k, d = null) => {
@@ -188,13 +227,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const root = resolve(pull('--root', process.cwd()));
   const runId = pull('--run-id', null);
   if (argv.includes('--approve')) {
-    const nodeId = pull('--approve', null);
-    const r = approveAutopilotHumanGate(root, { runId, nodeId, by: pull('--by', '业主') });
-    if (!r.ok) {
-      console.error(r.reason);
-      process.exit(r.exitCode);
-    }
+    const r = approveAutopilotHumanGate(root, { runId, nodeId: pull('--approve', null), by: pull('--by', '业主') });
+    if (!r.ok) { console.error(r.reason); process.exit(r.exitCode); }
     console.log(`已批准人工闸门 ${r.approvedNodeId}（runId=${r.runId}），可继续从断点续跑。`);
+    process.exit(0);
+  }
+  if (argv.includes('--stop')) {
+    const r = stopAutopilotRun(root, { runId, by: pull('--by', '业主') });
+    console.log(r.checkpoint ? `已停止挂机单 ${r.runId}（断点已保留）。` : '当前无运行中的挂机单。');
+    process.exit(0);
+  }
+  if (argv.includes('--resume')) {
+    const r = resumeAutopilotBreaker(root, { runId, by: pull('--by', '业主') });
+    if (!r.ok) { console.error(r.reason); process.exit(r.exitCode); }
+    console.log(`已清除挂机单 ${r.runId} 熔断锁（cursor=${r.cursorNodeId || 'entry'}），可继续续跑。`);
     process.exit(0);
   }
   const cp = loadAutopilotCheckpoint(root, runId);

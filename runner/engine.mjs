@@ -1,7 +1,7 @@
 // L0 判定核 · pendingRecheck 传播与影响面引擎（D01 · 零第三方依赖）。
 // 用法：
 //   node runner/engine.mjs --root <项目根> --changed <file1,file2> [--observation <observation.json>] [--json]
-//   node runner/engine.mjs                   （无参数时提示用法并退 3，夹具见 runner/engine-fixtures.mjs）
+//   node runner/engine.mjs                   （无参数时提示用法并退 3，夹具见 runner/donegate-fixtures.mjs）
 // 退出码（§八 四值）：0 成功算出影响面；2 契约/观测 JSON 损坏或结构非法；3 根目录/观测文件读不出或参数缺失。
 //
 // 诚实边界（按 adr/007 降一档采信）：
