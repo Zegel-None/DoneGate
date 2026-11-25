@@ -136,7 +136,7 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 2. **同类横扫**：按同一根因排查其余脚本、卡片、适配器与模块，一次清净。
 3. **补独立门禁**：编写先红后绿的复现检查，运行 `node <DoneGate根>/skill/check-escapes.mjs --record ...` 记入 `.donegate/escapes.jsonl`。
 4. **全仓自检**：提交前必跑 `node <DoneGate根>/skill/check-escapes.mjs --self-check --project .`，未全绿禁 `git commit`。
-5. **反馈上游**：若盲区属 DoneGate 自身，征得用户同意后运行 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏草稿，可用 `gh issue create --repo q862877400-ux/DoneGate` 提交。
+5. **反馈上游**：若盲区属 DoneGate 自身，征得用户同意后运行 `node <DoneGate根>/skill/check-escapes.mjs --report-template` 生成脱敏草稿，可用 `gh issue create --repo Zegel-None/DoneGate` 提交。
 
 ## 九、实时进度播报（机械现算，禁手编）
 

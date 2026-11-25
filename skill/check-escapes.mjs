@@ -25,7 +25,7 @@ import { cleanScratchDir } from './check-commit-hygiene.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const REPO_URL = 'https://github.com/q862877400-ux/DoneGate';
+const REPO_URL = 'https://github.com/Zegel-None/DoneGate';
 const COMMUNITY_MOTTO = '众人拾柴火焰高——你踩过的坑反馈上来，修成一条新门禁，下次拉取更新时所有人的成果都能直接为你守门。欢迎提个 Issue，你也来添一把柴！';
 
 const argv = process.argv.slice(2);
@@ -315,7 +315,7 @@ function printReportTemplate() {
     '### 3. 最小复现步骤\n1. ...\n2. ...\n\n### 4. 希望补上什么门禁\n（如果有根因或单条检测思路，欢迎一起贴上）\n',
     `### 环境信息\n- DoneGate: ${pkgVer}\n- Node: ${process.version}\n- OS: ${process.platform} (${process.arch})\n\`\`\`\n`].join('\n'));
   console.log(ghReady
-    ? '本机 `gh` CLI 已登录 GitHub。经你确认后，Agent 可直接运行：\n  gh issue create --repo q862877400-ux/DoneGate --title "..." --body "..."'
+    ? '本机 `gh` CLI 已登录 GitHub。经你确认后，Agent 可直接运行：\n  gh issue create --repo Zegel-None/DoneGate --title "..." --body "..."'
     : `直接打开浏览器提交即可：${REPO_URL}/issues/new`);
   console.log(`\n${COMMUNITY_MOTTO}`);
 }

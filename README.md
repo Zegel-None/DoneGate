@@ -26,7 +26,7 @@
 
 打开你正在用的 **DeepSeek Harness (`dsh web`)**（或 Claude Code / Cursor / Windsurf / Trae 等具备终端执行能力的 Agent），把下面整段引用块复制发给它：
 
-> 请帮我在本机全自动安装并真机验真 **DoneGate（完结门）**，仓库地址：`https://github.com/q862877400-ux/DoneGate.git`。我是零编程基础用户，**假设我这台电脑什么开发环境都没装过**，请你全程代劳并严格遵守以下五条铁律：
+> 请帮我在本机全自动安装并真机验真 **DoneGate（完结门）**，仓库地址：`https://github.com/Zegel-None/DoneGate.git`。我是零编程基础用户，**假设我这台电脑什么开发环境都没装过**，请你全程代劳并严格遵守以下五条铁律：
 >
 > 1. **先探测裸机环境，缺啥自动补啥（别让我手动装软件或配环境变量）**：
 >    - 先检查本机是否有 `node`（要求 `>= v18.20`，推荐 `v22 LTS`）、`npm` 与 `git`。
