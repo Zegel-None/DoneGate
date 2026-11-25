@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DoneGate V4 · 十二条命令统一零依赖入口（四值退出码规范）及主控三级变焦驾驶舱、密封契约切片与微门禁快捷入口
+// DoneGate V4 · 十二条命令统一零依赖入口（四值退出码规范）及主控三级变焦驾驶舱、开源图谱追踪、密封契约切片与微门禁快捷入口
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
 // 快捷入口转发映射：brief & zoom -> runner/core/cockpit-commands.mjs | impact -> runner/core/impact-radar.mjs | slice & check-node -> runner/core/commands-b.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
@@ -18,7 +18,7 @@ const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
-  'stubs', 'decisions', 'full'
+  'stubs', 'decisions', 'full', 'source', 'trace'
 ]);
 
 const HELP_TEXT = [
@@ -39,13 +39,13 @@ const HELP_TEXT = [
   '  verify apply <packDir> --verdict <verdict.json>   记录门 5 裁决（不过退 1，材料被篡改退 2，材料不全退 3）',
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
-  '主控三级变焦驾驶舱、密封契约切片与子代理微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
-  '· brief [--json] [--out <path>]                 生成主控 Zoom-0 零魔法数字全局根视口（画布双生域 + Kneedle 承重接口 + 寻址句柄）',
-  '· zoom <域|契约|文件|rules|tests|gaps|all> [--stubs] [--decisions] [--full [词]]   三级按需确定性下钻寻址（穿透门面与内联脚本）',
+  '主控三级变焦驾驶舱、开源图谱追踪、密封契约切片与子代理微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
+  '· brief [--json] [--out <path>]                 生成主控 Zoom-0 全局根视口（画布双生域 + Kneedle 承重接口 + CBM 图谱统计）',
+  '· zoom <域|契约|文件[:起-止]|符号名|rules|tests|gaps|all> [--stubs] [--decisions] [--full [词]] [--source]   图谱下钻、双向调用链与末步源码直读',
   '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
-  '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/导出符号影响面雷达（含 1-Hop 单测自动推导）',
+  '· impact <file-or-anchor...> [--json]           跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断 1-Hop 单测与 ADR 预警）',
   '· preflight [--stamp-lease] [--expect-branch <b>] [--node <id> | --target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
@@ -105,7 +105,8 @@ function dgCmdSubagentTools(cmd, root, pos, flags) {
   if (cmd === 'zoom') {
     return cmdZoom(root, {
       targets: pos.slice(1), stubs: Boolean(flags.stubs),
-      decisions: Boolean(flags.decisions), full: Boolean(flags.full), json: Boolean(flags.json)
+      decisions: Boolean(flags.decisions), full: Boolean(flags.full),
+      source: Boolean(flags.source), trace: Boolean(flags.trace), json: Boolean(flags.json)
     });
   }
   if (cmd === 'lint-edit') return cmdLintEdit(root, { files: pos.slice(1), json: Boolean(flags.json) });
@@ -218,10 +219,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
     || dgCmdStatusAndGovernance(cmd, sub, root, pos, flags);
   if (routed) return routed;
 
-  return {
-    exitCode: 3,
-    stderr: '未知命令。十二条命令：init | contract new | contract freeze | check | teeth | status | graph | gaps | handover | verify pack | verify apply | retire（快捷入口：brief | zoom | slice | check-node | lint-edit | impact | preflight）'
-  };
+  return { exitCode: 3, stderr: `未知命令：${pos.slice(0, 2).join(' ')}\n运行 node runner/donegate.mjs --help 查看全部十二条命令。` };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

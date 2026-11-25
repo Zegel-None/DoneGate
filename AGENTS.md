@@ -1,6 +1,6 @@
-# AGENTS.md · AI 编码代理安装验真、三级变焦冷启动、局部切片与守门规范
+# AGENTS.md · AI 编码代理安装验真、三步聚焦冷启动、局部切片与守门规范
 
-欢迎接入 **DoneGate（完结门）**。任何零记忆 AI 编码代理（DeepSeek Harness、Claude Code、Cursor、Codex、Windsurf、Trae、Gemini 等）替零编程基础的 Vibecoder 安装配置本工具、治理用户项目或扩展本仓时，**必须遵守以下防撒谎安装验真、主控三级变焦冷启动与工程守门纪律**。
+欢迎接入 **DoneGate（完结门）**。任何零记忆 AI 编码代理（DeepSeek Harness、Claude Code、Cursor、Codex、Windsurf、Trae、Gemini 等）替零编程基础的 Vibecoder 安装配置本工具、治理用户项目或扩展本仓时，**必须遵守以下防撒谎安装验真、三步聚焦图谱寻路与工程守门纪律**。
 
 ## 0. 替用户安装完结门时的第一铁律：裸机探测 + 真机防伪回执
 
@@ -14,19 +14,20 @@
      ```
    - 只要退出码不为 `0`，或未打印 `RESULT: PASS` 与 `DG-INSTALL-OK-` 防伪码，**严禁向用户声称「已安装完成」**；必须排障重跑至全绿，并将输出的 **【✅ 完结门安装验真回执】框** 原样贴给用户。
 
-## 1. 项目施工第一铁律：主控三级变焦掌控全局 · 区分双模式闭环
+## 1. 项目施工第一铁律：三步聚焦掌控全局 · 区分双模式闭环
 
-1. **主控冷启动三级按需变焦（禁一进仓盲扫全仓源码文件；多目标查询优先合并为单条命令）**：
-   新开会话的主控代理或开源协作者首先执行 `Zoom-0` 全局根视口简报（实时统计模块总数、导出符号与 HTTP 路由规模），再按信息气味做确定性 `O(1)` 下钻：
+1. **三步聚焦按需寻路（禁一进仓盲扫全仓源码或全仓盲 `grep`；多目标查询优先合并为单条命令）**：
+   新开会话的主控代理或开源协作者先用内置三步聚焦驾驶舱（自动对接 `codebase-memory-mcp` MIT 持久化 SQLite 图谱）完成全局定向、多跳缩圈，**最后一步再对锁定的 2~5 个目标文件精确行号直读源码真源**：
    ```bash
-   # Zoom-0：生成与「完结门」画布 1:1 同构的五大业务域、跨域 Kneedle 承重接口与实时阈值
+   # 第一步 · 全局根视口与多域/真源并列展开（Zoom-0 / Zoom-1）：
    node runner/donegate.mjs brief
-   # Zoom-1：支持单条命令一次展开多个业务域（如 zoom 01 02 03），或查规则阈值/单测/缺口字典
-   node runner/donegate.mjs zoom <域编号 01..05 | all | rules | tests | gaps> [更多域...]
-   # Zoom-2：支持单条命令一次穿透多个文件，查看全签名、CLI 参数、内联脚本函数、HTTP 路由与跨脚本路径
-   node runner/donegate.mjs zoom <文件路径1> [文件路径2...]
-   # 跨文件波及面雷达：修改任意符号、HTTP 路由、DOM ID 或配置文件前自动推导 1-Hop 关联单测
+   node runner/donegate.mjs zoom 01 02 03 04 05
+   node runner/donegate.mjs zoom rules tests gaps
+   # 第二步 · 开源图谱文件/符号追踪与跨文件波及面雷达（Zoom-2 + CBM 双向 2-Hop 调用链 + 无截断 1-Hop 单测）：
+   node runner/donegate.mjs zoom <文件路径或函数符号名1> [更多文件或符号...]
    node runner/donegate.mjs impact <目标文件、符号、HTTP 路由、DOM ID 或配置文件名>
+   # 第三步 · 最后一步按行直读真实源码（锁准具体文件与 [L起-L止] 区间后必看真源，禁靠大纲盲猜细微分支）：
+   node runner/donegate.mjs zoom <文件路径[:起始行-结束行] | 函数符号名> --source
    ```
 2. **场景 A · 直接开发或扩展本公开仓库（零契约轻量模式）**：
    本公开分发仓默认不含私有契约目录，修改本仓源码时**无需传入 `<nodeId>`**，直接按以下闭环施工：

@@ -1,10 +1,10 @@
-// 主控零魔法数字三级变焦驾驶舱（donegate brief + donegate zoom + 1-Hop 单测反推）端到端单测
+// 主控零魔法数字三级变焦驾驶舱（donegate brief + donegate zoom + CBM 图谱底座 + 末步直读源码 + 1-Hop 单测反推）端到端单测
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { kneedleElbowCount } from '../runner/core/index.mjs';
+import { kneedleElbowCount, resolveCbmBinary } from '../runner/core/index.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -224,6 +224,45 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
       expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('atlas-workbench'));
       expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('publish-tooling'));
       expect(contracts[contracts.length - 1]).toBe('publish-tooling');
+    }
+  });
+
+  it('三步聚焦新底座：CBM 图谱符号 2-Hop 追踪、路径直连 ADR 挂载、多主题容错批处理与 --source 末步直读源码', () => {
+    const multiTopics = dispatchCommand(['zoom', 'rules', 'tests', 'gaps'], REPO_ROOT);
+    expect(multiTopics.exitCode).toBe(0);
+    expect(multiTopics.stdout).toContain('"thresholds"');
+    expect(multiTopics.stdout).toContain('=== 全仓单测与夹具目录');
+    expect(multiTopics.stdout).toContain('=== 本地分支雷达 ===');
+
+    const partialBatch = dispatchCommand(['zoom', 'install-dsh-web.cmd', 'runner/dsh/nonexistent-ghost.mjs'], REPO_ROOT);
+    expect(partialBatch.exitCode).toBe(1);
+    expect(partialBatch.stdout).toContain('=== [Zoom-2 单文件结构大纲] install-dsh-web.cmd ===');
+    expect(partialBatch.stdout).toContain('部分目标未命中告警');
+
+    const wbEvents = dispatchCommand(['zoom', 'runner/atlas/wb-events-actions.mjs', 'runner/dsh/ui-aesthetics.mjs'], REPO_ROOT);
+    expect(wbEvents.exitCode).toBe(0);
+    expect(wbEvents.stdout).not.toContain('WB_EVENTS_ACTIONS_PART1 =');
+    expect(wbEvents.stdout.length).toBeLessThan(12000);
+
+    const sliceByRange = dispatchCommand(['zoom', 'runner/dsh/workflow-jit.mjs:108-120', '--source'], REPO_ROOT);
+    expect(sliceByRange.exitCode).toBe(0);
+    expect(sliceByRange.stdout).toContain('=== [末步源码真源直读] runner/dsh/workflow-jit.mjs:L108-L120 ===');
+    expect(sliceByRange.stdout).toContain('assertPlannerAuthority');
+    if (existsSync(join(REPO_ROOT, 'decisions'))) {
+      expect(sliceByRange.stdout).toContain('2026-11-24-04');
+    }
+
+    if (resolveCbmBinary(REPO_ROOT)) {
+      const symTrace = dispatchCommand(['zoom', 'mutateComponentWorkflowJit'], REPO_ROOT);
+      expect(symTrace.exitCode).toBe(0);
+      expect(symTrace.stdout).toContain('CBM 开源图谱符号定位与双向 2-Hop 调用链');
+      expect(symTrace.stdout).toContain('runner/dsh/workflow-jit.mjs');
+      expect(symTrace.stdout).toContain('handleWorkflowJitSubRoute');
+      expect(symTrace.stdout).toContain('assertPlannerAuthority');
+
+      const symSlice = dispatchCommand(['zoom', 'mutateComponentWorkflowJit', '--source'], REPO_ROOT);
+      expect(symSlice.exitCode).toBe(0);
+      expect(symSlice.stdout).toContain('export function mutateComponentWorkflowJit');
     }
   });
 });

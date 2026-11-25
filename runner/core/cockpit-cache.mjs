@@ -99,7 +99,7 @@ function isLockHolderDead(lockPath) {
   }
 }
 
-function tryAcquireExclusiveLock(lockPath) {
+export function tryAcquireExclusiveLock(lockPath) {
   try {
     const fd = openSync(lockPath, 'wx');
     writeFileSync(fd, JSON.stringify({ pid: process.pid }), 'utf8');

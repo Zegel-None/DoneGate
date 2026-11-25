@@ -1,4 +1,4 @@
-// 主控驾驶舱 Zoom-1 / Zoom-2 视图格式化渲染器（区分代码导出、重导出、批处理步骤与配置键，<= 350 行）
+// 主控驾驶舱 Zoom-1 / Zoom-2 视图格式化渲染器（融合 CBM 图谱坐标、跨文件调用边与契约/ADR 治理挂载，<= 350 行）
 
 function ckrFormatFnDecl(fnSig, prefixTag = '') {
   const decl = fnSig.startsWith('async ') ? `async function ${fnSig.slice(6)}` : `function ${fnSig}`;
@@ -12,7 +12,32 @@ function ckrExportsSectionTitle(kind, len) {
   return `对外导出签名与常量键值 (exports, 共 ${len} 项):`;
 }
 
-function ckrAppendOutlineExtras(L, fileHit) {
+function ckrAppendCbmFileGraph(L, fileRel, cbmGraph) {
+  if (!cbmGraph) return;
+  if (cbmGraph.symbols?.length > 0) {
+    const coords = cbmGraph.symbols.map((s) => `${s.name}${s.signature || ''}[L${s.startLine}-L${s.endLine}]`);
+    L.push(`CBM 图谱符号行号锚点 (共 ${coords.length} 项): ${coords.join(', ')}`);
+  }
+  if (cbmGraph.inboundCallers?.length > 0) {
+    const ins = cbmGraph.inboundCallers.map((c) => `${c.file}#${c.symbol}${c.line ? `@L${c.line}` : ''}`);
+    L.push(`CBM 跨文件上游调用方 Callers (← 共 ${ins.length} 处): ${ins.join(', ')}`);
+  }
+  if (cbmGraph.outboundCallees?.length > 0) {
+    const outs = cbmGraph.outboundCallees.map((c) => `${c.file}#${c.symbol}${c.targetLine ? `[L${c.targetLine}]` : ''}`);
+    L.push(`CBM 跨文件下游被调方 Callees (→ 共 ${outs.length} 处): ${outs.join(', ')}`);
+  }
+  if (cbmGraph.spawns?.length > 0) {
+    L.push(`CBM 子进程调用 SPAWNS: ${cbmGraph.spawns.map((s) => `${s.program}${s.line ? `@L${s.line}` : ''}`).join(', ')}`);
+  }
+  if (cbmGraph.docMentions?.length > 0) {
+    const docs = [...new Set(cbmGraph.docMentions.map((d) => d.docFile))];
+    L.push(`CBM 文档与历史记录反链: ${docs.join(', ')}`);
+  }
+  const maxEnd = cbmGraph.symbols?.reduce((m, s) => Math.max(m, s.endLine || 0), 0) || 0;
+  L.push(`末步直读源码句柄: node runner/donegate.mjs zoom ${fileRel}${maxEnd > 0 ? `:1-${maxEnd}` : ''} --source`);
+}
+
+function ckrAppendOutlineExtras(L, fileHit, extra) {
   if (fileHit.cliFlags?.length > 0) L.push(`支持 CLI 参数标志 (共 ${fileHit.cliFlags.length} 项): ${fileHit.cliFlags.join(', ')}`);
   if (fileHit.constantsPreview.length > 0) {
     L.push('关键协议常量 / 注册表 / JSON 内容真源:');
@@ -34,9 +59,10 @@ function ckrAppendOutlineExtras(L, fileHit) {
     L.push(`依赖导入 (imports, 共 ${fileHit.imports.length} 条):`);
     for (const imp of fileHit.imports) L.push(`  · ${imp}`);
   }
+  ckrAppendCbmFileGraph(L, fileHit.file, extra?.cbmGraph);
 }
 
-export function renderSingleFileZoom(fileHit, hasContracts) {
+export function renderSingleFileZoom(fileHit, hasContracts, extra = {}) {
   const kind = fileHit.outlineKind || 'code';
   const fallbackOwner = !hasContracts
     ? `零契约公开/轻量模式（改完单文件直接跑 node runner/donegate.mjs lint-edit ${fileHit.file}）`
@@ -44,6 +70,7 @@ export function renderSingleFileZoom(fileHit, hasContracts) {
   const L = [
     `=== [Zoom-2 单文件结构大纲] ${fileHit.file} ===`,
     `归属契约: ${fileHit.owners.filter(Boolean).join(', ') || fallbackOwner}`,
+    ...(extra?.adrLines || []),
     `模块完整说明: ${fileHit.header}`,
     ckrExportsSectionTitle(kind, fileHit.exports.length)
   ];
@@ -52,7 +79,7 @@ export function renderSingleFileZoom(fileHit, hasContracts) {
     const lineBody = (kind !== 'code' || e.startsWith('re-export ')) ? e : `export ${e}`;
     L.push(`  · ${lineBody}`);
   }
-  ckrAppendOutlineExtras(L, fileHit);
+  ckrAppendOutlineExtras(L, fileHit, extra);
   return L.join('\n');
 }
 
@@ -66,10 +93,10 @@ export function renderDecisionsZoom(idx, target, fullFlag, filterKw) {
   if (target !== 'all') {
     if (dom) matched = idx.adrs.filter((a) => a.domains.includes(dom.step));
     else if (con) matched = idx.adrs.filter((a) => a.contracts.includes(con.id));
-    else matched = idx.adrs.filter((a) => a.file.includes(target));
+    else matched = idx.adrs.filter((a) => a.file.includes(target) || a.content.includes(target));
   }
   if (fullFlag) {
-    const sub = filterKw ? matched.filter((a) => a.file.includes(filterKw)) : matched;
+    const sub = filterKw ? matched.filter((a) => a.file.includes(filterKw) || a.content.includes(filterKw)) : matched;
     const L = [`=== 架构决策原文展开 ("${target}"${filterKw ? ` 筛选 ${filterKw}` : ''} · 共 ${sub.length} 篇) ===`];
     for (const a of sub) L.push(`\n--- FILE: decisions/${a.file} (域:${a.domains.join(',')} | 契约:${a.contracts.join(',') || '全局'}) ---`, a.content.trim());
     return L.join('\n');

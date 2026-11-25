@@ -1,4 +1,4 @@
-// Zoom-2 括号平衡单文件结构大纲提取器（零前缀启发式穿透内联脚本、配对引号、顶层对象键与双参 CLI，<= 350 行）
+// Zoom-2 括号平衡单文件结构大纲提取器（零前缀启发式穿透内联脚本、顶层层级引号提取与双参 CLI，<= 350 行）
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { maskCommentsAndStrings, stripCommentsKeepStrings } from './js-mask-lexer.mjs';
@@ -50,20 +50,44 @@ function cfoParseSingleTopKey(slice, seen, keys) {
   keys.push(`${keyLabel}: ${valPreview}`);
 }
 
-function cfoExtractTopLevelObjectKeys(rawBody, maskedBody) {
-  const keys = [], seen = new Set();
-  let depth = 0, atStart = true;
+function cfoSplitTopLevelSegments(rawBody, maskedBody) {
+  const segs = [];
+  let depth = 0, segStart = 0;
   for (let i = 0; i < maskedBody.length; i++) {
     const ch = maskedBody[i];
-    if (ch === '{' || ch === '[' || ch === '(') { depth++; atStart = false; continue; }
-    if (ch === '}' || ch === ']' || ch === ')') { if (depth > 0) depth--; atStart = false; continue; }
-    if (depth !== 0) continue;
-    if (ch === ',') { atStart = true; continue; }
-    if (!atStart || /\s/.test(ch)) continue;
-    atStart = false;
-    cfoParseSingleTopKey(rawBody.slice(i), seen, keys);
+    if (ch === '{' || ch === '[' || ch === '(') depth++;
+    else if ((ch === '}' || ch === ']' || ch === ')') && depth > 0) depth--;
+    else if (ch === ',' && depth === 0) {
+      segs.push(rawBody.slice(segStart, i));
+      segStart = i + 1;
+    }
+  }
+  segs.push(rawBody.slice(segStart));
+  return segs;
+}
+
+function cfoExtractTopLevelObjectKeys(rawBody, maskedBody) {
+  const keys = [], seen = new Set();
+  for (const seg of cfoSplitTopLevelSegments(rawBody, maskedBody)) {
+    const trimmed = seg.trimStart();
+    if (trimmed) cfoParseSingleTopKey(trimmed, seen, keys);
   }
   return keys;
+}
+
+function cfoExtractTopLevelArrayItems(rawBody, maskedBody) {
+  const items = [];
+  for (const seg of cfoSplitTopLevelSegments(rawBody, maskedBody)) {
+    const rawSeg = seg.trim();
+    if (!rawSeg) continue;
+    if (rawSeg.startsWith('{')) {
+      const idM = rawSeg.match(/\bid\s*:\s*(['"])([^'"\\]+)\1/);
+      items.push(idM ? `{ id: '${idM[2]}', … }` : '{…}');
+      continue;
+    }
+    for (const sm of rawSeg.matchAll(PAIRED_STR_RE)) items.push(`'${sm[2]}'`);
+  }
+  return items;
 }
 
 function cfoSummarizeConstRhs(raw, masked, rhsStart) {
@@ -79,7 +103,7 @@ function cfoSummarizeConstRhs(raw, masked, rhsStart) {
   }
   if (raw[p] === '[') {
     const closeB = cfoFindBalanced(masked, p, '[', ']');
-    if (closeB > p) return `[${[...raw.slice(p + 1, closeB).matchAll(PAIRED_STR_RE)].map((x) => `'${x[2]}'`).join(', ')}]`;
+    if (closeB > p) return `[${cfoExtractTopLevelArrayItems(raw.slice(p + 1, closeB), masked.slice(p + 1, closeB)).join(', ')}]`;
   }
   if (raw[p] === '{') {
     const closeB = cfoFindBalanced(masked, p, '{', '}');
@@ -179,16 +203,22 @@ function cfoFilterExistingRepoLiterals(vals, projectRoot) {
   });
 }
 
+function cfoIsJoinedScriptBuffer(name, raw, closeIdx) {
+  if (name.endsWith('_LINES')) return true;
+  const tail = raw.slice(closeIdx);
+  return new RegExp(`\\b${name}\\b[^;\\n]*\\.join\\s*\\(\\s*['"]\\\\n['"]\\s*\\)`).test(tail)
+    || new RegExp(`\\[[^\\]]*\\.\\.\\.${name}[^\\]]*\\]\\.join\\s*\\(\\s*['"]\\\\n['"]\\s*\\)`).test(tail);
+}
+
 function cfoScanUpperConstantsAndImports(raw, masked, projectRoot) {
   const constantsPreview = [], imports = [];
   for (const m of masked.matchAll(/(?:const|export\s+const)\s+([A-Z][A-Z0-9_]{2,})\s*=\s*(?:new\s+Set\s*\(\s*)?\[/g)) {
     const name = m[1];
-    if (name.endsWith('_LINES')) continue;
     const openB = m.index + m[0].length - 1, closeB = cfoFindBalanced(masked, openB, '[', ']');
-    if (closeB <= openB) continue;
-    const inner = raw.slice(openB + 1, closeB);
+    if (closeB <= openB || cfoIsJoinedScriptBuffer(name, raw, closeB + 1)) continue;
+    const inner = raw.slice(openB + 1, closeB), innerMasked = masked.slice(openB + 1, closeB);
     const idents = name.endsWith('_FNS') ? inner.split(',').map((s) => s.trim()).filter(Boolean) : [];
-    const rawVals = idents.length === 0 ? [...inner.matchAll(PAIRED_STR_RE)].map((x) => `'${x[2]}'`) : [];
+    const rawVals = idents.length === 0 ? cfoExtractTopLevelArrayItems(inner, innerMasked) : [];
     const vals = cfoFilterExistingRepoLiterals(rawVals, projectRoot);
     if (idents.length > 0) constantsPreview.push(`${name} = [${idents.join(', ')}]`);
     else if (vals.length > 0) constantsPreview.push(`${name} = [${vals.join(', ')}]`);

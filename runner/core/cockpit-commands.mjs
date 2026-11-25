@@ -1,11 +1,15 @@
-// 主控三级按需变焦命令实现（donegate brief 根视口 + donegate zoom 闭世界多目标批量与三级寻址，<= 350 行）
+// 主控三级按需变焦命令实现（对接 MIT 开源图谱底座 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { getCbmGraphSummary, queryCbmFileGraph } from './cockpit-cbm.mjs';
 import { buildSingleFileOutline } from './cockpit-file-outline.mjs';
 import { buildCockpitGraphIndex } from './cockpit-index.mjs';
 import { renderDecisionsZoom, renderDomainOrContract, renderSingleFileZoom } from './cockpit-render.mjs';
+import { formatPathGovernanceLines, renderBoundedSourceSlice, renderCbmSymbolZoom } from './cockpit-source.mjs';
 import { fileBelongsToScopes, SHARED_GOVERNANCE_GLOBS } from './context-router.mjs';
 import { cmdImpact } from './impact-radar.mjs';
+
+const BUILTIN_TOPICS = new Set(['rules', 'tests', 'gaps', 'all']);
 
 function ckcCollectDomainPaths(node, out) {
   for (const m of node.modules || []) {
@@ -80,13 +84,10 @@ function ckcFormatContractBlock(cid, idx) {
 }
 
 function ckcBuildZoomZeroGovernanceSection(idx, hasContracts) {
-  const th = idx.thresholds;
-  const thSrc = idx.hasThresholdsFile ? 'thresholds.json' : '默认内置预算';
+  const th = idx.thresholds, thSrc = idx.hasThresholdsFile ? 'thresholds.json' : '默认内置预算';
   const archStr = idx.liveMeta.archetypes.join('|') || 'scanner';
   const subpackStr = Object.keys(idx.liveMeta.annotatedSubpacks).map((k) => `\`${k}\``).join(', ');
-  const activeGovGlobs = hasContracts
-    ? SHARED_GOVERNANCE_GLOBS
-    : SHARED_GOVERNANCE_GLOBS.filter((g) => existsSync(join(idx.root, g.replace(/\/$/, ''))));
+  const activeGovGlobs = hasContracts ? SHARED_GOVERNANCE_GLOBS : SHARED_GOVERNANCE_GLOBS.filter((g) => existsSync(join(idx.root, g.replace(/\/$/, ''))));
   const nonMain = (idx.atlas.branches || []).filter((b) => !b.isDefault);
   const brWarn = nonMain.length ? `当前检出 ${nonMain.length} 条非主线分支（${nonMain.map((b) => `\`${b.name}\``).join('、')}），派工必显式基于 \`main\`` : '当前仅 `main` 主线活跃';
 
@@ -97,22 +98,20 @@ function ckcBuildZoomZeroGovernanceSection(idx, hasContracts) {
   }
   L.push(`- **公共路径、跨界验收与子包**：已存在公共治理白名单 \`SHARED_GOVERNANCE_GLOBS\` = ${activeGovGlobs.map((g) => `\`${g}\``).join(', ')}；有契约项目可用 \`check-node <契约ID> --allow-cross-scope --receipt\` 放行公共治理文件与根台账；画布子包：${subpackStr}。`);
   L.push(`- **外部工具扩展与共享池**：\`node skill/new-adapter.mjs <tool> --archetype <${archStr}> --card-json\` 生成薄适配器（委托 \`_shared.mjs\` \`runAdapter\`）与 \`bricks/<tool>/capabilities.json\`；共享池位于 \`workflows/.deps/_shared/\`（含 \`.bin/\`、\`dists/\`、\`npm-cells/<id>/\`）。`);
-  if (hasContracts) {
-    L.push(`- **派工与合入闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`preflight --stamp-lease\` → \`impact <目标>\` → \`slice <契约ID> [--focus <路径|@subpack>]\` → 逐文件 \`lint-edit <file>\` → \`check-node <契约ID> [--allow-cross-scope] --receipt\`。`);
-  } else {
-    L.push(`- **零契约公开/轻量模式开发闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`impact <目标>\` → \`zoom <文件路径>\` → 逐文件 \`lint-edit <file>\` → 全套自检 \`node skill/check-escapes.mjs --self-check\` + \`npm test\`（若对目标项目运行 \`donegate init\` 并建立 \`contracts/\`，即可进一步开启 \`slice <契约ID>\` 与 \`check-node <契约ID> --receipt\` 密封切片围挡）。`);
-  }
+  L.push(hasContracts
+    ? `- **派工与合入闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`preflight --stamp-lease\` → \`impact <目标>\` → \`slice <契约ID> [--focus <路径|@subpack>]\` → 末步 \`zoom <文件:起-止> --source\` 精读源码 → 逐文件 \`lint-edit <file>\` → \`check-node <契约ID> [--allow-cross-scope] --receipt\`。`
+    : `- **零契约公开/轻量模式开发闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`impact <目标>\` → \`zoom <路径|符号>\` → 末步 \`zoom <文件:起-止> --source\` 精读源码 → 逐文件 \`lint-edit <file>\` → 全套自检 \`node skill/check-escapes.mjs --self-check\` + \`npm test\`。`);
   return L;
 }
 
 function ckcBuildCommandDictLines(idx, hasContracts) {
   const items = [
-    '**Zoom-1 展开业务域模块树**：`node runner/donegate.mjs zoom <域编号 01..05|all> [更多域...]`',
-    hasContracts ? '**Zoom-1 查看契约详情、冻结判据命令与导出存根**：`node runner/donegate.mjs zoom <契约ID> [--stubs]`' : null,
-    idx.hasDecisionsDir ? '**Zoom-1 查看五段式架构决策精要表（加 `--full` 看原文）**：`node runner/donegate.mjs zoom <域编号|契约ID|all> --decisions [--full [编号关键词]]`' : null,
-    `**Zoom-1 查看规则阈值、工作流与共享池字典**：\`node runner/donegate.mjs zoom rules\` | 单测目录：\`zoom tests [词]\` | 分支与缺口：\`zoom gaps${hasContracts ? ' [契约ID]' : ''}\``,
-    '**Zoom-2 穿透单文件完整导出、内部函数、内联生成脚本函数、CLI 标志、路由与跨脚本路径**：`node runner/donegate.mjs zoom <相对文件路径> [更多文件...]`',
-    '**跨文件波及面与 1-Hop 单测反查**：`node runner/donegate.mjs impact <符号|路由|DOM-ID|配置文件名>`'
+    '**第一步 · 图谱域/契约缩圈（Zoom-1）**：`node runner/donegate.mjs zoom <域编号 01..05|all> [更多域...]`' + (hasContracts ? ' | 契约详情与存根：`zoom <契约ID> [--stubs]`' : ''),
+    idx.hasDecisionsDir ? '**极薄契约/ADR 历史决策挂载**：`node runner/donegate.mjs zoom <域编号|契约ID|文件路径|all> --decisions [--full [编号关键词]]`' : null,
+    '**真源规则、单测与缺口并列查询**：`node runner/donegate.mjs zoom rules tests gaps`（亦支持 `zoom tests <词>` 过滤）',
+    '**第二步 · 开源图谱文件/符号追踪（Zoom-2 + CBM 2-Hop 调用链）**：`node runner/donegate.mjs zoom <相对文件路径 | 函数或变量符号名> [更多目标...]`',
+    '**跨文件波及面与无截断 1-Hop 单测反查**：`node runner/donegate.mjs impact <文件|符号|路由|DOM-ID|配置文件名>`',
+    '**第三步 · 最后一步按行直读真实源码（锁准 2~5 个目标后必看真源）**：`node runner/donegate.mjs zoom <文件路径[:起-止] | 函数符号名> --source`'
   ].filter(Boolean);
   return items.map((txt, idxNum) => `> ${idxNum + 1}. ${txt}`);
 }
@@ -123,24 +122,27 @@ function ckcBuildZoomZeroMarkdown(idx) {
   const totalStub = hasContracts ? idx.graph.nodes.reduce((a, n) => a + (n.stub?.stubTokens || 0), 0) : Math.ceil(Object.values(idx.fileOutlines).reduce((a, o) => a + o.exports.join(' ').length, 0) / 4);
   const stepById = new Map(idx.domains.map((n) => [n.id, n.step]));
   const canvasSum = idx.domains.reduce((a, d) => a + (d.codeCapsule?.moduleCount || 0), 0);
+  const cbm = getCbmGraphSummary(idx.root);
+  const cbmLine = cbm.available
+    ? `> 开源图谱引擎：\`${cbm.engine}\` 持久化 SQLite 已就绪（节点 \`${cbm.totalNodes.toLocaleString()}\` 个 · 关系边 \`${cbm.totalEdges.toLocaleString()}\` 条 · 函数 \`${cbm.byLabel.Function || 0}\` 个 · 路由节点 \`${cbm.byLabel.Route || 0}\` 个）`
+    : '> 开源图谱引擎：未检测到 `codebase-memory-mcp` 二进制，当前运行内置零依赖结构大纲模式';
 
   const z0 = [
     `# ${idx.atlas.project.name} · 主控全局根视口（Zoom-0 · 三级零漂移按需变焦页表）`,
     `> HEAD：\`${idx.gitHead}\` | 指纹：\`INTENT=${idx.intentHash}\` · \`CONSTRAINTS=${idx.constraintsHash}\``,
     `> 规模对账：源码模块 \`${idx.atlas.project.moduleCount}\` 个（画布含虚拟立约起点合计 \`${canvasSum}\` 项；声明式工作流 \`${idx.liveMeta.workflows.length}\` 个）| 唯一导出符号 \`${idx.hubs.uniqueSymbolCount}\` 个 | 架构决策 \`${idx.adrs.length}\` 篇 | 全仓源码约 \`${totalRaw.toLocaleString()} tok\` → 全仓接口存根 \`${totalStub.toLocaleString()} tok\``,
-    '> **三级确定性下钻命令字典**（自带跨进程单飞指纹缓存，支持单条命令传多个目标批量下钻，如 `donegate zoom 03 04`）：',
+    cbmLine,
+    '> **三步聚焦寻路字典（① MIT 开源图谱缩圈 → ② 契约/ADR 路径挂载 → ③ 末步按行直读源码；支持单条命令并列传多目标）**：',
     ...ckcBuildCommandDictLines(idx, hasContracts),
     '',
     '## 1. 业务域总览与隐藏信息索引（与「完结门」画布 1:1 同构）'
   ];
   for (const sn of idx.domains) z0.push(...ckcFormatDomainBlock(sn, stepById, idx, hasContracts));
-
   if (hasContracts) {
     const sccNote = (idx.graph.sccCycles || []).length > 0
       ? `；含互引强连通簇 ${idx.graph.sccCycles.map((c) => `[${c.join(' ⇄ ')}]`).join('、')}，簇内按被依赖净流出度由底座/后端门面先行合入 \`main\`，前端消费卡后跟`
       : '；双向跨卡调用须先锁后端门面协议合入 `main`';
-    z0.push('', '## 2. 密封契约卡边界与跨卡承重接口');
-    z0.push(`推荐拓扑合入序（Tarjan 强连通缩点 DAG）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`);
+    z0.push('', '## 2. 密封契约卡边界与跨卡承重接口', `推荐拓扑合入序（Tarjan 强连通缩点 DAG）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`);
     for (const cid of idx.graph.topoOrder) z0.push(...ckcFormatContractBlock(cid, idx));
   } else {
     z0.push('', '## 2. 业务域跨域承重接口（零契约模式 · Kneedle 曲率拐点提取）');
@@ -155,8 +157,12 @@ function ckcBuildZoomZeroMarkdown(idx) {
 
 export function cmdBrief(projectRoot, opts = {}) {
   const idx = buildCockpitGraphIndex(projectRoot);
+  const cbm = getCbmGraphSummary(idx.root);
   if (opts.json) {
-    const out = JSON.stringify({ head: idx.gitHead, moduleCount: idx.atlas.project.moduleCount, domains: idx.domains.length, contracts: idx.graph.topoOrder, adrs: idx.adrs.length, gaps: idx.gaps.length }, null, 2);
+    const out = JSON.stringify({
+      head: idx.gitHead, moduleCount: idx.atlas.project.moduleCount, domains: idx.domains.length,
+      contracts: idx.graph.topoOrder, adrs: idx.adrs.length, gaps: idx.gaps.length, cbmGraph: cbm
+    }, null, 2);
     return { exitCode: 0, stdout: out };
   }
   const md = ckcBuildZoomZeroMarkdown(idx);
@@ -174,16 +180,11 @@ function ckcHandleBuiltinZoomTopic(idx, topic, arg1) {
     const activeGlobs = hasContracts ? SHARED_GOVERNANCE_GLOBS : SHARED_GOVERNANCE_GLOBS.filter((g) => existsSync(join(idx.root, g.replace(/\/$/, ''))));
     return JSON.stringify({
       mode: hasContracts ? 'contract-governed' : 'zero-contract-public',
-      thresholds: idx.thresholds,
-      sharedGovernanceGlobs: activeGlobs,
-      annotatedSubpacks: idx.liveMeta.annotatedSubpacks,
-      newAdapterArchetypes: idx.liveMeta.archetypes,
-      newAdapterUsage: idx.liveMeta.newAdapterHeader,
-      declarationProtocol: idx.liveMeta.declarationProtocolConsts,
-      sharedPoolLayout: idx.liveMeta.sharedPoolLayout,
-      declarativeWorkflows: idx.liveMeta.workflows,
-      intent: idx.intentText.trim(),
-      constraints: idx.constraintsText.trim()
+      thresholds: idx.thresholds, sharedGovernanceGlobs: activeGlobs,
+      annotatedSubpacks: idx.liveMeta.annotatedSubpacks, newAdapterArchetypes: idx.liveMeta.archetypes,
+      newAdapterUsage: idx.liveMeta.newAdapterHeader, declarationProtocol: idx.liveMeta.declarationProtocolConsts,
+      sharedPoolLayout: idx.liveMeta.sharedPoolLayout, declarativeWorkflows: idx.liveMeta.workflows,
+      intent: idx.intentText.trim(), constraints: idx.constraintsText.trim()
     }, null, 2);
   }
   if (topic === 'tests') {
@@ -214,6 +215,20 @@ function ckcLookupOrBuildFileOutline(idx, target) {
   return buildSingleFileOutline(idx.root, rel, owners, []);
 }
 
+function ckcLooksLikeExplicitFilePath(target) {
+  if (target.startsWith('/donegate/api') || target.startsWith('/api/')) return false;
+  return target.includes('/') || /\.(?:mjs|cjs|js|ts|tsx|jsx|json|jsonl|cmd|sh|md|yml|yaml)$/i.test(target);
+}
+
+function ckcIsStandaloneZoomTarget(idx, tok) {
+  if (!tok) return false;
+  const c = tok.replace(/^\.\//, '');
+  if (BUILTIN_TOPICS.has(c)) return true;
+  if (idx.domains.some((d) => d.step === c || d.id === c)) return true;
+  if ((idx.graph.nodes || []).some((n) => n.id === c)) return true;
+  return Boolean(ckcLookupOrBuildFileOutline(idx, c));
+}
+
 function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
   if (stubsFlag) {
     return (idx.graph.nodes || []).map((c) => renderDomainOrContract(null, c, true, hasContracts)).join('\n\n') || ckcBuildZoomZeroMarkdown(idx);
@@ -221,19 +236,28 @@ function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
   return idx.domains.map((d) => renderDomainOrContract(d, null, false, hasContracts)).join('\n\n');
 }
 
-function ckcResolveZoomOutput(idx, target, arg1, opts) {
+function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts) {
+  const builtinOut = ckcHandleBuiltinZoomTopic(idx, target, arg1);
+  if (builtinOut !== null) return builtinOut;
+  const fileHit = ckcLookupOrBuildFileOutline(idx, target);
+  if (!fileHit) return null;
+  const adrLines = formatPathGovernanceLines(idx, fileHit.file, hasContracts, true).slice(1);
+  return renderSingleFileZoom(fileHit, hasContracts, { adrLines, cbmGraph: queryCbmFileGraph(idx.root, fileHit.file) });
+}
+
+function ckcResolveSingleTarget(idx, target, arg1, opts) {
   const hasContracts = (idx.graph.nodes || []).length > 0;
+  if (opts.source) return renderBoundedSourceSlice(idx, target, hasContracts);
   if (opts.decisions) return renderDecisionsZoom(idx, target, Boolean(opts.full), arg1 || '');
   if (target === 'all') return ckcResolveAllTarget(idx, Boolean(opts.stubs), hasContracts);
-  if (!opts.stubs) {
-    const builtinOut = ckcHandleBuiltinZoomTopic(idx, target, arg1);
-    if (builtinOut !== null) return builtinOut;
-    const fileHit = ckcLookupOrBuildFileOutline(idx, target);
-    if (fileHit) return renderSingleFileZoom(fileHit, hasContracts);
+  if (!opts.stubs && !opts.trace) {
+    const tf = ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts);
+    if (tf !== null) return tf;
   }
   const dom = idx.domains.find((d) => d.step === target || d.id === target);
   const con = (idx.graph.nodes || []).find((c) => c.id === target);
-  return (dom || con) ? renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts) : null;
+  if (dom || con) return renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts);
+  return (!opts.stubs && !ckcLooksLikeExplicitFilePath(target)) ? renderCbmSymbolZoom(idx, target, hasContracts) : null;
 }
 
 function ckcFormatMissingZoomError(idx, target) {
@@ -244,28 +268,40 @@ function ckcFormatMissingZoomError(idx, target) {
     return low.includes(stem) || (tokens.length > 0 && tokens.every((tk) => low.includes(tk)));
   }).slice(0, 5);
   const hint = cands.length > 0 ? `（仓库内相近真实路径：${cands.join(', ')}）` : '';
-  return `未找到匹配域编号、契约 ID 或文件路径：${target}${hint}`;
+  return `未找到匹配域编号、契约 ID、文件路径或图谱符号：${target}${hint}`;
+}
+
+function ckcRunZoomTargetLoop(idx, targets, opts) {
+  const chunks = [], errors = [];
+  for (let i = 0; i < targets.length; i++) {
+    const cleanT = targets[i].replace(/^\.\//, '');
+    const canTakeFilter = !opts.source && (cleanT === 'tests' || cleanT === 'gaps') && i + 1 < targets.length;
+    const arg1 = (canTakeFilter && !ckcIsStandaloneZoomTarget(idx, targets[i + 1])) ? targets[++i] : '';
+    const out = ckcResolveSingleTarget(idx, cleanT, arg1, opts);
+    if (out !== null) chunks.push(out);
+    else errors.push(ckcFormatMissingZoomError(idx, cleanT));
+  }
+  return { chunks, errors };
 }
 
 export function cmdZoom(projectRoot, opts = {}) {
   const targets = Array.isArray(opts.targets) ? opts.targets : [];
   if (targets.length === 0) {
-    return { exitCode: 3, stderr: '用法：donegate zoom <域编号|契约ID|文件路径|rules|tests|gaps|all> [更多目标...] [--stubs] [--decisions] [--full [关键词]]' };
+    return { exitCode: 3, stderr: '用法：donegate zoom <域编号|契约ID|文件路径[:起-止]|符号名|rules|tests|gaps|all> [更多目标...] [--stubs] [--decisions] [--full [关键词]] [--source]' };
   }
   if (targets[0] === 'impact') return cmdImpact(projectRoot, { targets: targets.slice(1), json: opts.json });
   const idx = buildCockpitGraphIndex(projectRoot);
-  const first = targets[0].replace(/^\.\//, '');
-  const isParameterizedTopic = opts.decisions || first === 'tests' || first === 'gaps' || first === 'rules';
-  if (isParameterizedTopic || targets.length === 1) {
-    const out = ckcResolveZoomOutput(idx, first, targets[1], opts);
+  if (opts.decisions) {
+    const first = targets[0].replace(/^\.\//, '');
+    const out = ckcResolveSingleTarget(idx, first, targets[1] || '', opts);
     return out !== null ? { exitCode: 0, stdout: out } : { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, first) };
   }
-  const chunks = [];
-  for (const rawT of targets) {
-    const cleanT = rawT.replace(/^\.\//, '');
-    const out = ckcResolveZoomOutput(idx, cleanT, '', opts);
-    if (out === null) return { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, cleanT) };
-    chunks.push(out);
-  }
-  return { exitCode: 0, stdout: chunks.join('\n\n') };
+  const { chunks, errors } = ckcRunZoomTargetLoop(idx, targets, opts);
+  if (errors.length === 0) return { exitCode: 0, stdout: chunks.join('\n\n') };
+  if (chunks.length === 0) return { exitCode: 1, stderr: errors.join('\n') };
+  return {
+    exitCode: 1,
+    stdout: [...chunks, `=== [部分目标未命中告警 (${errors.length} 项)] ===\n${errors.map((e) => `  ✗ ${e}`).join('\n')}`].join('\n\n'),
+    stderr: errors.join('\n')
+  };
 }
