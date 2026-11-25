@@ -1,22 +1,25 @@
-// 主控驾驶舱 Zoom-1 / Zoom-2 视图格式化渲染器（融合 CBM 图谱坐标、跨文件调用边与契约/ADR 治理挂载，<= 350 行）
+// 主控驾驶舱 Zoom-1 / Zoom-2 视图格式化渲染器（单一真源 CBM 开源图谱 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
 
-function ckrFormatFnDecl(fnSig, prefixTag = '') {
-  const decl = fnSig.startsWith('async ') ? `async function ${fnSig.slice(6)}` : `function ${fnSig}`;
-  return prefixTag ? `[${prefixTag}] ${decl}` : decl;
-}
-
-function ckrExportsSectionTitle(kind, len) {
-  if (kind === 'cmd' || kind === 'sh') return `脚本执行步骤 (共 ${len} 步):`;
-  if (kind === 'json') return `顶层配置键 (共 ${len} 项):`;
-  if (kind === 'doc') return `文档首段摘要 (共 ${len} 行):`;
-  return `对外导出签名与常量键值 (exports, 共 ${len} 项):`;
-}
-
-function ckrAppendCbmFileGraph(L, fileRel, cbmGraph) {
-  if (!cbmGraph) return;
-  if (cbmGraph.symbols?.length > 0) {
-    const coords = cbmGraph.symbols.map((s) => `${s.name}${s.signature || ''}[L${s.startLine}-L${s.endLine}]`);
-    L.push(`CBM 图谱符号行号锚点 (共 ${coords.length} 项): ${coords.join(', ')}`);
+function ckrAppendCbmFileGraph(L, fileInfo, cbmGraph) {
+  if (!cbmGraph) {
+    L.push('开源图谱状态: 未检测到 codebase-memory-mcp 索引（可直接通过末步直读句柄查看真实源码）');
+    L.push(`末步直读源码句柄: node runner/donegate.mjs zoom ${fileInfo.file}:1-${fileInfo.totalLines} --source`);
+    return;
+  }
+  const fns = (cbmGraph.symbols || []).filter((s) => s.label === 'Function');
+  const vars = (cbmGraph.symbols || []).filter((s) => s.label !== 'Function');
+  if (fns.length > 0) {
+    L.push(`CBM 图谱函数符号锚点 (共 ${fns.length} 项):`);
+    for (const s of fns) {
+      L.push(`  · ${s.isExported ? 'export ' : ''}${s.name}${s.signature || '()'} [L${s.startLine}-L${s.endLine}]`);
+    }
+  }
+  if (vars.length > 0) {
+    const vList = vars.map((v) => `${v.name}[L${v.startLine}${v.endLine > v.startLine ? `-L${v.endLine}` : ''}]`);
+    L.push(`CBM 顶层变量/常量锚点 (共 ${vars.length} 项): ${vList.join(', ')}`);
+  }
+  if (cbmGraph.imports?.length > 0) {
+    L.push(`CBM 依赖导入 IMPORTS (共 ${cbmGraph.imports.length} 条): ${cbmGraph.imports.join(', ')}`);
   }
   if (cbmGraph.inboundCallers?.length > 0) {
     const ins = cbmGraph.inboundCallers.map((c) => `${c.file}#${c.symbol}${c.line ? `@L${c.line}` : ''}`);
@@ -29,57 +32,27 @@ function ckrAppendCbmFileGraph(L, fileRel, cbmGraph) {
   if (cbmGraph.spawns?.length > 0) {
     L.push(`CBM 子进程调用 SPAWNS: ${cbmGraph.spawns.map((s) => `${s.program}${s.line ? `@L${s.line}` : ''}`).join(', ')}`);
   }
+  if (cbmGraph.httpRoutes?.length > 0) {
+    L.push(`CBM HTTP 路由调用: ${cbmGraph.httpRoutes.join(', ')}`);
+  }
   if (cbmGraph.docMentions?.length > 0) {
     const docs = [...new Set(cbmGraph.docMentions.map((d) => d.docFile))];
     L.push(`CBM 文档与历史记录反链: ${docs.join(', ')}`);
   }
-  const maxEnd = cbmGraph.symbols?.reduce((m, s) => Math.max(m, s.endLine || 0), 0) || 0;
-  L.push(`末步直读源码句柄: node runner/donegate.mjs zoom ${fileRel}${maxEnd > 0 ? `:1-${maxEnd}` : ''} --source`);
+  L.push(`末步直读源码句柄: node runner/donegate.mjs zoom ${fileInfo.file}:1-${fileInfo.totalLines} --source`);
 }
 
-function ckrAppendOutlineExtras(L, fileHit, extra) {
-  if (fileHit.cliFlags?.length > 0) L.push(`支持 CLI 参数标志 (共 ${fileHit.cliFlags.length} 项): ${fileHit.cliFlags.join(', ')}`);
-  if (fileHit.constantsPreview.length > 0) {
-    L.push('关键协议常量 / 注册表 / JSON 内容真源:');
-    for (const cp of fileHit.constantsPreview) L.push(`  · ${cp}`);
-  }
-  if (fileHit.internalFunctions.length > 0) {
-    L.push(`模块级内部函数签名 (共 ${fileHit.internalFunctions.length} 项，完整无截断):`);
-    for (const fn of fileHit.internalFunctions) L.push(`  · ${ckrFormatFnDecl(fn)}`);
-  }
-  if (fileHit.browserInlineFunctions.length > 0) {
-    const inlineTag = (fileHit.file === 'runner/dsh/dg-deps-cli-gen.mjs' || fileHit.file.endsWith('-templates.mjs')) ? 'codegen' : 'browser';
-    L.push(`内联生成/浏览器脚本函数签名 (共 ${fileHit.browserInlineFunctions.length} 项，完整无截断):`);
-    for (const fn of fileHit.browserInlineFunctions) L.push(`  · ${ckrFormatFnDecl(fn, inlineTag)}`);
-  }
-  if (fileHit.httpRoutes.length > 0) L.push(`涉及 HTTP 路由/接口 (共 ${fileHit.httpRoutes.length} 条): ${fileHit.httpRoutes.join(', ')}`);
-  if (fileHit.domAnchors.length > 0) L.push(`涉及 DOM ID / data-* 锚点 (共 ${fileHit.domAnchors.length} 个): ${fileHit.domAnchors.join(', ')}`);
-  if (fileHit.referencedPaths.length > 0) L.push(`引用的子脚本/配置/磁盘路径常量: ${fileHit.referencedPaths.join(', ')}`);
-  if (fileHit.imports.length > 0) {
-    L.push(`依赖导入 (imports, 共 ${fileHit.imports.length} 条):`);
-    for (const imp of fileHit.imports) L.push(`  · ${imp}`);
-  }
-  ckrAppendCbmFileGraph(L, fileHit.file, extra?.cbmGraph);
-}
-
-export function renderSingleFileZoom(fileHit, hasContracts, extra = {}) {
-  const kind = fileHit.outlineKind || 'code';
+export function renderSingleFileZoom(fileInfo, hasContracts, extra = {}) {
   const fallbackOwner = !hasContracts
-    ? `零契约公开/轻量模式（改完单文件直接跑 node runner/donegate.mjs lint-edit ${fileHit.file}）`
-    : (fileHit.isSharedGov ? 'SHARED_GOVERNANCE_GLOBS 公共治理白名单' : '契约外根级/单测文件（tests/** 免计生产配额；根配置加 --allow-cross-scope）');
+    ? `零契约公开/轻量模式（改完单文件直接跑 node runner/donegate.mjs lint-edit ${fileInfo.file}）`
+    : (fileInfo.isSharedGov ? 'SHARED_GOVERNANCE_GLOBS 公共治理白名单' : '契约外根级/单测文件（tests/** 免计生产配额；根配置加 --allow-cross-scope）');
   const L = [
-    `=== [Zoom-2 单文件结构大纲] ${fileHit.file} ===`,
-    `归属契约: ${fileHit.owners.filter(Boolean).join(', ') || fallbackOwner}`,
+    `=== [Zoom-2 单文件图谱视图] ${fileInfo.file} (共 ${fileInfo.totalLines} 行) ===`,
+    `归属契约: ${fileInfo.owners.filter(Boolean).join(', ') || fallbackOwner}`,
     ...(extra?.adrLines || []),
-    `模块完整说明: ${fileHit.header}`,
-    ckrExportsSectionTitle(kind, fileHit.exports.length)
+    `模块说明: ${fileInfo.header}`
   ];
-  if (fileHit.exports.length === 0) L.push('  (无对外导出，脚本入口模块)');
-  for (const e of fileHit.exports) {
-    const lineBody = (kind !== 'code' || e.startsWith('re-export ')) ? e : `export ${e}`;
-    L.push(`  · ${lineBody}`);
-  }
-  ckrAppendOutlineExtras(L, fileHit, extra);
+  ckrAppendCbmFileGraph(L, fileInfo, extra?.cbmGraph);
   return L.join('\n');
 }
 

@@ -1,12 +1,11 @@
-// 主控三级按需变焦命令实现（对接 MIT 开源图谱底座 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+// 主控三级按需变焦命令实现（单一 MIT 开源图谱底座 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getCbmGraphSummary, queryCbmFileGraph } from './cockpit-cbm.mjs';
-import { buildSingleFileOutline } from './cockpit-file-outline.mjs';
-import { buildCockpitGraphIndex } from './cockpit-index.mjs';
+import { buildCockpitGraphIndex, extractFullHeaderComment } from './cockpit-index.mjs';
 import { renderDecisionsZoom, renderDomainOrContract, renderSingleFileZoom } from './cockpit-render.mjs';
 import { formatPathGovernanceLines, renderBoundedSourceSlice, renderCbmSymbolZoom } from './cockpit-source.mjs';
-import { fileBelongsToScopes, SHARED_GOVERNANCE_GLOBS } from './context-router.mjs';
+import { fileBelongsToScopes, isSharedGovernanceFile, SHARED_GOVERNANCE_GLOBS } from './context-router.mjs';
 import { cmdImpact } from './impact-radar.mjs';
 
 const BUILTIN_TOPICS = new Set(['rules', 'tests', 'gaps', 'all']);
@@ -32,18 +31,6 @@ function ckcSummarizePhysicalDirs(sn) {
   return [...dirs].slice(0, 4).join(', ') || '根目录';
 }
 
-function ckcCountDomainRoutes(sn, idx) {
-  const paths = [];
-  ckcCollectDomainPaths(sn, paths);
-  const seen = new Set();
-  for (const p of paths) {
-    for (const r of idx.fileOutlines[p]?.httpRoutes || []) {
-      if (!r.startsWith('FETCH')) seen.add(r);
-    }
-  }
-  return seen.size;
-}
-
 function ckcFormatDomainBlock(sn, stepById, idx, hasContracts) {
   const nextSteps = (sn.nextIds || []).map((id) => `→${stepById.get(id) || id}`).join(' ') || '→[终态门禁]';
   const defaultOwner = hasContracts ? '根级共享治理（无单一契约）' : '零契约公开分发模式';
@@ -51,12 +38,11 @@ function ckcFormatDomainBlock(sn, stepById, idx, hasContracts) {
   const innerTitles = (sn.subgraph?.nodes || []).map((x) => `${sn.step}.${x.step} ${x.title}(${x.codeCapsule?.moduleCount || 0}项)`).join(' → ');
   const domAdrCount = idx.adrs.filter((a) => a.domains.includes(sn.step)).length;
   const domGaps = idx.gaps.filter((g) => (sn.contractIds || []).includes(g.contractId)).length;
-  const domRoutes = ckcCountDomainRoutes(sn, idx);
   const adrLabel = idx.hasDecisionsDir ? `挂靠 ADR：${domAdrCount} 篇` : 'ADR：未启用 decisions/';
   const physDirs = ckcSummarizePhysicalDirs(sn);
   return [
     `- **[${sn.step}] ${sn.title}**（物理目录：\`${physDirs}\` | 含 ${sn.codeCapsule?.moduleCount || 0} 项 | 归属：${cids} | 流向：${nextSteps}）`,
-    `  - 内部结构：${innerTitles || '直接模块'} | HTTP 路由：${domRoutes} 条 | 待跑证据：${domGaps} 项 | ${adrLabel}`,
+    `  - 内部结构：${innerTitles || '直接模块'} | 待跑证据：${domGaps} 项 | ${adrLabel}`,
     `  - 下钻句柄：\`node runner/donegate.mjs zoom ${sn.step}\`${idx.hasDecisionsDir ? ` | \`node runner/donegate.mjs zoom ${sn.step} --decisions\`` : ''}`
   ];
 }
@@ -109,7 +95,7 @@ function ckcBuildCommandDictLines(idx, hasContracts) {
     '**第一步 · 图谱域/契约缩圈（Zoom-1）**：`node runner/donegate.mjs zoom <域编号 01..05|all> [更多域...]`' + (hasContracts ? ' | 契约详情与存根：`zoom <契约ID> [--stubs]`' : ''),
     idx.hasDecisionsDir ? '**极薄契约/ADR 历史决策挂载**：`node runner/donegate.mjs zoom <域编号|契约ID|文件路径|all> --decisions [--full [编号关键词]]`' : null,
     '**真源规则、单测与缺口并列查询**：`node runner/donegate.mjs zoom rules tests gaps`（亦支持 `zoom tests <词>` 过滤）',
-    '**第二步 · 开源图谱文件/符号追踪（Zoom-2 + CBM 2-Hop 调用链）**：`node runner/donegate.mjs zoom <相对文件路径 | 函数或变量符号名> [更多目标...]`',
+    '**第二步 · 开源图谱文件/符号/FTS5 追踪（Zoom-2 + CBM 2-Hop 调用链）**：`node runner/donegate.mjs zoom <相对文件路径 | 符号名 | 关键词> [更多目标...]`',
     '**跨文件波及面与无截断 1-Hop 单测反查**：`node runner/donegate.mjs impact <文件|符号|路由|DOM-ID|配置文件名>`',
     '**第三步 · 最后一步按行直读真实源码（锁准 2~5 个目标后必看真源）**：`node runner/donegate.mjs zoom <文件路径[:起-止] | 函数符号名> --source`'
   ].filter(Boolean);
@@ -119,18 +105,17 @@ function ckcBuildCommandDictLines(idx, hasContracts) {
 function ckcBuildZoomZeroMarkdown(idx) {
   const hasContracts = (idx.graph.nodes || []).length > 0;
   const totalRaw = hasContracts ? idx.graph.nodes.reduce((a, n) => a + (n.stub?.sourceTokens || 0), 0) : idx.fallbackSourceTokens;
-  const totalStub = hasContracts ? idx.graph.nodes.reduce((a, n) => a + (n.stub?.stubTokens || 0), 0) : Math.ceil(Object.values(idx.fileOutlines).reduce((a, o) => a + o.exports.join(' ').length, 0) / 4);
   const stepById = new Map(idx.domains.map((n) => [n.id, n.step]));
   const canvasSum = idx.domains.reduce((a, d) => a + (d.codeCapsule?.moduleCount || 0), 0);
   const cbm = getCbmGraphSummary(idx.root);
   const cbmLine = cbm.available
-    ? `> 开源图谱引擎：\`${cbm.engine}\` 持久化 SQLite 已就绪（节点 \`${cbm.totalNodes.toLocaleString()}\` 个 · 关系边 \`${cbm.totalEdges.toLocaleString()}\` 条 · 函数 \`${cbm.byLabel.Function || 0}\` 个 · 路由节点 \`${cbm.byLabel.Route || 0}\` 个）`
-    : '> 开源图谱引擎：未检测到 `codebase-memory-mcp` 二进制，当前运行内置零依赖结构大纲模式';
+    ? `> 开源图谱引擎：\`${cbm.engine}\` 持久化 SQLite 已就绪（节点 \`${cbm.totalNodes.toLocaleString()}\` 个 · 关系边 \`${cbm.totalEdges.toLocaleString()}\` 条 · 函数 \`${cbm.byLabel.Function || 0}\` 个 · 路由 \`${cbm.byLabel.Route || 0}\` 条）`
+    : '> 开源图谱引擎：未检测到 `codebase-memory-mcp` 二进制（请安装后启用全仓符号图谱与 2-Hop 调用链，当前可直接用 `--source` 按行直读源码）';
 
   const z0 = [
     `# ${idx.atlas.project.name} · 主控全局根视口（Zoom-0 · 三级零漂移按需变焦页表）`,
     `> HEAD：\`${idx.gitHead}\` | 指纹：\`INTENT=${idx.intentHash}\` · \`CONSTRAINTS=${idx.constraintsHash}\``,
-    `> 规模对账：源码模块 \`${idx.atlas.project.moduleCount}\` 个（画布含虚拟立约起点合计 \`${canvasSum}\` 项；声明式工作流 \`${idx.liveMeta.workflows.length}\` 个）| 唯一导出符号 \`${idx.hubs.uniqueSymbolCount}\` 个 | 架构决策 \`${idx.adrs.length}\` 篇 | 全仓源码约 \`${totalRaw.toLocaleString()} tok\` → 全仓接口存根 \`${totalStub.toLocaleString()} tok\``,
+    `> 规模对账：源码模块 \`${idx.atlas.project.moduleCount}\` 个（画布含虚拟立约起点合计 \`${canvasSum}\` 项；声明式工作流 \`${idx.liveMeta.workflows.length}\` 个）| 图谱函数 \`${idx.hubs.uniqueSymbolCount}\` 个 | 架构决策 \`${idx.adrs.length}\` 篇 | 全仓源码约 \`${totalRaw.toLocaleString()} tok\``,
     cbmLine,
     '> **三步聚焦寻路字典（① MIT 开源图谱缩圈 → ② 契约/ADR 路径挂载 → ③ 末步按行直读源码；支持单条命令并列传多目标）**：',
     ...ckcBuildCommandDictLines(idx, hasContracts),
@@ -142,13 +127,13 @@ function ckcBuildZoomZeroMarkdown(idx) {
     const sccNote = (idx.graph.sccCycles || []).length > 0
       ? `；含互引强连通簇 ${idx.graph.sccCycles.map((c) => `[${c.join(' ⇄ ')}]`).join('、')}，簇内按被依赖净流出度由底座/后端门面先行合入 \`main\`，前端消费卡后跟`
       : '；双向跨卡调用须先锁后端门面协议合入 `main`';
-    z0.push('', '## 2. 密封契约卡边界与跨卡承重接口', `推荐拓扑合入序（Tarjan 强连通缩点 DAG）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`);
+    z0.push('', '## 2. 密封契约卡边界与 CBM 跨卡承重接口', `推荐拓扑合入序（Tarjan 强连通缩点 DAG）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`);
     for (const cid of idx.graph.topoOrder) z0.push(...ckcFormatContractBlock(cid, idx));
   } else {
-    z0.push('', '## 2. 业务域跨域承重接口（零契约模式 · Kneedle 曲率拐点提取）');
+    z0.push('', '## 2. 业务域跨域承重接口（零契约模式 · CBM 调用图 + Kneedle 拐点）');
     for (const sn of idx.domains) {
       const h = idx.hubs.hubsByDomain[sn.step];
-      if (h && h.totalExported > 0) z0.push(`- **[${sn.step}] ${sn.title}**（导出符号 \`${h.totalExported}\` 个）：${ckcFormatHubItems(h, `donegate zoom ${sn.step}`)}`);
+      if (h && h.totalExported > 0) z0.push(`- **[${sn.step}] ${sn.title}**（被调函数 \`${h.totalExported}\` 个）：${ckcFormatHubItems(h, `donegate zoom ${sn.step}`)}`);
     }
   }
   z0.push(...ckcBuildZoomZeroGovernanceSection(idx, hasContracts));
@@ -182,7 +167,7 @@ function ckcHandleBuiltinZoomTopic(idx, topic, arg1) {
       mode: hasContracts ? 'contract-governed' : 'zero-contract-public',
       thresholds: idx.thresholds, sharedGovernanceGlobs: activeGlobs,
       annotatedSubpacks: idx.liveMeta.annotatedSubpacks, newAdapterArchetypes: idx.liveMeta.archetypes,
-      newAdapterUsage: idx.liveMeta.newAdapterHeader, declarationProtocol: idx.liveMeta.declarationProtocolConsts,
+      newAdapterUsage: idx.liveMeta.newAdapterHeader,
       sharedPoolLayout: idx.liveMeta.sharedPoolLayout, declarativeWorkflows: idx.liveMeta.workflows,
       intent: idx.intentText.trim(), constraints: idx.constraintsText.trim()
     }, null, 2);
@@ -202,17 +187,26 @@ function ckcHandleBuiltinZoomTopic(idx, topic, arg1) {
   return null;
 }
 
-function ckcLookupOrBuildFileOutline(idx, target) {
-  const hit = idx.fileOutlines[target] || Object.values(idx.fileOutlines).find((o) => o.file.endsWith('/' + target));
-  if (hit) return hit;
-  const candAbs = resolve(idx.root, target);
-  const rel = relative(idx.root, candAbs).split(sep).join('/');
-  if (!rel || isAbsolute(rel) || rel.startsWith('..') || !existsSync(candAbs)) return null;
-  try {
-    if (!statSync(candAbs).isFile()) return null;
-  } catch { return null; }
+function ckcLookupFileInfo(idx, target) {
+  let rel = idx.fileHeaders[target] !== undefined
+    ? target
+    : Object.keys(idx.fileHeaders).find((f) => f.endsWith('/' + target));
+  if (!rel) {
+    const candAbs = resolve(idx.root, target);
+    const r = relative(idx.root, candAbs).split(sep).join('/');
+    if (!r || isAbsolute(r) || r.startsWith('..') || !existsSync(candAbs)) return null;
+    try { if (!statSync(candAbs).isFile()) return null; } catch { return null; }
+    rel = r;
+  }
+  const abs = resolve(idx.root, rel);
+  if (!existsSync(abs)) return null;
+  const raw = readFileSync(abs, 'utf8');
   const owners = (idx.graph.nodes || []).filter((n) => fileBelongsToScopes(rel, n.scope || [])).map((n) => n.id);
-  return buildSingleFileOutline(idx.root, rel, owners, []);
+  return {
+    file: rel, owners, isSharedGov: isSharedGovernanceFile(rel),
+    header: idx.fileHeaders[rel] || extractFullHeaderComment(raw) || '源码模块',
+    totalLines: raw.split(/\r?\n/).length
+  };
 }
 
 function ckcLooksLikeExplicitFilePath(target) {
@@ -226,7 +220,7 @@ function ckcIsStandaloneZoomTarget(idx, tok) {
   if (BUILTIN_TOPICS.has(c)) return true;
   if (idx.domains.some((d) => d.step === c || d.id === c)) return true;
   if ((idx.graph.nodes || []).some((n) => n.id === c)) return true;
-  return Boolean(ckcLookupOrBuildFileOutline(idx, c));
+  return Boolean(ckcLookupFileInfo(idx, c));
 }
 
 function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
@@ -239,10 +233,10 @@ function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
 function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts) {
   const builtinOut = ckcHandleBuiltinZoomTopic(idx, target, arg1);
   if (builtinOut !== null) return builtinOut;
-  const fileHit = ckcLookupOrBuildFileOutline(idx, target);
-  if (!fileHit) return null;
-  const adrLines = formatPathGovernanceLines(idx, fileHit.file, hasContracts, true).slice(1);
-  return renderSingleFileZoom(fileHit, hasContracts, { adrLines, cbmGraph: queryCbmFileGraph(idx.root, fileHit.file) });
+  const fileInfo = ckcLookupFileInfo(idx, target);
+  if (!fileInfo) return null;
+  const adrLines = formatPathGovernanceLines(idx, fileInfo.file, hasContracts, true).slice(1);
+  return renderSingleFileZoom(fileInfo, hasContracts, { adrLines, cbmGraph: queryCbmFileGraph(idx.root, fileInfo.file) });
 }
 
 function ckcResolveSingleTarget(idx, target, arg1, opts) {
@@ -263,7 +257,7 @@ function ckcResolveSingleTarget(idx, target, arg1, opts) {
 function ckcFormatMissingZoomError(idx, target) {
   const stem = target.split('/').pop().replace(/\.[a-z0-9]+$/i, '').toLowerCase();
   const tokens = stem.split(/[-_.]+/).filter((t) => t.length >= 3);
-  const cands = Object.keys(idx.fileOutlines).filter((f) => {
+  const cands = Object.keys(idx.fileHeaders).filter((f) => {
     const low = f.toLowerCase();
     return low.includes(stem) || (tokens.length > 0 && tokens.every((tk) => low.includes(tk)));
   }).slice(0, 5);

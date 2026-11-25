@@ -1,4 +1,4 @@
-// 零魔法数字主控三级按需变焦索引器（闭世界文件注册 × 单飞缓存委托 × 作用域 ADR 挂载，<= 350 行）
+// 极薄契约、业务域与五段式 ADR 路径索引器（零手写代码解析器，代码图谱与枢纽全权委托 CBM 开源底座，<= 350 行）
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,11 +7,9 @@ import { walk } from '../../skill/fs-walk.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { ATLAS_SUBPACKS, buildProjectAtlas } from '../atlas/contract.mjs';
-import { extractHttpRouteContracts } from './barrel-stub-enrich.mjs';
 import { collectGapsList } from './cmd-inspect.mjs';
 import { CK_SKIP_DIRS, listRootRegularFiles, runWithSingleflightCache } from './cockpit-cache.mjs';
-import { buildSingleFileOutline, extractFullHeaderComment } from './cockpit-file-outline.mjs';
-import { computeContractKneedleHubs, kneedleElbowCount } from './cockpit-hubs.mjs';
+import { kneedleElbowCount, queryCbmContractHubs } from './cockpit-cbm.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs';
 import { computeProjectStatus } from './gates.mjs';
 
@@ -24,6 +22,17 @@ const CK_ADR_KEYWORD_HINTS = [
   { test: (r) => r.includes('skill/adapters'), dom: '05', cid: 'masonry-adapters' },
   { test: (r) => r.includes('wiring-baseline') || r.includes('capabilities.json') || r.includes('advisory'), dom: '05', cid: 'brick-observations' }
 ];
+
+export function extractFullHeaderComment(raw) {
+  const comments = [];
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (t.startsWith('#!')) continue;
+    if (t.startsWith('//')) comments.push(t.replace(/^\/\/+\s*/, '').trim());
+    else if (comments.length > 0 || t !== '') break;
+  }
+  return comments.join(' ').trim();
+}
 
 function ckRegisterPathOwners(rel, graphNodes, allFiles, fileOwners) {
   allFiles.add(rel);
@@ -69,6 +78,17 @@ function ckCollectProjectFileOwners(root, graphNodes, hsNodes) {
     if (existsSync(join(root, hp))) ckRegisterPathOwners(hp, graphNodes, allFiles, fileOwners);
   }
   return { allFiles, fileOwners };
+}
+
+function ckBuildDomainOwnerMap(hsNodes) {
+  const ownerMap = new Map(), groupIds = [];
+  for (const sn of hsNodes || []) {
+    const paths = [];
+    ckCollectHsNodeModulePaths([sn], paths);
+    groupIds.push(sn.step);
+    for (const p of paths) ownerMap.set(p, [sn.step]);
+  }
+  return { ownerMap, groupIds };
 }
 
 function ckFirstProposition(linesArr) {
@@ -147,7 +167,7 @@ function ckCollectTestSummaries(root) {
   return testSummaries;
 }
 
-function ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines) {
+function ckExtractLiveRulesAndTests(root, allFiles, fileOwners) {
   const newAdpRaw = readMaybe(join(root, 'skill/new-adapter.mjs')) || '';
   const archMatch = newAdpRaw.match(/ARCHETYPES\s*=\s*\[([^\]]+)\]/);
   const archetypes = archMatch ? [...archMatch[1].matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]) : [];
@@ -161,7 +181,6 @@ function ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines) {
   }
   return {
     archetypes, newAdapterHeader: extractFullHeaderComment(newAdpRaw),
-    declarationProtocolConsts: fileOutlines['skill/check-declarations.mjs']?.constantsPreview || [],
     workflows, annotatedSubpacks,
     sharedPoolLayout: {
       rootDir: 'workflows/.deps/_shared/', binDir: 'workflows/.deps/_shared/.bin/', distsDir: 'workflows/.deps/_shared/dists/',
@@ -172,36 +191,15 @@ function ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines) {
   };
 }
 
-function ckAppendRouteEntry(routesByFile, r) {
-  if (!r.file) return;
-  if (!routesByFile.has(r.file)) routesByFile.set(r.file, []);
-  const label = `${r.method || 'API'} ${r.path || r}`;
-  if (!routesByFile.get(r.file).includes(label)) routesByFile.get(r.file).push(label);
-}
-
-function ckReadUncoveredCodeEntries(root, allFiles, covered) {
-  const entries = [];
-  let hasDgPrefix = false;
-  for (const f of allFiles) {
-    if (covered.has(f) || !/\.(?:mjs|cjs|js|ts)$/.test(f)) continue;
-    const raw = readMaybe(join(root, f)) || '';
-    if (raw.includes('/donegate/api')) hasDgPrefix = true;
-    entries.push([f, raw]);
+function ckCollectFileHeaders(root, allFiles) {
+  const headers = {};
+  for (const f of [...allFiles].sort()) {
+    const raw = readMaybe(join(root, f));
+    if (raw === null) continue;
+    const h = extractFullHeaderComment(raw);
+    headers[f] = h || (f.endsWith('.json') ? 'JSON 声明式配置/台账文件' : f.endsWith('.cmd') ? 'Windows 批处理脚本' : '源码模块');
   }
-  return { entries, hasDgPrefix };
-}
-
-function ckBuildRoutesByFile(root, graphNodes, allFiles) {
-  const routesByFile = new Map(), covered = new Set();
-  for (const n of graphNodes || []) {
-    for (const sf of n.stub?.scopeFiles || []) covered.add(sf);
-    for (const r of n.stub?.httpRoutes || []) ckAppendRouteEntry(routesByFile, r);
-  }
-  const { entries, hasDgPrefix } = ckReadUncoveredCodeEntries(root, allFiles, covered);
-  for (const [f, raw] of entries) {
-    for (const r of extractHttpRouteContracts(new Map([[f, raw]]), { hasDgPrefix })) ckAppendRouteEntry(routesByFile, r);
-  }
-  return routesByFile;
+  return headers;
 }
 
 function ckEstimateRepoSourceTokens(root, allFiles) {
@@ -213,13 +211,13 @@ function ckEstimateRepoSourceTokens(root, allFiles) {
   return Math.ceil(bytes / 4);
 }
 
-function ckEnrichDomainTree(nodes, fileOutlines, fileOwners, hasIntentFile) {
+function ckEnrichDomainTree(nodes, fileHeaders, fileOwners, hasIntentFile) {
   return (nodes || []).map((nd) => ({
     ...nd,
-    subgraph: nd.subgraph ? { ...nd.subgraph, nodes: ckEnrichDomainTree(nd.subgraph.nodes, fileOutlines, fileOwners, hasIntentFile) } : undefined,
+    subgraph: nd.subgraph ? { ...nd.subgraph, nodes: ckEnrichDomainTree(nd.subgraph.nodes, fileHeaders, fileOwners, hasIntentFile) } : undefined,
     modules: (nd.modules || []).map((m) => {
       const isVirtualIntent = m.path === 'INTENT.md' && !hasIntentFile;
-      const fullHeader = isVirtualIntent ? `${m.name}（画布虚拟立约起点，执行 donegate init 后生成实体 INTENT.md）` : (fileOutlines[m.path]?.header || m.name);
+      const fullHeader = isVirtualIntent ? `${m.name}（画布虚拟立约起点，执行 donegate init 后生成实体 INTENT.md）` : (fileHeaders[m.path] || m.name);
       return { ...m, fullHeader, ownerContracts: (fileOwners.get(m.path) || []).filter(Boolean) };
     })
   }));
@@ -250,12 +248,9 @@ function ckComputeFullIndex(root) {
   const hsNodes = atlas.workbench?.hostSandbox?.nodes || [];
   const gNodes = graph.nodes || [];
   const { allFiles, fileOwners } = ckCollectProjectFileOwners(root, gNodes, hsNodes);
-  const routesByFile = ckBuildRoutesByFile(root, gNodes, allFiles);
-  const fileOutlines = {};
-  for (const f of [...allFiles].sort()) {
-    const out = buildSingleFileOutline(root, f, fileOwners.get(f) || [], routesByFile.get(f) || []);
-    if (out) fileOutlines[f] = out;
-  }
+  const fileHeaders = ckCollectFileHeaders(root, allFiles);
+  const isZeroContract = gNodes.length === 0;
+  const hubInput = isZeroContract ? ckBuildDomainOwnerMap(hsNodes) : { ownerMap: fileOwners, groupIds: gNodes.map((n) => n.id) };
   const hasIntentFile = existsSync(join(root, 'INTENT.md'));
   const intentRaw = readMaybe(join(root, 'INTENT.md')) || '', constraintsRaw = readMaybe(join(root, 'CONSTRAINTS.md')) || '';
   return {
@@ -270,11 +265,11 @@ function ckComputeFullIndex(root) {
     intentText: intentRaw, constraintsText: constraintsRaw,
     thresholds: loadHygieneBudgets(root),
     fallbackSourceTokens: ckEstimateRepoSourceTokens(root, allFiles),
-    domains: ckEnrichDomainTree(hsNodes, fileOutlines, fileOwners, hasIntentFile),
+    domains: ckEnrichDomainTree(hsNodes, fileHeaders, fileOwners, hasIntentFile),
     adrs: ckCollectMountedDecisions(root, gNodes, hsNodes),
-    hubs: computeContractKneedleHubs(root, gNodes, allFiles, fileOwners, hsNodes, fileOutlines),
-    liveMeta: ckExtractLiveRulesAndTests(root, allFiles, fileOwners, fileOutlines),
-    fileOutlines
+    hubs: queryCbmContractHubs(root, hubInput.ownerMap, hubInput.groupIds, isZeroContract),
+    liveMeta: ckExtractLiveRulesAndTests(root, allFiles, fileOwners),
+    fileHeaders
   };
 }
 
