@@ -1,7 +1,7 @@
 // 适配器层唯一公共运行器（Adapter Protocol v1.1 · IoC 模板底座，仅依赖 Node 内置模块）
 //
 // 为什么存在本模块：
-//   消除 22 个具体适配器里重复手搓的参数解析、--stage/--checked-by 越权拦截、注册表校验、
+//   消除全部具体适配器（以 adapters.registry.json 为准）里重复手搓的参数解析、--stage/--checked-by 越权拦截、注册表校验、
 //   跨平台二进制查找与版本提取、semver 范围核对、git 脏树拒收、SHA-256 哈希与严格九字段落盘。
 //   所有具体适配器禁止直接 import node:crypto 或 node:child_process，必须统一调用 runAdapter。
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';

@@ -136,8 +136,11 @@ function ckcBuildZoomZeroMarkdown(idx) {
   for (const sn of idx.domains) z0.push(...ckcFormatDomainBlock(sn, stepById, idx, hasContracts));
 
   if (hasContracts) {
+    const sccNote = (idx.graph.sccCycles || []).length > 0
+      ? `；含互引强连通簇 ${idx.graph.sccCycles.map((c) => `[${c.join(' ⇄ ')}]`).join('、')}，簇内按被依赖净流出度由底座/后端门面先行合入 \`main\`，前端消费卡后跟`
+      : '；双向跨卡调用须先锁后端门面协议合入 `main`';
     z0.push('', '## 2. 密封契约卡边界与跨卡承重接口');
-    z0.push(`推荐拓扑合入序：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（双向跨卡调用场景须先锁定后端路由/门面协议合入 \`main\`，再派前端消费卡）`);
+    z0.push(`推荐拓扑合入序（Tarjan 强连通缩点 DAG）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`);
     for (const cid of idx.graph.topoOrder) z0.push(...ckcFormatContractBlock(cid, idx));
   } else {
     z0.push('', '## 2. 业务域跨域承重接口（零契约模式 · Kneedle 曲率拐点提取）');
@@ -233,6 +236,17 @@ function ckcResolveZoomOutput(idx, target, arg1, opts) {
   return (dom || con) ? renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts) : null;
 }
 
+function ckcFormatMissingZoomError(idx, target) {
+  const stem = target.split('/').pop().replace(/\.[a-z0-9]+$/i, '').toLowerCase();
+  const tokens = stem.split(/[-_.]+/).filter((t) => t.length >= 3);
+  const cands = Object.keys(idx.fileOutlines).filter((f) => {
+    const low = f.toLowerCase();
+    return low.includes(stem) || (tokens.length > 0 && tokens.every((tk) => low.includes(tk)));
+  }).slice(0, 5);
+  const hint = cands.length > 0 ? `（仓库内相近真实路径：${cands.join(', ')}）` : '';
+  return `未找到匹配域编号、契约 ID 或文件路径：${target}${hint}`;
+}
+
 export function cmdZoom(projectRoot, opts = {}) {
   const targets = Array.isArray(opts.targets) ? opts.targets : [];
   if (targets.length === 0) {
@@ -244,13 +258,13 @@ export function cmdZoom(projectRoot, opts = {}) {
   const isParameterizedTopic = opts.decisions || first === 'tests' || first === 'gaps' || first === 'rules';
   if (isParameterizedTopic || targets.length === 1) {
     const out = ckcResolveZoomOutput(idx, first, targets[1], opts);
-    return out !== null ? { exitCode: 0, stdout: out } : { exitCode: 1, stderr: `未找到匹配域编号、契约 ID 或文件路径：${first}` };
+    return out !== null ? { exitCode: 0, stdout: out } : { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, first) };
   }
   const chunks = [];
   for (const rawT of targets) {
     const cleanT = rawT.replace(/^\.\//, '');
     const out = ckcResolveZoomOutput(idx, cleanT, '', opts);
-    if (out === null) return { exitCode: 1, stderr: `未找到匹配域编号、契约 ID 或文件路径：${cleanT}` };
+    if (out === null) return { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, cleanT) };
     chunks.push(out);
   }
   return { exitCode: 0, stdout: chunks.join('\n\n') };

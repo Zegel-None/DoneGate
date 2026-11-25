@@ -57,6 +57,12 @@ function ckCollectProjectFileOwners(root, graphNodes, hsNodes) {
     }
   }
   for (const cfg of listRootRegularFiles(root)) ckRegisterPathOwners(cfg, graphNodes, allFiles, fileOwners);
+  const hooksDir = join(root, '.githooks');
+  if (existsSync(hooksDir)) {
+    for (const hf of readdirSync(hooksDir)) {
+      if (statSync(join(hooksDir, hf)).isFile()) ckRegisterPathOwners(`.githooks/${hf}`, graphNodes, allFiles, fileOwners);
+    }
+  }
   const hsPaths = [];
   ckCollectHsNodeModulePaths(hsNodes, hsPaths);
   for (const hp of hsPaths) {
@@ -219,11 +225,28 @@ function ckEnrichDomainTree(nodes, fileOutlines, fileOwners, hasIntentFile) {
   }));
 }
 
-function ckComputeFullIndex(root, gitHead) {
+function ckSlimGraphProjection(graph) {
+  return {
+    topoOrder: graph.topoOrder || [],
+    sccCycles: graph.sccCycles || [],
+    nodes: (graph.nodes || []).map((n) => ({
+      id: n.id, title: n.title, why: n.why, scope: n.scope,
+      declaredDependsOn: n.declaredDependsOn, dependsOnIds: n.dependsOnIds, dependedByIds: n.dependedByIds,
+      obligations: n.obligations,
+      stub: n.stub ? {
+        sourceTokens: n.stub.sourceTokens || 0, stubTokens: n.stub.stubTokens || 0,
+        scopeFiles: n.stub.scopeFiles || [],
+        stubText: n.stub.stubText || '', httpRoutes: n.stub.httpRoutes || []
+      } : null
+    }))
+  };
+}
+
+function ckComputeFullIndex(root) {
+  const gitHead = (spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim() || 'uncommitted';
   const atlas = buildProjectAtlas(root);
   const graph = discoverHermeticGraph(root);
-  const status = computeProjectStatus(root);
-  const gaps = collectGapsList(root, status);
+  const gaps = collectGapsList(root, computeProjectStatus(root));
   const hsNodes = atlas.workbench?.hostSandbox?.nodes || [];
   const gNodes = graph.nodes || [];
   const { allFiles, fileOwners } = ckCollectProjectFileOwners(root, gNodes, hsNodes);
@@ -236,7 +259,10 @@ function ckComputeFullIndex(root, gitHead) {
   const hasIntentFile = existsSync(join(root, 'INTENT.md'));
   const intentRaw = readMaybe(join(root, 'INTENT.md')) || '', constraintsRaw = readMaybe(join(root, 'CONSTRAINTS.md')) || '';
   return {
-    root, atlas, graph, status, gaps, gitHead,
+    root,
+    atlas: { project: atlas.project || { name: 'project', moduleCount: 0 }, branches: atlas.branches || [] },
+    graph: ckSlimGraphProjection(graph),
+    gaps, gitHead,
     hasDecisionsDir: existsSync(join(root, 'decisions')),
     hasThresholdsFile: existsSync(join(root, 'thresholds.json')),
     intentHash: intentRaw ? sha256(intentRaw).slice(0, 12) : '未初始化（零契约模式）',
@@ -254,6 +280,5 @@ function ckComputeFullIndex(root, gitHead) {
 
 export function buildCockpitGraphIndex(projectRoot) {
   const root = resolve(projectRoot);
-  const gitHead = (spawnSync('git', ['-C', root, 'log', '-1', '--format=%h (%cs) %s'], { encoding: 'utf8' }).stdout || '').trim() || 'uncommitted';
-  return runWithSingleflightCache(root, gitHead, () => ckComputeFullIndex(root, gitHead));
+  return runWithSingleflightCache(root, '', () => ckComputeFullIndex(root));
 }

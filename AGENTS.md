@@ -16,15 +16,15 @@
 
 ## 1. 项目施工第一铁律：主控三级变焦掌控全局 · 区分双模式闭环
 
-1. **主控冷启动三级按需变焦（禁一进仓盲扫全部 165 个源码文件）**：
-   新开会话的主控代理或开源协作者首先执行 `Zoom-0` 全局根视口简报，再按信息气味做确定性 `O(1)` 下钻：
+1. **主控冷启动三级按需变焦（禁一进仓盲扫全仓源码文件；多目标查询优先合并为单条命令）**：
+   新开会话的主控代理或开源协作者首先执行 `Zoom-0` 全局根视口简报（实时统计模块总数、导出符号与 HTTP 路由规模），再按信息气味做确定性 `O(1)` 下钻：
    ```bash
    # Zoom-0：生成与「完结门」画布 1:1 同构的五大业务域、跨域 Kneedle 承重接口与实时阈值
    node runner/donegate.mjs brief
-   # Zoom-1：按需展开目标业务域模块树，或查询实时抽取的规则阈值/单测/缺口字典
-   node runner/donegate.mjs zoom <域编号 01..05 | rules | tests | gaps>
-   # Zoom-2：不读实现体，穿透查看单文件全签名、CLI 参数、内联生成/浏览器脚本函数、HTTP 路由与跨脚本路径
-   node runner/donegate.mjs zoom <相对文件路径>
+   # Zoom-1：支持单条命令一次展开多个业务域（如 zoom 01 02 03），或查规则阈值/单测/缺口字典
+   node runner/donegate.mjs zoom <域编号 01..05 | all | rules | tests | gaps> [更多域...]
+   # Zoom-2：支持单条命令一次穿透多个文件，查看全签名、CLI 参数、内联脚本函数、HTTP 路由与跨脚本路径
+   node runner/donegate.mjs zoom <文件路径1> [文件路径2...]
    # 跨文件波及面雷达：修改任意符号、HTTP 路由、DOM ID 或配置文件前自动推导 1-Hop 关联单测
    node runner/donegate.mjs impact <目标文件、符号、HTTP 路由、DOM ID 或配置文件名>
    ```
@@ -60,6 +60,7 @@ node skill/verify-install.mjs --red-self-test
 node skill/lint-edit.mjs --red-self-test
 node skill/preflight-subagent.mjs --red-self-test
 node skill/check-escapes.mjs --self-check
+node skill/check-brick-liveness.mjs --root . --skip-contract-lookup
 node skill/check-commit-hygiene.mjs --audit-repo
 npm test
 node runner/self-test.mjs

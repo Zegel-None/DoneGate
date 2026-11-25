@@ -1,12 +1,12 @@
-// 跨进程单飞文件锁 JSON 缓存与快速仓库指纹计算器（O_CREAT|O_EXCL + kill(pid,0) ESRCH 死锁自愈，<= 350 行）
-import { closeSync, existsSync, openSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+// 跨进程单飞文件锁投影缓存与零子进程 Git 引用快速指纹器（O_CREAT|O_EXCL + kill(pid,0) ESRCH 自愈，<= 350 行）
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
 
-export const CK_CACHE_SCHEMA = 'cockpit-idx-v7';
+export const CK_CACHE_SCHEMA = 'cockpit-idx-v8';
 export const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools', 'contracts', 'decisions'];
 export const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
 const CK_ROOT_FILE_RE = /\.(?:mjs|cjs|js|ts|json|jsonl|cmd|yml|yaml)$/i;
@@ -20,7 +20,46 @@ export function listRootRegularFiles(root) {
   return out.sort();
 }
 
-export function computeQuickRepoFingerprint(root, gitHead) {
+function resolveGitCommonAndGitDir(root) {
+  const dotGit = join(root, '.git');
+  if (!existsSync(dotGit)) return null;
+  try {
+    if (statSync(dotGit).isDirectory()) return { gitDir: dotGit, commonDir: dotGit };
+    const ptr = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)$/m);
+    if (!ptr) return null;
+    const gitDir = resolve(root, ptr[1].trim());
+    const commFile = join(gitDir, 'commondir');
+    const commonDir = existsSync(commFile) ? resolve(gitDir, readFileSync(commFile, 'utf8').trim()) : gitDir;
+    return { gitDir, commonDir };
+  } catch {
+    return null;
+  }
+}
+
+export function readGitHeadTokenFast(root, fallback = 'uncommitted') {
+  const dirs = resolveGitCommonAndGitDir(root);
+  if (!dirs) return fallback;
+  try {
+    const headRaw = readFileSync(join(dirs.gitDir, 'HEAD'), 'utf8').trim();
+    if (!headRaw.startsWith('ref:')) return headRaw.slice(0, 40) || fallback;
+    const refRel = headRaw.slice(4).trim();
+    for (const base of [dirs.gitDir, dirs.commonDir]) {
+      const loose = join(base, refRel);
+      if (existsSync(loose)) return readFileSync(loose, 'utf8').trim().slice(0, 40);
+    }
+    const packed = join(dirs.commonDir, 'packed-refs');
+    if (existsSync(packed)) {
+      const hit = readFileSync(packed, 'utf8').split(/\r?\n/).find((l) => l.endsWith(' ' + refRel));
+      if (hit) return hit.split(' ')[0].trim().slice(0, 40);
+    }
+    return refRel;
+  } catch {
+    return fallback;
+  }
+}
+
+export function computeQuickRepoFingerprint(root, fallbackHead = '') {
+  const headToken = readGitHeadTokenFast(root, fallbackHead || 'uncommitted');
   let count = 0, maxMtime = 0, totalSize = 0;
   const bump = (abs) => {
     try {
@@ -39,7 +78,7 @@ export function computeQuickRepoFingerprint(root, gitHead) {
     if (!existsSync(absD)) continue;
     for (const f of walk(absD, { skipDirs: CK_SKIP_DIRS }).files) bump(f);
   }
-  return sha256(`${CK_CACHE_SCHEMA}|${root}|${gitHead}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
+  return sha256(`${CK_CACHE_SCHEMA}|${root}|${headToken}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
 }
 
 function tryReadValidCache(cacheFile, root) {
@@ -85,9 +124,9 @@ function persistBuiltCache(cacheFile, computeFn) {
   return built;
 }
 
-export function runWithSingleflightCache(root, gitHead, computeFn) {
+export function runWithSingleflightCache(root, fallbackHead, computeFn) {
   const cacheDir = process.env.DONEGATE_COCKPIT_CACHE_DIR || tmpdir();
-  const cacheFile = join(cacheDir, `dg-${CK_CACHE_SCHEMA}-${computeQuickRepoFingerprint(root, gitHead)}.json`);
+  const cacheFile = join(cacheDir, `dg-${CK_CACHE_SCHEMA}-${computeQuickRepoFingerprint(root, fallbackHead)}.json`);
   const lockPath = `${cacheFile}.lock`;
   for (;;) {
     const hit = tryReadValidCache(cacheFile, root);

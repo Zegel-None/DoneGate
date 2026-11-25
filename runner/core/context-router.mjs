@@ -6,10 +6,13 @@ import { buildNodeInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
 import { DEFAULT_SUBAGENT_BUDGET } from './project-loader.mjs';
 import { collectCodeFilesForCoverage } from './graph-edges.mjs';
+import { sortNodesByTarjanCondensation } from './tarjan-scc.mjs';
 
 export const SHARED_GOVERNANCE_GLOBS = [
   'workflows/', 'AGENTS.md', 'HANDOFF.md', 'README.md', 'CONSTRAINTS.md', 'INTENT.md',
-  'VERSION', 'thresholds.json', 'donegate/', 'donegate-forge/', 'donegate-judge/', 'bricks/', 'docs/'
+  'VERSION', 'thresholds.json', 'install-dsh-web.cmd', '.githooks/',
+  'adapters.registry.json', 'ledger.json', 'batches.jsonl', 'escapes.jsonl',
+  'donegate/', 'donegate-forge/', 'donegate-judge/', 'bricks/', 'docs/'
 ];
 
 const normalizeScopePrefix = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '');
@@ -125,33 +128,7 @@ function loadCanvasExtraNodes(projectRoot, existingIds) {
   return { extraNodes, canvasEdges };
 }
 
-function sortNodesTopologically(nodes, providerMap) {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const indeg = new Map(nodes.map((n) => [n.id, 0]));
-  const dependents = new Map(nodes.map((n) => [n.id, new Set()]));
-  for (const n of nodes) {
-    for (const dep of providerMap.get(n.id) || []) {
-      if (!byId.has(dep) || dep === n.id) continue;
-      dependents.get(dep).add(n.id);
-      indeg.set(n.id, (indeg.get(n.id) || 0) + 1);
-    }
-  }
-  const queue = [...indeg.entries()].filter(([, d]) => d === 0).map(([id]) => id).sort();
-  const ordered = [], seen = new Set();
-  while (queue.length > 0) {
-    const id = queue.shift();
-    if (seen.has(id)) continue;
-    seen.add(id);
-    ordered.push(id);
-    for (const dst of [...(dependents.get(id) || [])].sort()) {
-      const nd = (indeg.get(dst) || 1) - 1;
-      indeg.set(dst, nd);
-      if (nd <= 0 && !seen.has(dst)) { queue.push(dst); queue.sort(); }
-    }
-  }
-  for (const n of nodes) if (!seen.has(n.id)) ordered.push(n.id);
-  return ordered;
-}
+
 
 function ctxRtrResolveRelativeImport(cf, spec, allScopedFiles) {
   if (!spec.startsWith('.')) return null;
@@ -239,9 +216,9 @@ export function discoverHermeticGraph(projectRoot) {
     declaredDeps, providerMap, consumerMap, stubByNode, redImports, facadeViolations
   });
 
-  const topoOrder = sortNodesTopologically(allNodes, providerMap);
+  const { topoOrder, sccCycles } = sortNodesByTarjanCondensation(allNodes, providerMap);
   const enrichedNodes = allNodes.map((n) => ctxRtrBuildEnrichedNode(n, stubByNode, declaredDeps, providerMap, consumerMap));
-  return { ok: true, errors: [], thresholds, testFiles: coverageScan.testFiles, topoOrder, nodes: enrichedNodes, redImports, facadeViolations };
+  return { ok: true, errors: [], thresholds, testFiles: coverageScan.testFiles, topoOrder, sccCycles, nodes: enrichedNodes, redImports, facadeViolations };
 }
 
 export function writeProjectRouter(projectRoot, opts = {}) {

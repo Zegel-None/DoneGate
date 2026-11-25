@@ -1,5 +1,4 @@
-// 读盘与格式化的**唯一实现**（2026-11-19 统一；此前 readMaybe ×12、readJson ×3 策略、pct ×3 变体、
-// rel ×5 各写一份，见 08 §56）。这里只放「被多处复制的口径」，不放业务判断。
+// 读盘与路径格式化的**唯一实现**（统一全仓 readText / readMaybe / readJsonStrict 口径，不放业务判断）。
 import { readFileSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 

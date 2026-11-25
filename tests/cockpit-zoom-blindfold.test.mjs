@@ -26,7 +26,9 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(res.stdout).toContain('[01] 沟通需求与定好验收标准');
     expect(res.stdout).toContain('[02] 界面实时预览与分派助手');
     expect(res.stdout).toContain('物理目录：`runner/dsh/`');
-    expect(res.stdout).toContain('HTTP 路由：52 条');
+    expect(res.stdout).toContain('HTTP 路由：53 条');
+    expect(res.stdout).toContain('01.00 先把想法聊透、列好验收清单(1项) → 01.01 项目基础设置与测试开关');
+    expect(res.stdout).not.toContain('01.00 先把想法聊透、列好验收清单(1项) → 01.02');
     expect(res.stdout).toContain('[03] 可视化项目看板与过夜挂机');
     expect(res.stdout).toContain('exportDashboardHtml(projectRoot, outPath, opts)');
     expect(res.stdout).not.toContain("dashboard.html'), opts)");
@@ -174,12 +176,54 @@ describe('DoneGate 主控零魔法数字三级按需变焦驾驶舱 (brief / zoo
     expect(dshIdxZoom.stdout).not.toContain('export re-export');
 
     const cmdZoom = dispatchCommand(['zoom', 'install-dsh-web.cmd'], REPO_ROOT);
-    expect(cmdZoom.stdout).toContain('批处理执行步骤');
+    expect(cmdZoom.stdout).toContain('脚本执行步骤');
     expect(cmdZoom.stdout).not.toContain('export cmd:');
 
     const pfZoom = dispatchCommand(['zoom', 'skill/preflight-subagent.mjs'], REPO_ROOT);
     expect(pfZoom.stdout).toContain('--expect-branch');
     expect(pfZoom.stdout).toContain('--node');
     expect(pfZoom.stdout).toContain('--target-node');
+  });
+
+  it('L1 根因回归：最内层括号作用域 HTTP 方法推导、内联脚本结构识别、配对引号数组、顶层对象键与 Tarjan 缩点序', () => {
+    const srvZoom = dispatchCommand(['zoom', 'runner/atlas/serve-atlas.mjs'], REPO_ROOT);
+    expect(srvZoom.exitCode).toBe(0);
+    expect(srvZoom.stdout).toContain('POST /api/workbench/import-project');
+    expect(srvZoom.stdout).not.toContain('GET /api/workbench/import-project');
+    expect(srvZoom.stdout).toContain('--port');
+    expect(srvZoom.stdout).toContain('--root');
+
+    const hostZoom = dispatchCommand(['zoom', 'runner/dsh/host-routes.mjs'], REPO_ROOT);
+    expect(hostZoom.stdout).toContain('POST /donegate/api/workflow-deps/refresh');
+    expect(hostZoom.stdout).not.toContain('GET /donegate/api/workflow-deps/refresh');
+    expect(hostZoom.stdout).toContain('POST /donegate/api/workflow-deps/provision');
+    expect(hostZoom.stdout).not.toContain('GET /donegate/api/workflow-deps/provision');
+    expect(hostZoom.stdout).toContain('POST /donegate/api/workflow-deps/inspect');
+    expect(hostZoom.stdout).toContain('POST /donegate/api/atlas/refresh');
+    expect(hostZoom.stdout).not.toContain('GET /donegate/api/atlas/refresh');
+
+    const chatZoom = dispatchCommand(['zoom', 'runner/dsh/client-chat-extract.mjs', 'runner/dsh/subagent-isolation.mjs', 'runner/dsh/shared-pool-installer.mjs', 'runner/atlas/wb-catalog.mjs'], REPO_ROOT);
+    expect(chatZoom.exitCode).toBe(0);
+    expect(chatZoom.stdout).toContain('[browser] function parseUserQuoteTags(rawText)');
+    expect(chatZoom.stdout).toContain('[browser] function DoneGateSubagentReadOnlyComposer(props)');
+    expect(chatZoom.stdout).toContain("POSIX_NULL_SINK = ['', 'd', 'ev', 'null']");
+    const hookZoom = dispatchCommand(['zoom', '.githooks/pre-commit'], REPO_ROOT);
+    if (existsSync(join(REPO_ROOT, '.githooks/pre-commit'))) {
+      expect(hookZoom.exitCode).toBe(0);
+      expect(hookZoom.stdout).toContain('脚本执行步骤');
+      expect(hookZoom.stdout).toContain('SHARED_GOVERNANCE_GLOBS');
+    }
+    expect(chatZoom.stdout).not.toContain("Object.freeze({\n");
+
+    const missZoom = dispatchCommand(['zoom', 'runner/dsh/install-dsh-web-typo.mjs'], REPO_ROOT);
+    expect(missZoom.exitCode).toBe(1);
+
+    if (existsSync(join(REPO_ROOT, 'contracts'))) {
+      const brief = dispatchCommand(['brief', '--json'], REPO_ROOT);
+      const contracts = JSON.parse(brief.stdout).contracts;
+      expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('atlas-workbench'));
+      expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('publish-tooling'));
+      expect(contracts[contracts.length - 1]).toBe('publish-tooling');
+    }
   });
 });

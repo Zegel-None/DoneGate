@@ -115,12 +115,12 @@ node runner/atlas-fixtures.mjs             # 跑无限画布测绘、自适应�
 
 ### 面向开源协作者与 AI 代理的代码寻路入口
 
-如果你是来阅读源码、排查问题或提交 PR 的开发者 / AI 编码代理，**请先阅读根目录 `AGENTS.md`**，无需盲翻全仓 165 个源码模块，直接用内置零依赖三级按需变焦驾驶舱 `O(1)` 定位：
+如果你是来阅读源码、排查问题或提交 PR 的开发者 / AI 编码代理，**请先阅读根目录 `AGENTS.md`**，无需盲翻全仓源码模块，直接用内置零依赖三级按需变焦驾驶舱 `O(1)` 定位（多目标查询推荐在单条 `zoom` 命令中一次并列传入）：
 
 ```bash
-node runner/donegate.mjs brief                       # Zoom-0：一屏看清五大业务域、58 条 HTTP 路由、Kneedle 承重接口与四维提交红线
-node runner/donegate.mjs zoom <01..05|rules|tests>   # Zoom-1：展开目标业务域模块树、实时阈值规则字典或全仓单测清单
-node runner/donegate.mjs zoom <相对文件路径>          # Zoom-2：穿透查看单文件导出/内部/内联生成函数签名、CLI 参数与跨脚本路径
+node runner/donegate.mjs brief                       # Zoom-0：一屏看清五大业务域、实时模块/HTTP 路由规模、Kneedle 承重接口与四维红线
+node runner/donegate.mjs zoom <01..05|rules|tests>   # Zoom-1：支持一次并列展开多个业务域（如 zoom 01 02）、实时阈值字典或单测清单
+node runner/donegate.mjs zoom <文件1> [文件2...]      # Zoom-2：一次穿透多个文件的导出/内部/内联脚本函数签名、CLI 参数与跨脚本路径
 node runner/donegate.mjs impact <符号|路由|文件路径>   # 影响面雷达：自动反查跨文件调用点并推导 1-Hop 必跑回归单测
 node runner/donegate.mjs lint-edit <修改文件路径>      # 毫秒级微门禁：即时检查语法、认知复杂度（<=15 绿灯 / >25 硬拦）与反压行
 ```

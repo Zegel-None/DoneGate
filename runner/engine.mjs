@@ -2,14 +2,14 @@
 // 用法：
 //   node runner/engine.mjs --root <项目根> --changed <file1,file2> [--observation <observation.json>] [--json]
 //   node runner/engine.mjs                   （无参数时提示用法并退 3，夹具见 runner/donegate-fixtures.mjs）
-// 退出码（§八 四值）：0 成功算出影响面；2 契约/观测 JSON 损坏或结构非法；3 根目录/观测文件读不出或参数缺失。
+// 退出码（四值规范）：0 成功算出影响面；2 契约/观测 JSON 损坏或结构非法；3 根目录/观测文件读不出或参数缺失。
 //
-// 诚实边界（按 adr/007 降一档采信）：
+// 诚实边界（静态声明采信边界）：
 //   1. 只依据静态声明的 contract.scope、contract.dependsOn、functions/*.contracts 与可选 codegraph observation.json 计算；
 //      不执行代码，不捕获动态 require/反射或跨进程隐式耦合。
-//   2. 严禁修改契约既有的「通过」主状态，也不得覆盖或删除历史运行证据（§11.1 + adapter-codegraph §1.4）；
+//   2. 严禁修改契约既有的「通过」主状态，也不得覆盖或删除历史运行证据；
 //      只计算并输出 pendingRecheck / expired / 受影响业务场景，由展示层与总账现算消费。
-//   3. 不负责清除 pendingRecheck（清标记只认 §11.2 证明下游输入/产物一致）。
+//   3. 不负责清除 pendingRecheck（清标记须由重验下游输入/产物一致性完成）。
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

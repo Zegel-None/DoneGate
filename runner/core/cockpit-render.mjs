@@ -6,7 +6,7 @@ function ckrFormatFnDecl(fnSig, prefixTag = '') {
 }
 
 function ckrExportsSectionTitle(kind, len) {
-  if (kind === 'cmd') return `批处理执行步骤 (共 ${len} 步):`;
+  if (kind === 'cmd' || kind === 'sh') return `脚本执行步骤 (共 ${len} 步):`;
   if (kind === 'json') return `顶层配置键 (共 ${len} 项):`;
   if (kind === 'doc') return `文档首段摘要 (共 ${len} 行):`;
   return `对外导出签名与常量键值 (exports, 共 ${len} 项):`;
@@ -23,7 +23,7 @@ function ckrAppendOutlineExtras(L, fileHit) {
     for (const fn of fileHit.internalFunctions) L.push(`  · ${ckrFormatFnDecl(fn)}`);
   }
   if (fileHit.browserInlineFunctions.length > 0) {
-    const inlineTag = (fileHit.file.endsWith('-gen.mjs') || fileHit.file.endsWith('-templates.mjs')) ? 'codegen' : 'browser';
+    const inlineTag = (fileHit.file === 'runner/dsh/dg-deps-cli-gen.mjs' || fileHit.file.endsWith('-templates.mjs')) ? 'codegen' : 'browser';
     L.push(`内联生成/浏览器脚本函数签名 (共 ${fileHit.browserInlineFunctions.length} 项，完整无截断):`);
     for (const fn of fileHit.browserInlineFunctions) L.push(`  · ${ckrFormatFnDecl(fn, inlineTag)}`);
   }
@@ -83,12 +83,15 @@ export function renderDecisionsZoom(idx, target, fullFlag, filterKw) {
 }
 
 function ckrRenderContractDetail(con, stubsFlag) {
+  const biPeers = (con.dependsOnIds || []).filter((x) => (con.dependedByIds || []).includes(x));
+  const scopeFiles = con.stub?.scopeFiles || [];
   const L = [
     `=== 契约详情: ${con.id} (${con.title}) ===`,
     `职责说明: ${con.why}`,
-    `管辖路径 scope[]: ${JSON.stringify(con.scope)}`,
+    `管辖路径 scope[]: ${JSON.stringify(con.scope)}（实辖源码 ${scopeFiles.length} 个：${scopeFiles.join(', ') || '无'}）`,
     `显式声明 dependsOn: ${(con.declaredDependsOn || []).join(', ') || '无'}`,
     `静态导入上游: ${con.dependsOnIds.join(', ') || '无'} | 下游消费方: ${con.dependedByIds.join(', ') || '无'}`,
+    ...(biPeers.length > 0 ? [`双向互引契约拆单提示: 与 [${biPeers.join(', ')}] 存在双向依赖——改动跨卡协议时须先锁定底座/后端门面卡合入 main，再派前端/外围消费卡`] : []),
     `HTTP 路由: ${(con.stub?.httpRoutes || []).map((r) => `${r.method || 'API'} ${r.path || r}`).join(', ') || '无'}`,
     '冻结判据条目 (obligations):'
   ];

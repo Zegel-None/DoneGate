@@ -509,13 +509,13 @@ function computeLongestDagDepths(nodes) {
   return depthMap;
 }
 
-function applySavedNodeLayout(nd, saved, idx, col, row, colCount, maxColCount) {
+function applySavedNodeLayout(nd, saved, stepCode, col, row, colCount, maxColCount) {
   const hasSavedColor = Boolean(saved.color && saved.color !== 'none');
   const rowPitch = 198;
   const yCenterOffset = Math.round(((maxColCount - colCount) * rowPitch) / 2);
   return {
     ...nd,
-    step: nd.id === 'host-dom-grill-me' ? '00' : String(idx + 1).padStart(2, '0'),
+    step: stepCode,
     x: typeof saved.x === 'number' ? saved.x : 64 + col * 342,
     y: typeof saved.y === 'number' ? saved.y : 88 + yCenterOffset + row * rowPitch,
     w: typeof saved.w === 'number' ? saved.w : (nd.w || 272),
@@ -543,11 +543,13 @@ function layoutDagLayerNodes(nodes, savedState = {}) {
     const dDiff = (depthMap.get(a.id) || 0) - (depthMap.get(b.id) || 0);
     return dDiff !== 0 ? dDiff : (inferNodeArchTier(a) - inferNodeArchTier(b));
   });
-  return ordered.map((nd, idx) => {
+  let nonGrillSeq = 0;
+  return ordered.map((nd) => {
+    const stepCode = nd.id === 'host-dom-grill-me' ? '00' : String(++nonGrillSeq).padStart(2, '0');
     const col = depthMap.get(nd.id) || 0;
     const row = colRows.get(col) || 0;
     colRows.set(col, row + 1);
-    return applySavedNodeLayout(nd, layouts[nd.id] || {}, idx, col, row, colTotals.get(col) || 1, maxColCount);
+    return applySavedNodeLayout(nd, layouts[nd.id] || {}, stepCode, col, row, colTotals.get(col) || 1, maxColCount);
   });
 }
 

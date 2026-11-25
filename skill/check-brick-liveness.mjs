@@ -1,12 +1,12 @@
 // 旁路检查层（按场景跑，不进十二条）：工具 3 批硬淘汰制、注册表/台账一致性、声明挂靠、J3 过程信号旁注。
 // 用法：
-//   node skill/check-brick-liveness.mjs                    默认：自带夹具自检
-//   node skill/check-brick-liveness.mjs --root <项目根>    核验 ledger.json、batches.jsonl、adapters.registry.json 与 contracts/ 四方关系
-// 退出码（§八 四值）：0 三项都过 / 1 有应拔除工具、注册表台账不一致，或有孤儿声明 / 2 结构损坏或 checkedBy 语法非法 / 3 材料缺失（含「本仓还没有 contracts/」）。
+//   node skill/check-brick-liveness.mjs                                            默认：自带夹具自检
+//   node skill/check-brick-liveness.mjs --root <项目根> [--skip-contract-lookup]   核验 ledger.json、batches.jsonl、adapters.registry.json（加 --skip-contract-lookup 适配无 contracts/ 的公开仓）
+// 退出码（四值规范）：0 通过 / 1 有应拔除工具、注册表台账不一致或有孤儿声明 / 2 结构损坏或 checkedBy 语法非法 / 3 材料缺失（未加 --skip-contract-lookup 且本仓无 contracts/）。
 //
-// 为什么要加「注册表 ↔ 台账」这一条：2026-11-20 通读时发现 skill/15 的状态列与 adapters.registry.json
-// 说的不是一回事（文档说「冻结」而注册表已入网），文档漂移没人守。这条检查把「登记」与「入网记账」绑在一起：
-// 只在注册表里有、或只在台账里有，都判红（退 1），而不是让下一个读文档的人自己发现。
+// 为什么要加「注册表 ↔ 台账」这一条：历史审计曾发现外部工具文档状态列与 adapters.registry.json
+// 出现口径脱节（文档写冻结而注册表已入网）。这条检查把「注册表登记」与「入网记账」双向锁死：
+// 只在注册表里有、或只在台账里有，一律判红（退 1），杜绝人工漏记。
 //
 // 诚实边界：
 //   1. 只按 ledger.json 的 wiredAtBatch 与 batches.jsonl 批次数判定是否应强制拔除；不独立核验 actionsChanged 是否虚报。
@@ -125,7 +125,7 @@ function worstExitCode(codes) {
 // ── 声明挂靠（wiring）：每条 registry.checkedBy 必须解析到本仓真实契约里真实存在的判据 ──
 // 为什么需要它：2026-11-20 发现 18 个工具的 checkedBy 全指向不存在的 c01/*——因为接砖时本仓还没有
 // contracts/，只能照抄协议样例的占位；而核侧所有自动路径都 skipContractLookup，于是「声明没人认领」
-// 在流水线里完全隐形，18 条声明 + 0 条判据、三条门禁全绿。（详见 docs/plans/0.4.0-开发计划.md）
+// 在流水线里完全隐形，造成声明未挂靠判据却静默全绿。
 // 这条门禁把「挂靠」变成机器可判：解析不到即红，不让新孤儿再溜进来。
 //
 // 三档语义（缺一档就会误伤「还没自举的用户项目」）：
@@ -148,12 +148,29 @@ function readContractsIndex(projectRoot) {
   return { exists: true, map };
 }
 
-export function evaluateBrickWiring(projectRoot) {
+export function evaluateBrickWiring(projectRoot, opts = {}) {
   const regRes = readJsonStrict(join(projectRoot, 'adapters.registry.json'));
   if (!regRes.ok) return { exitCode: regRes.error === 'parse' ? 2 : 3, issues: [], wired: [], pending: [], reason: 'adapters.registry.json 读不出或损坏' };
   const adapters = regRes.value && regRes.value.adapters;
   if (!Array.isArray(adapters)) return { exitCode: 2, issues: ['adapters.registry.json 缺少 adapters 数组'], wired: [], pending: [], reason: '结构损坏' };
 
+  const earlyMalformed = [];
+  for (const a of adapters) {
+    if (!a || !a.id) continue;
+    const refs = Array.isArray(a.checkedBy) ? a.checkedBy : [a.checkedBy];
+    for (const ref of refs) {
+      const parts = typeof ref === 'string' ? ref.split('/') : [];
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        earlyMalformed.push(`${a.id}: checkedBy 语法非法（必须 <契约id>/<判据id>）：${JSON.stringify(ref)}`);
+      }
+    }
+  }
+  if (earlyMalformed.length > 0) {
+    return { exitCode: 2, issues: earlyMalformed, wired: [], pending: [], advisory: [], total: adapters.length, reason: `${earlyMalformed.length} 处 checkedBy 语法非法` };
+  }
+  if (opts.skipContractLookup) {
+    return { exitCode: 0, skipped: true, issues: [], wired: [], pending: [], advisory: [], total: adapters.length, reason: '零契约模式已校验 checkedBy 语法并跳过契约判据挂靠查找' };
+  }
   const cIdx = readContractsIndex(projectRoot);
   if (!cIdx.exists || cIdx.map.size === 0) {
     return {
@@ -161,8 +178,9 @@ export function evaluateBrickWiring(projectRoot) {
       issues: [],
       wired: [],
       pending: [],
+      advisory: [],
       total: adapters.length,
-      reason: '本仓没有 contracts/（或为空），无法判断 checkedBy 是否被认领；引导期允许，退 3'
+      reason: '本仓没有 contracts/（或为空），无法判断 checkedBy 是否被认领；引导期允许，退 3（零契约公开仓可加 --skip-contract-lookup）'
     };
   }
 
@@ -348,6 +366,10 @@ function runLivenessSelfTest() {
       evaluateBrickWiring(mkWire('wire-adv-bad', [{ id: 'a@stage4', tool: 'a', checkedBy: 'c1/o1' }], [], [['c1', 'o1']], [{ id: 'a@stage4', reason: '观测不构成判据' }])).exitCode === 1);
     assertLiveness('wiring：advisory 条目没写理由 → 退 2',
       evaluateBrickWiring(mkWire('wire-adv-noreason', [{ id: 'a@stage4', tool: 'a', checkedBy: 'c9/o9' }], [], [['c1', 'o1']], [{ id: 'a@stage4', reason: '  ' }])).exitCode === 2);
+    assertLiveness('wiring：零契约模式 --skip-contract-lookup 校验语法通过 → 退 0',
+      evaluateBrickWiring(mkWire('wire-noc-skip', [{ id: 'a@stage4', tool: 'a', checkedBy: 'c1/o1' }], null, []), { skipContractLookup: true }).exitCode === 0);
+    assertLiveness('wiring：零契约模式下 checkedBy 语法非法仍退 2',
+      evaluateBrickWiring(mkWire('wire-noc-mal', [{ id: 'a@stage4', tool: 'a', checkedBy: 'noslash' }], null, []), { skipContractLookup: true }).exitCode === 2);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -358,11 +380,13 @@ function runLivenessSelfTest() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const rIdx = argv.indexOf('--root');
+  const skipContractLookup = argv.includes('--skip-contract-lookup');
   if (rIdx >= 0) {
-    const root = resolve(argv[rIdx + 1] || LIVE_REPO);
+    const rawRootArg = argv[rIdx + 1];
+    const root = resolve(rawRootArg && !rawRootArg.startsWith('--') ? rawRootArg : LIVE_REPO);
     const live = evaluateBrickLiveness(root);
     const cons = evaluateRegistryLedgerConsistency(root);
-    const wire = evaluateBrickWiring(root);
+    const wire = evaluateBrickWiring(root, { skipContractLookup });
 
     if (live.exitCode === 0) console.log(`bricks=${live.brickCount}, batches=${live.currentBatch} | ${live.j3Note}`);
     else if (live.exitCode === 1) console.log(`需强制拔除的无效工具：${live.deadBricks.map((d) => `${d.brick}(已跑${d.elapsed}批/0改动)`).join('、')} | ${live.j3Note}`);

@@ -210,27 +210,47 @@ function normRoute(rawRoute, prefix = '') {
   return (m && !/\.(?:mjs|ts|cjs|css|png|svg)$/i.test(m[1])) ? m[1] : null;
 }
 
-function inferMethods(cleanSrc, matchIdx, nextIdx) {
-  const rv = cleanSrc.slice(Math.max(0, matchIdx - 36), matchIdx).match(/\.\s*(get|post|put|delete|patch)\s*\(\s*$/i);
-  if (rv) return [rv[1].toUpperCase()];
-  const stmtBreak = Math.max(cleanSrc.lastIndexOf('\n', matchIdx), cleanSrc.lastIndexOf(';', matchIdx), cleanSrc.lastIndexOf('}', matchIdx));
-  const hStart = Math.max(0, stmtBreak + 1);
-  const bLim = Math.min(cleanSrc.length, nextIdx > matchIdx ? nextIdx : matchIdx + 520, matchIdx + 520);
-  const brace = cleanSrc.indexOf('{', matchIdx);
-  const hEnd = (brace >= 0 && brace < bLim && brace - matchIdx < 180) ? brace : Math.min(bLim, matchIdx + 140);
-  const methodRe = /\b(?:req\.method|method)\s*===?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]|['"](GET|POST|PUT|DELETE|PATCH)['"]\s*===?\s*(?:req\.method|method)|\bmethod\s*:\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/g;
-  const hdrSlice = cleanSrc.slice(hStart, hEnd);
-  const hits = new Set([...hdrSlice.matchAll(methodRe)].map((m) => (m[1] || m[2] || m[3]).toUpperCase()));
+const BSE_METHOD_EQ_RE = /\b(?:req\.method|method)\s*===?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]|['"](GET|POST|PUT|DELETE|PATCH)['"]\s*===?\s*(?:req\.method|method)|\bmethod\s*:\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/g;
+const BSE_METHOD_NEQ_RE = /\b(?:req\.method|method)\s*!==?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/;
+
+function bseScanMethodsInSlice(slice) {
+  const hits = new Set([...slice.matchAll(BSE_METHOD_EQ_RE)].map((m) => (m[1] || m[2] || m[3]).toUpperCase()));
   if (hits.size > 0) return [...hits];
-  const negHdr = hdrSlice.match(/\b(?:req\.method|method)\s*!==?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/);
-  if (negHdr) return [negHdr[1].toUpperCase()];
-  if (brace >= 0 && brace < bLim) {
-    const closeB = findBal(cleanSrc, brace, '{', '}');
-    const body = cleanSrc.slice(brace, closeB > brace ? Math.min(closeB + 1, bLim) : bLim);
-    for (const bm of body.matchAll(methodRe)) hits.add((bm[1] || bm[2] || bm[3]).toUpperCase());
-    if (hits.size > 0) return [...hits];
-    const neg = body.match(/\b(?:req\.method|method)\s*!==?\s*['"](GET|POST|PUT|DELETE|PATCH)['"]/);
-    if (neg) return [neg[1].toUpperCase()];
+  const neg = slice.match(BSE_METHOD_NEQ_RE);
+  return neg ? [neg[1].toUpperCase()] : null;
+}
+
+function bseCollectEnclosingParenSpans(cleanSrc, scanStart, matchIdx) {
+  const spans = [];
+  for (let i = scanStart; i < matchIdx; i++) {
+    if (cleanSrc[i] !== '(') continue;
+    const closeP = findBal(cleanSrc, i, '(', ')');
+    if (closeP >= matchIdx) spans.push([i, closeP]);
+  }
+  return spans.sort((a, b) => (a[1] - a[0]) - (b[1] - b[0]));
+}
+
+function inferMethods(cleanSrc, matchIdx, nextIdx) {
+  const preCall = cleanSrc.slice(0, matchIdx).match(/\.\s*(get|post|put|delete|patch)\s*\(\s*$/i);
+  if (preCall) return [preCall[1].toUpperCase()];
+  const stmtBreak = Math.max(cleanSrc.lastIndexOf(';', matchIdx), cleanSrc.lastIndexOf('}', matchIdx), cleanSrc.lastIndexOf('{', matchIdx));
+  const scanStart = Math.max(0, stmtBreak + 1);
+  const spans = bseCollectEnclosingParenSpans(cleanSrc, scanStart, matchIdx);
+  for (const [openP, closeP] of spans) {
+    const found = bseScanMethodsInSlice(cleanSrc.slice(openP + 1, closeP));
+    if (found) return found;
+  }
+  const outerEnd = spans.length > 0 ? spans[spans.length - 1][1] + 1 : matchIdx;
+  const lineEnd = cleanSrc.indexOf('\n', outerEnd);
+  const inlineFound = bseScanMethodsInSlice(cleanSrc.slice(scanStart, lineEnd > outerEnd ? lineEnd : cleanSrc.length));
+  if (inlineFound) return inlineFound;
+  const afterCond = cleanSrc.slice(outerEnd).match(/^\s*\{/);
+  if (afterCond) {
+    const braceIdx = outerEnd + afterCond[0].indexOf('{');
+    const closeB = findBal(cleanSrc, braceIdx, '{', '}');
+    const bodyEnd = closeB > braceIdx ? (nextIdx > braceIdx && nextIdx < closeB ? nextIdx : closeB + 1) : cleanSrc.length;
+    const bodyFound = bseScanMethodsInSlice(cleanSrc.slice(braceIdx, bodyEnd));
+    if (bodyFound) return bodyFound;
   }
   return ['GET'];
 }
