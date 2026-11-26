@@ -1,5 +1,7 @@
 # DoneGate · 完结门（v1.0.0）
 
+**简体中文（默认）** | [English](README.en.md)
+
 > **专为不懂写代码的 Vibecoder 打造的「AI 工程监理 + 可视化产品指挥台」**
 >
 > 你只管用大白话提想法、看界面、做选择题、拍板签收；把**「防 AI 嘴硬假交工、防改崩老功能、防代码变屎山、防半夜挂机翻车」**全部交给完结门的机器硬门禁。
@@ -90,7 +92,8 @@
 - **零魔法数字自适应分层（`runner/atlas/modularity-hierarchy.mjs`）**：拒绝一刀切硬凑固定卡片数，采用 Newman-Girvan 模块度增益判据（$\Delta Q > 0$）结合有向无环凸性约束做非均衡递归聚合——简单线性项目 100% 平铺零套娃，复杂内聚子系统自动成组并支持拓扑鱼眼原地展开（参考 [C4 Model](https://c4model.com/diagrams)、[IcePanel Flows](https://docs.icepanel.io/visual-storytelling/flows) 与 [Zooming User Interface](https://en.wikipedia.org/wiki/Zooming_user_interface)）。
 - **密封契约切片与 400k 五段式派工预算（`donegate slice` / `check-node`）**：按百万窗口模型注意力黄金甜点（`1M × 40% = 400,000 Tokens`，亦支持小窗口按比例缩放）切出密封施工胶囊——0-Hop 本卡源码与测试 `160k` + 1-Hop 只读接口存根 `48k`，2-Hop 以外无关代码物理屏蔽；子智能体完工跑 `check-node --receipt` 秒级拦截越界改文件与私改接口，仅回传 500-Token 回执即可销毁子上下文。
 - **独立工具舱共享依赖池（`workflows/.deps/_shared/npm-cells/`）**：每款外部 CLI 工具（如 Storybook、Lighthouse CI、Playwright、Gitleaks）按确定性精确版本隔离安装进各自的 `npm-cells/<id>/` 独立舱室并生成跨目录 `NODE_PATH` 启动器，彻底根绝跨大版本依赖打架（如 Vite 6 vs 8）与 `npm` 互删顽疾。
-- **双层子智能体人机隔离锁（`runner/dsh/subagent-isolation.mjs`（私有仓））**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
+- **严格单向无环六层架构与全仓零复杂度超标（v1.0.0）**：全仓拆分为 `L0 → L7` 严格单向无环分层架构（`runner/shared/` → `runner/core/` → `runner/dsh/{deps,uiboard,autopilot}/` （私有仓）→ `runner/atlas/` → `runner/cockpit/` & `runner/dsh/host/`），全跨层严格走公共门面、全仓源码认知复杂度 100% ≤ 25；内置 Python 一等公民支持、OpenSpec 双轨探索态（`contract new --explore` / `promote`）与独占资源混合串并行挂机调度。
+- **双层子智能体人机隔离锁（`runner/dsh/host/subagent-isolation.mjs`）**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
 - **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 31 个真实适配器链路；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
 
 ## 五、仓库目录速览与手工自检命令
@@ -100,8 +103,9 @@
 | `skill/verify-install.mjs` | **一站式安装与六道防撒谎真机验真器**（裸机排雷、全 Profile 挂载、VM 试装、输出 `DG-INSTALL-OK-` 防伪码） |
 | `install-dsh-web.cmd` | Windows 双击一键安装与环境自动补齐脚本 |
 | `donegate/` · `donegate-judge/` · `donegate-forge/` | 三套核心技能：写方立约施工、双盲独立冷酷裁判、外部开源工具扩展工坊 |
-| `runner/atlas/` · `runner/dsh/` | 无限画布工作台（项目看板 / 工作流 / UI 看板）、DSH Web 插件总装与 Git Worktree 过夜挂机引擎 |
-| `runner/donegate.mjs` | 判定核统一命令行入口（含 `brief` / `zoom` 三级变焦驾驶舱、`impact` 波及面雷达、`lint-edit` 微门禁与 `slice` 密封切片） |
+| `runner/shared/` · `runner/core/` | L0 零依赖共享原语底座 + L1 纯无头防篡改判定核（12 令、密封切片、影响雷达与 CBM 图谱桥） |
+| `runner/atlas/` · `runner/dsh/{deps,uiboard,autopilot,host}/` （私有仓）| 无限画布工作台（项目看板 / 工作流 / UI 看板）、四域解耦 DSH Web 插件与 Git Worktree 过夜挂机引擎 |
+| `runner/donegate.mjs` · `runner/cockpit/` | L5 CLI 组合根与三级变焦驾驶舱（`brief` / `zoom` / `impact` / `lint-edit` / `slice`） |
 | `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 31 个外部确定性工具适配器 |
 
 若你想在本地随时重跑全套工程健康自检，在仓库根目录执行：
