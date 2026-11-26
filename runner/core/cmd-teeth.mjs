@@ -6,16 +6,30 @@ import { readJsonStrict } from '../../skill/io.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { verifyClaimInMemory } from '../../skill/check-declarations.mjs';
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
+import { cmdCatch, runAchSemanticMutants } from './teeth-ach.mjs';
+export { cmdCatch };
 
 export function cmdTeeth(projectRoot, opts) {
   const { id, criterionId, tier = 'A' } = opts;
-  if (!id || !criterionId) return { exitCode: 3, stderr: '用法：teeth <契约id> <判据id> [--tier A|B]' };
+  if (!id || !criterionId) return { exitCode: 3, stderr: '用法：teeth <契约id> <判据id> [--tier A|B|ACH] [--mutants <json>]' };
   const cPath = join(projectRoot, 'contracts', id, 'contract.json');
   const res = readJsonStrict(cPath);
   if (!res.ok) return { exitCode: res.error === 'parse' ? 2 : 3, stderr: '读取契约失败：' + cPath };
   const contract = res.value;
   const ob = (contract.obligations || []).find((o) => o.id === criterionId);
   if (!ob) return { exitCode: 3, stderr: `契约 ${id} 中找不到判据 ${criterionId}` };
+
+  if (String(tier).toUpperCase() === 'ACH') {
+    const ach = runAchSemanticMutants(projectRoot, contract, ob, { mutants: opts.mutants, contractPath: cPath });
+    if (ach.exitCode !== 0 && ach.stderr) return ach;
+    const hl = ach.exitCode === 0
+      ? `✅ [3-1] 「${ob.claim || criterionId}」ACH 语义变异验证通过 · 总进度 {{PCT}}`
+      : `❌ [3-1] 「${ob.claim || criterionId}」ACH 语义变异未全杀（${ach.result}）`;
+    return {
+      ...ach,
+      stdout: `${ach.stdout}\n\n` + renderProgressBlock(projectRoot, { focusContractId: id, headline: hl })
+    };
+  }
 
   if (tier === 'B') {
     const claimPath = resolve(projectRoot, opts.claim || '.donegate/adapters/stryker/claim.json');

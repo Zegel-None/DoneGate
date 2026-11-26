@@ -1,5 +1,5 @@
 // 跨文件语义、CBM 开源图谱调用边与 UI 锚点影响面雷达（无截断 1-Hop 单测推导与 ADR 预警，<= 350 行）
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { extractFileInterfaceStub } from './ast-stub.mjs';
@@ -7,7 +7,7 @@ import { queryCbmImpactGraph } from './cockpit-cbm.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs';
 
 const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
-const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
+const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', 'dist', '_dist', 'coverage', 'reports'];
 const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json', '.cmd']);
 const IR_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$|^runner\/self-test\.mjs$/i;
 const IR_GENERIC_ANCHORS = new Set([
@@ -56,12 +56,23 @@ function irExtractAnchorsFromFile(raw, relPath) {
   return anchors;
 }
 
+function irAddSingleFileAnchors(root, absFile, selfFiles, put) {
+  const rel = relative(root, absFile).split(sep).join('/');
+  selfFiles.add(rel);
+  for (const [tok, kind] of irExtractAnchorsFromFile(readFileSync(absFile, 'utf8'), rel).entries()) put(tok, kind, rel);
+}
+
 function irAddSingleRawTarget(root, rawTarget, selfFiles, put) {
   const candAbs = resolve(root, rawTarget);
   if (existsSync(candAbs)) {
-    const rel = relative(root, candAbs).split(sep).join('/');
-    selfFiles.add(rel);
-    for (const [tok, kind] of irExtractAnchorsFromFile(readFileSync(candAbs, 'utf8'), rel).entries()) put(tok, kind, rel);
+    const st = statSync(candAbs);
+    if (st.isDirectory()) {
+      for (const f of walk(candAbs, { skipDirs: IR_SKIP_DIRS }).files) {
+        if (IR_TEXT_EXTS.has(extname(f).toLowerCase())) irAddSingleFileAnchors(root, f, selfFiles, put);
+      }
+      return;
+    }
+    if (st.isFile()) irAddSingleFileAnchors(root, candAbs, selfFiles, put);
     return;
   }
   if (rawTarget.startsWith('/donegate/api/') || rawTarget.startsWith('/api/')) {

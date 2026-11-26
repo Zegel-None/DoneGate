@@ -33,16 +33,11 @@ export function kneedleElbowCount(sortedDescWeights) {
 function loadDatabaseSyncCtor() {
   if (cachedSqliteCtor !== undefined) return cachedSqliteCtor;
   const origEmit = process.emitWarning;
-  process.emitWarning = function suppressExperimentalSqlite(warning, ...rest) {
+  process.emitWarning = (warning, ...rest) => {
     const msg = typeof warning === 'string' ? warning : warning?.message || '';
-    if (msg.includes('SQLite')) return;
-    return origEmit.call(this, warning, ...rest);
+    if (!msg.includes('SQLite')) return origEmit.call(process, warning, ...rest);
   };
-  try {
-    cachedSqliteCtor = createRequire(import.meta.url)('node:sqlite')?.DatabaseSync || null;
-  } catch {
-    cachedSqliteCtor = null;
-  }
+  try { cachedSqliteCtor = createRequire(import.meta.url)('node:sqlite')?.DatabaseSync || null; } catch { cachedSqliteCtor = null; }
   return cachedSqliteCtor;
 }
 
@@ -80,11 +75,24 @@ function locateProjectSqliteFile(slotDir, stdoutText) {
   return dbName ? { project: dbName.slice(0, -3), dbPath: join(slotDir, dbName) } : null;
 }
 
+function cbmCloseStaleHandlesForRoot(root) {
+  for (const [key, h] of CBM_MEM_CACHE.entries()) {
+    if (h?.root !== root) continue;
+    try { h.db?.close(); } catch { /* ignore */ }
+    CBM_MEM_CACHE.delete(key);
+  }
+}
+
 function runCbmIndexSync(bin, root, slotDir, readyFile, fp) {
+  cbmCloseStaleHandlesForRoot(root);
   mkdirSync(slotDir, { recursive: true });
-  const r = spawnSync(bin, ['cli', '--quiet', 'index_repository', JSON.stringify({ repo_path: root })], {
-    cwd: root, env: { ...process.env, CBM_CACHE_DIR: slotDir }, encoding: 'utf8', timeout: 60000
-  });
+  const cliArgs = ['cli', '--quiet', 'index_repository', JSON.stringify({ repo_path: root })];
+  const opts = { cwd: root, env: { ...process.env, CBM_CACHE_DIR: slotDir }, encoding: 'utf8', timeout: 60000 };
+  let r = spawnSync(bin, cliArgs, opts);
+  if ((r.error || r.status !== 0) && process.platform === 'win32') {
+    Atomics.wait(CBM_WAIT_SLICE, 0, 0, 150);
+    r = spawnSync(bin, cliArgs, opts);
+  }
   if (r.error || r.status !== 0) return null;
   const found = locateProjectSqliteFile(slotDir, r.stdout || '');
   if (!found) return null;

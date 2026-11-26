@@ -293,7 +293,10 @@ try {
     const vmWin = {
       location: { search: '', protocol: 'file:' },
       innerWidth: 1280,
-      addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); }
+      addEventListener(ev, fn) {
+        if (!winListeners[ev]) winListeners[ev] = [];
+        winListeners[ev].push(fn);
+      }
     };
     const vmDoc = {
       body: bodyEl,
@@ -301,7 +304,10 @@ try {
       getElementById: () => null,
       querySelector: () => null,
       createElement: (t) => makeDomEl({ tag: String(t).toUpperCase() }),
-      addEventListener(ev, fn) { (docListeners[ev] = docListeners[ev] || []).push(fn); }
+      addEventListener(ev, fn) {
+        if (!docListeners[ev]) docListeners[ev] = [];
+        docListeners[ev].push(fn);
+      }
     };
     const vmCtx = vm.createContext({
       window: vmWin, location: vmWin.location, document: vmDoc, URLSearchParams, Map, Set, Date, Math, Object, String, Number, Array, Boolean, JSON,

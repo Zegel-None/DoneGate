@@ -105,7 +105,13 @@ function ckrRenderContractDetail(con, stubsFlag) {
   return L.join('\n');
 }
 
-export function renderDomainOrContract(dom, con, stubsFlag, hasContracts) {
+function ckrCompactDesc(raw, compact) {
+  const txt = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!compact || txt.length <= 60) return txt;
+  return `${txt.slice(0, 59)}…`;
+}
+
+export function renderDomainOrContract(dom, con, stubsFlag, hasContracts, compact = false) {
   if (con && (stubsFlag || !dom)) return ckrRenderContractDetail(con, stubsFlag);
   const ownerFallback = hasContracts ? '根级共享' : '零契约公开模式';
   const L = [`=== 业务域 Zoom-1 展开: [${dom.step}] ${dom.title} (共 ${dom.codeCapsule?.moduleCount || 0} 项 | 归属: ${(dom.contractIds || []).join(', ') || ownerFallback}) ===`];
@@ -114,10 +120,10 @@ export function renderDomainOrContract(dom, con, stubsFlag, hasContracts) {
       const tag = `${prefix}.${nd.step}`;
       L.push(`\n[${tag}] ${nd.title} (归属: ${(nd.contractIds || []).join(', ') || ownerFallback} | 项数: ${nd.codeCapsule?.moduleCount || nd.modules?.length || 0})`);
       if (nd.subgraph?.nodes?.length) walkDom(nd.subgraph.nodes, tag);
-      else for (const m of nd.modules || []) L.push(`  · ${m.path} [${m.ownerContracts?.length ? `契约:${m.ownerContracts.join(',')}` : ownerFallback}] — ${m.fullHeader || m.name}`);
+      else for (const m of nd.modules || []) L.push(`  · ${m.path} [${m.ownerContracts?.length ? `契约:${m.ownerContracts.join(',')}` : ownerFallback}] — ${ckrCompactDesc(m.fullHeader || m.name, compact)}`);
     }
   };
   if (dom.subgraph?.nodes?.length) walkDom(dom.subgraph.nodes, dom.step);
-  else for (const m of dom.modules || []) L.push(`  · ${m.path} — ${m.fullHeader || m.name}`);
+  else for (const m of dom.modules || []) L.push(`  · ${m.path} — ${ckrCompactDesc(m.fullHeader || m.name, compact)}`);
   return L.join('\n');
 }

@@ -77,16 +77,23 @@ export function resolvePoolGradleUserHome(projectRoot, baseEnv = process.env) {
   return ensureSharedPoolSkeleton(projectRoot, { includeGradleHome: true }).gradleHomeDir;
 }
 
+function spiIsPureAscii(str) {
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 0x7f) return false;
+  }
+  return true;
+}
+
 export function assertPureAsciiBatch(content, label = 'batch-launcher') {
   const txt = String(content ?? '');
-  if (!/^[\x00-\x7F]*$/.test(txt)) throw new Error(`[${label}] NON_ASCII_BATCH_CONTENT: Windows .bat/.cmd must contain 100% pure ASCII characters`);
+  if (!spiIsPureAscii(txt)) throw new Error(`[${label}] NON_ASCII_BATCH_CONTENT: Windows .bat/.cmd must contain 100% pure ASCII characters`);
   if (/(^|[^\r])\n/.test(txt)) throw new Error(`[${label}] NON_CRLF_BATCH_CONTENT: Windows .bat/.cmd must use CRLF (\\r\\n) line endings`);
   return txt;
 }
 
 function sanitizeAsciiNote(raw, fallback, strictAscii = false) {
   const s = String(raw ?? '').trim();
-  if (strictAscii && !/^[\x00-\x7F]*$/.test(s)) throw new Error(`Batch comment/identifier contains non-ASCII characters: ${s}`);
+  if (strictAscii && !spiIsPureAscii(s)) throw new Error(`Batch comment/identifier contains non-ASCII characters: ${s}`);
   return s.replace(/[^\x20-\x7E]+/g, ' ').replace(/\s+/g, ' ').trim() || fallback;
 }
 

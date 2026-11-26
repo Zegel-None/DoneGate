@@ -1,0 +1,42 @@
+{
+  "说明": "工具能力清单：pbt-fastcheck 属性基随机不变量测试（Property-Based Testing）适配器。",
+  "tool": "pbt-fastcheck",
+  "registryId": "pbt-fastcheck@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "propertiesFailed",
+      "from": "propertiesFailed",
+      "kind": "count",
+      "assertableAs": [
+        "zero",
+        "max"
+      ],
+      "wired": false,
+      "reason": "属性基测试不变量由各业务模块按需定义，未接入具体业务不变量前作旁注观测",
+      "note": "检出最小化反例的失败属性条数"
+    },
+    {
+      "id": "propertiesTotal",
+      "from": "propertiesTotal",
+      "kind": "count",
+      "assertableAs": [
+        "min"
+      ],
+      "wired": false,
+      "reason": "同上，供用户项目按业务域声明最少属性条数",
+      "note": "已执行的属性基不变量总数"
+    }
+  ],
+  "requiresProject": [
+    "Node.js / TypeScript 项目（使用 fast-check 编写属性不变量测试）"
+  ],
+  "blindSpots": [
+    "仅验证人工或契约声明的数学/状态不变量，无法自动推导未声明的业务需求语义，也无法替代端到端视觉验收"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "属性基不变量需按业务域（解析器、状态机、计费、序列化）编写，本仓提供协议适配器与反例观测规范，由用户项目按需接入硬判据。"
+  }
+}

@@ -15,6 +15,7 @@ import { analyzeCodeComplexityAndGolfing } from './cognitive-complexity.mjs';
 import { countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 import { scanTerminologyViolations } from './check-terminology.mjs';
 import { validateDecisionFiveSections } from './check-decisions.mjs';
+import { attachFixHints, resolveLintFixHint } from './lint-edit/remediation.mjs';
 
 const JS_LIKE_RE = /\.(mjs|cjs|js|ts|tsx|jsx)$/i;
 const TEST_OR_FIXTURE_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$/i;
@@ -255,7 +256,9 @@ export function lintEditedFiles(projectRoot, targetFiles = []) {
     durationMs: Date.now() - t0,
     files: fileReports,
     fails,
-    warnings
+    warnings,
+    failDetails: attachFixHints(fails),
+    warningDetails: attachFixHints(warnings)
   };
 }
 
@@ -268,7 +271,11 @@ export function cmdLintEdit(projectRoot, opts = {}) {
     (f) => `${f.ok ? '✓' : '✗'} ${f.file} [有效 ${f.effectiveLines} 行 | 余量 ${f.headroomLines} 行 | 归属 ${f.owners.join(',') || '共享/测试'}]`
   );
   for (const w of res.warnings) lines.push(`  ⚠ ${w}`);
-  for (const fl of res.fails) lines.push(`  ✗ ${fl}`);
+  for (const fl of res.fails) {
+    lines.push(`  ✗ ${fl}`);
+    const hint = resolveLintFixHint(fl);
+    if (hint) lines.push(`    ↳ 修复配方：${hint}`);
+  }
   lines.push(`RESULT: ${res.exitCode === 0 ? 'PASS' : 'FAIL'} lint-edit (${res.files.length} 个文件, ${res.durationMs}ms)`);
   return {
     exitCode: res.exitCode,

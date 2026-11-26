@@ -112,7 +112,7 @@ export function probeAndFixBareWindowsTraps(opts = {}) {
   const runCmd = opts.runCmd || defaultRunCmd;
   const applyFix = Boolean(opts.applyFix);
   const home = env.USERPROFILE || env.HOME || homedir();
-  const hasNonAsciiOrSpace = /[^\x00-\x7F]|\s/.test(home);
+  const hasNonAsciiOrSpace = [...String(home || '')].some((ch) => ch.charCodeAt(0) > 0x7f || /\s/.test(ch));
   const notes = [];
   const warnings = [];
 

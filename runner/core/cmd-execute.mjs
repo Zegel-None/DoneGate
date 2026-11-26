@@ -49,7 +49,9 @@ export function cmdCheck(projectRoot, opts) {
   }
 
   const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
-  const targets = opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs;
+  let targets = opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs;
+  const sampled = Boolean(opts.fastSample && !opts.criterion && targets.length > 3);
+  if (sampled) targets = targets.slice(0, 3);
   if (targets.length === 0) return { exitCode: 3, stderr: '找不到可执行判据' };
 
   // §四 三条禁令检查（吞失败 / 包装层 / 改写契约）
@@ -99,7 +101,7 @@ export function cmdCheck(projectRoot, opts) {
           })
       };
     }
-    const g2 = evaluateGate2(projectRoot, contract);
+    const g2 = evaluateGate2(projectRoot, contract, { baseRef: opts.base, heldOutDir: opts.heldOutDir });
     if (!g2.ok) {
       return {
         exitCode: g2.exitCode,
@@ -133,6 +135,7 @@ export function cmdCheck(projectRoot, opts) {
     ...(debugDirtyRun ? ['⚠ 调试运行（--allow-dirty）：工作区未干净提交，本次证据禁进门 4/复核包/通过数'] : [])
   ];
   let bad = 0, unknown = 0;
+  const compactErrors = [];
 
   for (const o of targets) {
     const ts = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
@@ -208,11 +211,30 @@ export function cmdCheck(projectRoot, opts) {
 
     const endObj = { result: verdict, hashReport: sha256(reportRaw), endedAt: new Date().toISOString() };
     writeFileSync(join(evDir, 'end.json'), JSON.stringify(endObj, null, 2));
+    if (opts.compact) {
+      const logRel = `.donegate/evidence/${id}/${o.id}/${ts}/run.log`;
+      writeFileSync(join(evDir, 'run.log'), `${r.stdout || ''}\n${r.stderr || ''}`.trim() + '\n', 'utf8');
+      if (verdict !== 'pass') {
+        compactErrors.push(`ERROR: ${o.id} exit=${r.status} verdict=${verdict} log=${logRel}`);
+      }
+    }
     lines.push(`${o.id}: exit=${r.status} verdict=${verdict} (${durationMs}ms)`);
   }
 
   const exitCode = bad > 0 ? 1 : unknown > 0 ? 3 : 0;
   const passCnt = targets.length - bad - unknown;
+  if (opts.compact) {
+    const verdictMap = { 0: 'PASS', 1: 'FAIL', 2: 'ERROR', 3: 'UNKNOWN' };
+    const resultMap = { 0: 'PASS', 1: 'FAIL', 2: '事故', 3: '无法判断' };
+    const sampleNote = sampled ? ' (fast-sample)' : '';
+    const compactOut = [
+      `[check:${id}] ${verdictMap[exitCode] || 'UNKNOWN'} ${passCnt}/${targets.length}${sampleNote}`,
+      ...compactErrors.slice(0, 16),
+      ...lines.slice(2, Math.max(2, 18 - compactErrors.length)),
+      `RESULT: ${resultMap[exitCode] || '无法判断'}`
+    ].slice(0, 20);
+    return { exitCode, stdout: compactOut.join('\n') };
+  }
   const hl = opts.allowDirty
     ? '⚠️ 脏工作区调试运行（不计入通过进度） · 总进度 {{PCT}}'
     : (exitCode === 0

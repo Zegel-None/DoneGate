@@ -60,6 +60,7 @@ export function renderDshBundleCordisPatch(projectRoot) {
       name: '${DSH_BUNDLE_NAME}'
       config:
         projectRoot: "${safeRoot}"
+        requireAuth: true
     - id: preset-donegate-router
       name: '@deepseek-ai/dsh-agent-preset'
       config:
@@ -237,9 +238,13 @@ export async function apply(ctx, config) {
   };
 
   const handlerByRoot = new Map();
+  const authOpts = {
+    requireAuth: Boolean(config && config.requireAuth),
+    sessionToken: (config && typeof config.sessionToken === 'string') ? config.sessionToken : undefined
+  };
   const getHandler = (rootDir) => {
     const key = resolve(rootDir || defaultRoot);
-    if (!handlerByRoot.has(key)) handlerByRoot.set(key, mod.createDoneGateWebRouteHandler(key, { dispatchSubagent }));
+    if (!handlerByRoot.has(key)) handlerByRoot.set(key, mod.createDoneGateWebRouteHandler(key, { dispatchSubagent, ...authOpts }));
     return handlerByRoot.get(key);
   };
   getHandler(defaultRoot);

@@ -7,6 +7,7 @@ import { buildNodeInterfaceStub } from './ast-stub.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes, resolveSubagentBudgetProfile } from './context-router.mjs';
 import { diffAgainstFrozenStub, freezeNodeStubBaseline } from './hermetic-capsule.mjs';
 import { loadThresholds } from './gates.mjs';
+import { hvBuildConfessionReport, verifyHeldOutContract } from './heldout-verifier.mjs';
 import { buildSanitizedEnv, checkCommandBans } from './isolation.mjs';
 
 const isNonMetaFile = (f) => Boolean(f && !f.startsWith('.donegate/') && f !== 'node_modules' && !f.startsWith('node_modules/'));
@@ -233,12 +234,20 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
   }
 
+  const heldOut = verifyHeldOutContract(projectRoot, contract, {
+    baseRef: opts.base || gitState.baseRef,
+    heldOutDir: opts.heldOutDir,
+    touchedFiles: gitState.touchedFiles
+  });
+  if (!heldOut.ok) return abortWith(2, heldOut.fails.join('；'));
+
   const thresholds = loadThresholds(projectRoot);
   const budget = resolveSubagentBudgetProfile(thresholds, opts);
   const currentStub = buildNodeInterfaceStub(projectRoot, contract);
   const { fails, stubDiff, crossScopeAllowed, crossScopeFiles } = evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts);
   const { passed, unknown, passedObligations } = executeNodeObligations(projectRoot, id, cmdObs, thresholds, fails);
   const exitCode = fails.length > 0 ? (unknown > 0 && fails.length === unknown ? 3 : 1) : 0;
+  const confession = hvBuildConfessionReport(opts.confession, `${id}|${currentStub.stubHash}|${exitCode}`);
 
   const receipt = {
     schema: 'donegate-node-receipt/v1', nodeId: id, title: contract.title || id,
@@ -249,6 +258,7 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     effectiveLines: currentStub.effectiveLines, baseRef: gitState.baseRef,
     touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles,
     crossScopeAllowed, crossScopeFiles,
+    ...(confession ? { confession } : {}),
     sessionBudgetTokens: budget.totalSessionBudgetTokens, receiptBudgetTokens: budget.receiptBudgetTokens,
     durationMs: Date.now() - t0, ...(fails.length > 0 ? { fails } : {})
   };

@@ -224,7 +224,16 @@ export function writeSharedPoolLaunchers(projectRoot, spec = {}) {
 
 function runNpmExec(prefixDir, pkgSpec, cwd, extraFlags = [], npmCmdOverride = '') {
   const args = ['install', '--no-audit', '--no-fund', '--save-exact', ...extraFlags, '--prefix', prefixDir, pkgSpec];
-  if (npmCmdOverride) return spawnSync(npmCmdOverride, args, { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });
+  if (npmCmdOverride) {
+    if (/\.[cm]?js$/i.test(npmCmdOverride)) {
+      return spawnSync(process.execPath, [npmCmdOverride, ...args], { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });
+    }
+    if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(npmCmdOverride)) {
+      const cmdLine = \`""\${npmCmdOverride}" \${args.map((a) => \`"\${String(a).replace(/"/g, '')}"\`).join(' ')}"\`;
+      return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], { cwd, encoding: 'utf8', timeout: 240000, windowsVerbatimArguments: true, windowsHide: true });
+    }
+    return spawnSync(npmCmdOverride, args, { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });
+  }
   const cliCands = [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')];
   const npmCli = cliCands.find((p) => existsSync(p));
   if (npmCli) return spawnSync(process.execPath, [npmCli, ...args], { cwd, encoding: 'utf8', timeout: 240000, windowsHide: true });

@@ -19,8 +19,12 @@ function createToolbarDomHarness(atlas) {
   const makeClassList = (initial = []) => {
     const set = new Set(initial);
     return {
-      add: (...cls) => cls.forEach((c) => set.add(c)),
-      remove: (...cls) => cls.forEach((c) => set.delete(c)),
+      add: (...cls) => {
+        for (const c of cls) set.add(c);
+      },
+      remove: (...cls) => {
+        for (const c of cls) set.delete(c);
+      },
       toggle: (c, force) => {
         const next = typeof force === 'boolean' ? force : !set.has(c);
         if (next) set.add(c);
@@ -43,8 +47,13 @@ function createToolbarDomHarness(atlas) {
       classList: makeClassList(initialClasses),
       setAttribute(k, v) { attrs[k] = String(v); },
       getAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; },
-      addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
-      trigger(ev, payload = {}) { (listeners[ev] || []).forEach((fn) => fn(payload)); },
+      addEventListener(ev, fn) {
+        if (!listeners[ev]) listeners[ev] = [];
+        listeners[ev].push(fn);
+      },
+      trigger(ev, payload = {}) {
+        for (const fn of (listeners[ev] || [])) fn(payload);
+      },
       querySelector: () => null,
       closest: () => null
     };

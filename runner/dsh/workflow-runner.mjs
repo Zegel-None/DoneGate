@@ -6,14 +6,22 @@ import { buildMicroVerdictCard } from './quote-protocol.mjs';
 import { normalizeLf, normalizeSlashes, normalizeWinDriveKey } from './win-paths.mjs';
 import { buildWorkflowDepEnv, inspectWorkflowDeps } from './workflow-deps.mjs';
 import {
-  AUTOPILOT_BREAKER_CODES, AUTOPILOT_DEFAULT_MAX_ENV_FAULTS, AUTOPILOT_STATES,
+  AUTOPILOT_BREAKER_CODES, AUTOPILOT_DEFAULT_MAX_ENV_FAULTS, AUTOPILOT_DEFAULT_MAX_SELF_HEAL_ROUNDS, AUTOPILOT_STATES,
   createInitialCheckpoint, isHumanGateNode, loadAutopilotCheckpoint, saveAutopilotCheckpoint, tripAutopilotBreaker
 } from './autopilot-state.mjs';
 import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot-worktree.mjs';
 import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-cache.mjs';
 import { buildBrickNodeExecSpec, executeBrickGateNode } from './brick-exec.mjs';
+import { hagSanitizeSubagentEnv } from './host-auth-guard.mjs';
+import { crLoadAutopilotLimits } from './campaign-routing.mjs';
 
 const HUB_MAP = new Map();
+
+function wfrResolveEffectiveMaxLoops(linkMaxLoops, capLimit, allowExceed) {
+  const n = Number(linkMaxLoops);
+  if (!Number.isFinite(n) || n <= 0) return capLimit;
+  return allowExceed ? Math.floor(n) : Math.min(Math.floor(n), capLimit);
+}
 
 function wfrResolveGateTelemetryState(record) {
   if (record.cacheHit) return 'cached';
@@ -247,7 +255,10 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
     return { ok: false, exitCode, code, state: cp.state, runId, breaker: cp.breaker, sandboxWorktree: cp.sandboxWorktree, checkpoint: cp };
   };
 
-  const wfEnv = buildWorkflowDepEnv(root, pack.id || 'default');
+  const wfEnv = hagSanitizeSubagentEnv(buildWorkflowDepEnv(root, pack.id || 'default'));
+  const autopilotLimits = crLoadAutopilotLimits(root);
+  const maxSelfHealCap = Number(hooks.maxSelfHealRounds || autopilotLimits.maxSelfHealRounds || AUTOPILOT_DEFAULT_MAX_SELF_HEAL_ROUNDS);
+  const allowExceedLoops = hooks.allowExceedSelfHealCap === true;
   const useCache = hooks.useFingerprintCache === true;
   const nodesById = new Map(pack.nodes.map((n) => [n.id, n]));
   const links = Array.isArray(pack.links) ? pack.links : [];
@@ -308,14 +319,15 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
       const matchedLink = links.find((l) => l.fromNode === current.id && l.fromSlot === slotNeeded) || links.find((l) => l.fromNode === current.id);
       if (!matchedLink) break;
       if (matchedLink.maxLoops) {
+        const effMaxLoops = wfrResolveEffectiveMaxLoops(matchedLink.maxLoops, maxSelfHealCap, allowExceedLoops);
         const used = (loopCounters.get(matchedLink.id) || 0) + 1;
-        if (used > matchedLink.maxLoops) {
+        if (used > effMaxLoops) {
           cp.loopCounts = Object.fromEntries(loopCounters);
-          return abortWithBreaker(1, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `单判据连续回跳已达上限 (${matchedLink.maxLoops} 次) 仍未过关，自动熔断防空烧 Token`);
+          return abortWithBreaker(1, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `单判据连续回跳已达上限 (${effMaxLoops} 次) 仍未过关，自动熔断防空烧 Token`);
         }
         loopCounters.set(matchedLink.id, used);
         cp.loopCounts = Object.fromEntries(loopCounters);
-        logEvent({ type: 'loop_back', linkId: matchedLink.id, loopCount: used, maxLoops: matchedLink.maxLoops, mode: 'fresh_ralph', handoff: lastDiag.slice(0, 16384) });
+        logEvent({ type: 'loop_back', linkId: matchedLink.id, loopCount: used, maxLoops: effMaxLoops, mode: 'fresh_ralph', handoff: lastDiag.slice(0, 16384) });
       } else {
         logEvent({ type: 'edge_traverse', linkId: matchedLink.id });
       }
@@ -395,18 +407,19 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
 
     const selfLoop = !isAgent && stepExitCode !== 0 && links.find((l) => l.fromNode === current.id && l.toNode === current.id && l.maxLoops);
     if (selfLoop) {
+      const effSelfMax = wfrResolveEffectiveMaxLoops(selfLoop.maxLoops, maxSelfHealCap, allowExceedLoops);
       const used = (loopCounters.get(selfLoop.id) || 0) + 1;
-      if (used <= selfLoop.maxLoops) {
+      if (used <= effSelfMax) {
         loopCounters.set(selfLoop.id, used);
         cp.loopCounts = Object.fromEntries(loopCounters);
         cp.lastExitCode = lastExitCode; cp.passedGates = passedGates; cp.totalGates = totalGates;
         saveAutopilotCheckpoint(root, cp);
-        logEvent({ type: 'loop_back', linkId: selfLoop.id, loopCount: used, maxLoops: selfLoop.maxLoops, mode: 'fresh_ralph' });
+        logEvent({ type: 'loop_back', linkId: selfLoop.id, loopCount: used, maxLoops: effSelfMax, mode: 'fresh_ralph' });
         continue;
       }
       cp.loopCounts = Object.fromEntries(loopCounters);
       cp.lastExitCode = lastExitCode; cp.passedGates = passedGates; cp.totalGates = totalGates;
-      return abortWithBreaker(lastExitCode, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `节点「${current.title}」自循环已达上限 (${selfLoop.maxLoops} 次) 仍未达标，自动熔断停机`);
+      return abortWithBreaker(lastExitCode, AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED, current.id, `节点「${current.title}」自循环已达上限 (${effSelfMax} 次) 仍未达标，自动熔断停机`);
     }
 
     cp.completedNodes.push({

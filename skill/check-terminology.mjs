@@ -31,7 +31,7 @@ export const DEFAULT_TERM_TARGETS = [
 ];
 
 const SKIP_DIR_NAMES = [
-  '.git', 'node_modules', '.donegate', '.stryker-tmp', 'reports', 'coverage',
+  '.git', 'node_modules', '.donegate', '.deps', '.stryker-tmp', 'reports', 'coverage',
   'dist', '_dist', '参考', '设计', 'decisions', '证据', '归档'
 ];
 const SKIP_REL_PREFIXES = ['docs/archive/', 'workflows/.deps/'];

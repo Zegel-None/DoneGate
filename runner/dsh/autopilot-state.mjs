@@ -23,6 +23,23 @@ export const AUTOPILOT_BREAKER_CODES = Object.freeze({
 });
 
 export const AUTOPILOT_DEFAULT_MAX_ENV_FAULTS = 2;
+export const AUTOPILOT_DEFAULT_MAX_SELF_HEAL_ROUNDS = 2;
+export const AUTOPILOT_REVERSIBILITY_TIERS = Object.freeze({
+  REVERSIBLE: 'reversible',
+  IRREVERSIBLE: 'irreversible'
+});
+
+const AS_IRREVERSIBLE_RE = /(?:不可逆|上线|发版|迁移|删库|推送|销毁|deploy|release|publish|migrate|drop|delete|force-push)/i;
+
+export function classifyHumanGateReversibility(node) {
+  if (node && (node.reversibility === 'reversible' || node.reversibility === 'irreversible')) {
+    return node.reversibility;
+  }
+  const text = `${node?.title || ''} ${node?.tip || ''} ${node?.prompt || ''}`;
+  return AS_IRREVERSIBLE_RE.test(text)
+    ? AUTOPILOT_REVERSIBILITY_TIERS.IRREVERSIBLE
+    : AUTOPILOT_REVERSIBILITY_TIERS.REVERSIBLE;
+}
 
 export function isHumanGateNode(node) {
   if (!node || typeof node !== 'object') return false;
@@ -99,10 +116,15 @@ export function buildMorningBriefMarkdown(cp) {
     `- **更新时间**：${cp.updatedAt}`
   ];
   if (cp.pendingHumanGate) {
+    const tier = classifyHumanGateReversibility(cp.pendingHumanGate);
+    const tierLabel = tier === AUTOPILOT_REVERSIBILITY_TIERS.IRREVERSIBLE
+      ? '🔴 不可逆操作（必须人工拍板确认）'
+      : '🟢 可逆操作（可安全回滚）';
     lines.push(
       '',
       '## 待你拍板的人工闸门',
       `- **卡点节点**：「${cp.pendingHumanGate.title}」（\`${cp.pendingHumanGate.nodeId}\`）`,
+      `- **操作可逆分级**：${tierLabel}（\`${tier}\`）`,
       `- **说明**：${cp.pendingHumanGate.prompt}`,
       `- **一键放行续跑**：在工作台回执条点「批准闸门并续跑」，或运行 \`node runner/dsh/autopilot-state.mjs --approve ${cp.pendingHumanGate.nodeId} --run-id ${cp.runId}\``
     );

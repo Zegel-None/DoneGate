@@ -10,15 +10,8 @@ import {
   mutateUiLayoutBlocks, provisionUiBoardDeps, readUiToolchainStatus,
   renderPrototypeHtml, runUiAgentSelfPlayCheck
 } from './ui-board-engine.mjs';
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff'
-  });
-  res.end(JSON.stringify(payload));
-}
+import { sendJson } from './http-utils.mjs';
+import { runUiLiveEvaluation } from './ui-live-evaluator.mjs';
 
 function injectBridgeIntoHtml(rawHtml) {
   const tag = '<script src="/donegate/api/uiboard/bridge.js"></script>';
@@ -207,6 +200,29 @@ export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, rea
     return true;
   }
 
+  if (subPath === '/uiboard/live-eval' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const report = await runUiLiveEvaluation(root, {
+      url: body.url || body.liveUrl || undefined,
+      htmlPath: body.htmlPath || undefined,
+      htmlContent: typeof body.htmlContent === 'string' ? body.htmlContent : undefined,
+      maxButtons: body.maxButtons,
+      timeoutMs: body.timeoutMs,
+      alwaysScreenshot: body.alwaysScreenshot === true,
+      simulateMissingPlaywright: body.simulateMissingPlaywright === true
+    });
+    hub.emit({
+      type: 'dock_item',
+      item: {
+        id: `uilive-${Date.now()}`,
+        kind: report.ok ? 'summary' : 'question',
+        tone: report.ok ? 'ok' : (report.exitCode === 3 ? 'warn' : 'bad'),
+        title: report.summary || report.reason || 'UI 运行态评估完成'
+      }
+    });
+    sendJson(res, 200, report);
+    return true;
+  }
   if (subPath === '/uiboard/provision' && req.method === 'POST') {
     return uibrHandleProvisionRoute(req, res, root, hub, readJsonBody, opts);
   }

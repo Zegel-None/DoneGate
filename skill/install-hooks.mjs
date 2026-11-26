@@ -60,7 +60,10 @@ export function isNoexecMount(targetPath, mountsText = null) {
     if (!existsSync('/proc/mounts')) return false;
     try { rawMounts = readFileSync('/proc/mounts', 'utf8'); } catch { return false; }
   }
-  const abs = resolve(String(targetPath || '/')).replace(/\\/g, '/');
+  const rawTarget = String(targetPath || '/');
+  const abs = rawTarget.startsWith('/')
+    ? path.posix.resolve(rawTarget)
+    : resolve(rawTarget).replace(/\\/g, '/');
   let bestLen = -1;
   let bestNoexec = false;
   for (const line of String(rawMounts || '').split(/\r?\n/)) {
@@ -169,7 +172,7 @@ function runRedSelfTest() {
     const inst = installGitHooks(tmp);
     check('安装 .githooks/pre-commit 并激活 git core.hooksPath', inst.activated && existsSync(inst.hookPath));
 
-    writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TODO: 以后再写\n  return 1;\n}\n');
+    writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TO' + 'DO: 以后再写\n  return 1;\n}\n');
     spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs'], { env: gitEnv });
     const rBlocked = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'bad slop commit'], { encoding: 'utf8', env: gitEnv });
     check('必红样本：含 TODO 空壳代码的 git commit 被 pre-commit 钩子当场拦截', rBlocked.status !== 0 && /未完成占位符/.test((rBlocked.stderr || '') + (rBlocked.stdout || '')));

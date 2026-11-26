@@ -216,6 +216,14 @@
       "actionsChanged": 0,
       "note": "advisory（多语言快速 SAST 静态安全扫描节点，供阶段 6/7 安全覆盖族调用，接受 3 批硬淘汰考核）",
       "ecosystem": "core"
+    },
+    {
+      "brick": "pbt-fastcheck",
+      "registryId": "pbt-fastcheck@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（属性基随机不变量测试与最小化反例观测器，供解析器/状态机/计费域按需接入，接受 3 批硬淘汰考核）",
+      "ecosystem": "core"
     }
   ]
 }

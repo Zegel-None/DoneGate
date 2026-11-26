@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 
 import { cmdInit, cmdContractNew, cmdContractFreeze, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
+import { cmdCatch } from './core/teeth-ach.mjs';
 import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact, cmdBrief, cmdZoom } from './core/commands-b.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
@@ -18,7 +19,7 @@ const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
-  'stubs', 'decisions', 'full', 'source', 'trace'
+  'stubs', 'decisions', 'full', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression'
 ]);
 
 const HELP_TEXT = [
@@ -165,18 +166,33 @@ function dgCmdCheckOrTeeth(cmd, root, pos, flags) {
       contextWindow: flags['context-window'],
       utilization: flags.utilization,
       receipt: Boolean(flags.receipt),
+      heldOutDir: typeof flags['heldout-dir'] === 'string' ? flags['heldout-dir'] : undefined,
+      confession: typeof flags.confession === 'string' ? flags.confession : undefined,
       json: Boolean(flags.json)
     });
   }
   if (cmd === 'check') {
     return cmdCheck(root, {
       id: pos[1], criterion: flags.criterion,
+      base: typeof flags.base === 'string' ? flags.base : undefined,
+      heldOutDir: typeof flags['heldout-dir'] === 'string' ? flags['heldout-dir'] : undefined,
+      compact: Boolean(flags.compact), fastSample: Boolean(flags['fast-sample']),
       allowDirty: Boolean(flags['allow-dirty']), humanPass: Boolean(flags['human-pass']),
       skipGates: Boolean(flags['skip-gates'])
     });
   }
   if (cmd === 'teeth') {
-    return cmdTeeth(root, { id: pos[1], criterionId: pos[2], tier: flags.tier || 'A', claim: flags.claim });
+    return cmdTeeth(root, { id: pos[1], criterionId: pos[2], tier: flags.tier || 'A', claim: flags.claim, mutants: flags.mutants });
+  }
+  if (cmd === 'catch') {
+    return cmdCatch(root, {
+      testFile: flags.test || pos[1],
+      command: flags.command,
+      base: typeof flags.base === 'string' ? flags.base : undefined,
+      head: typeof flags.head === 'string' ? flags.head : undefined,
+      behavior: flags.behavior,
+      json: Boolean(flags.json)
+    });
   }
   return null;
 }
@@ -196,8 +212,16 @@ function dgCmdStatusAndGovernance(cmd, sub, root, pos, flags) {
       observedOutput: flags['observed-output'], stuckAt: flags['stuck-at']
     });
   }
-  if (cmd === 'verify' && sub === 'pack') return cmdVerifyPack(root, { id: pos[2], base: flags.base, head: flags.head, out: flags.out });
-  if (cmd === 'verify' && sub === 'apply') return cmdVerifyApply(root, { packDir: pos[2], verdict: flags.verdict });
+  if (cmd === 'verify' && sub === 'pack') {
+    return cmdVerifyPack(root, {
+      id: pos[2], base: flags.base, head: flags.head, out: flags.out,
+      heldOutDir: typeof flags['heldout-dir'] === 'string' ? flags['heldout-dir'] : undefined,
+      escapesRegression: Boolean(flags['escapes-regression'])
+    });
+  }
+  if (cmd === 'verify' && sub === 'apply') {
+    return cmdVerifyApply(root, { packDir: pos[2], verdict: flags.verdict, votes: flags.votes });
+  }
   if (cmd === 'retire') return cmdRetire(root, { id: pos[1], reason: flags.reason });
   return null;
 }

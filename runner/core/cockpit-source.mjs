@@ -32,7 +32,7 @@ function formatContractOwnerSummary(graphNodes, owners) {
   }).join('；');
 }
 
-export function formatPathGovernanceLines(idx, relFile, hasContracts, compactContractAdrs = false) {
+export function formatPathGovernanceLines(idx, relFile, hasContracts, compactContractAdrs = false, seenAdrFiles = null) {
   const owners = resolveFileContractOwners(idx.graph?.nodes || [], relFile);
   const lines = [];
   if (!hasContracts) {
@@ -49,18 +49,30 @@ export function formatPathGovernanceLines(idx, relFile, hasContracts, compactCon
   const boundAdrs = matchPathBoundAdrs(idx.adrs, relFile, owners);
   const directAdrs = boundAdrs.filter((a) => a.matchKind === '路径直连');
   if (directAdrs.length > 0) {
-    lines.push(`路径直连 ADR (${directAdrs.length} 篇 · 原文查 --decisions --full <编号>):`);
-    for (const a of directAdrs) {
+    const fresh = seenAdrFiles ? directAdrs.filter((a) => !seenAdrFiles.has(a.file)) : directAdrs;
+    const dupCount = directAdrs.length - fresh.length;
+    if (fresh.length === 0) {
+      lines.push(`路径直连 ADR (${directAdrs.length} 篇已于同批前文展示): ${directAdrs.map((a) => a.file).join(', ')}`);
+      return lines;
+    }
+    const suffix = dupCount > 0 ? `，另 ${dupCount} 篇已见前文` : '';
+    lines.push(`路径直连 ADR (${fresh.length} 篇${suffix} · 原文查 --decisions --full <编号>):`);
+    for (const a of fresh) {
+      if (seenAdrFiles) seenAdrFiles.add(a.file);
       lines.push(`  · [${a.file}] 选定: ${a.chosenDigest} | 翻案条件: ${a.reopenDigest}`);
     }
     return lines;
   }
   if (boundAdrs.length > 0) {
-    if (compactContractAdrs) {
-      lines.push(`同卡关联 ADR (${boundAdrs.length} 篇): ${boundAdrs.map((a) => a.file).join(', ')}`);
+    const fresh = seenAdrFiles ? boundAdrs.filter((a) => !seenAdrFiles.has(a.file)) : boundAdrs;
+    if (compactContractAdrs || fresh.length === 0) {
+      lines.push(`同卡关联 ADR (${boundAdrs.length} 篇 · 查原文 --decisions): ${boundAdrs.map((a) => a.file).join(', ')}`);
     } else {
-      lines.push(`同卡关联 ADR (${boundAdrs.length} 篇 · 原文查 --decisions --full <编号>):`);
-      for (const a of boundAdrs) lines.push(`  · [${a.file}] 选定: ${a.chosenDigest} | 翻案条件: ${a.reopenDigest}`);
+      lines.push(`同卡关联 ADR (${fresh.length} 篇 · 原文查 --decisions --full <编号>):`);
+      for (const a of fresh) {
+        if (seenAdrFiles) seenAdrFiles.add(a.file);
+        lines.push(`  · [${a.file}] 选定: ${a.chosenDigest} | 翻案条件: ${a.reopenDigest}`);
+      }
     }
   }
   return lines;
@@ -83,24 +95,24 @@ function parseFileRangeSpec(projectRoot, rawTarget) {
   return { abs, rel, startLine, endLine };
 }
 
-function formatNumberedSliceBlock(idx, abs, rel, startLine, endLine, hasContracts, symbolTitle = '') {
+function formatNumberedSliceBlock(idx, abs, rel, startLine, endLine, hasContracts, symbolTitle = '', seenAdrFiles = null) {
   const allLines = readFileSync(abs, 'utf8').split(/\r?\n/);
   const s = Math.max(1, Math.min(startLine, allLines.length));
   const e = endLine ? Math.max(s, Math.min(endLine, allLines.length)) : allLines.length;
   const headTitle = symbolTitle ? `${rel}:L${s}-L${e} (${symbolTitle})` : `${rel}:L${s}-L${e}`;
   const out = [
     `=== [末步源码真源直读] ${headTitle} ===`,
-    ...formatPathGovernanceLines(idx, rel, hasContracts, false),
+    ...formatPathGovernanceLines(idx, rel, hasContracts, true, seenAdrFiles),
     `--- 源码行区间 L${s}..L${e}（文件总计 ${allLines.length} 行） ---`
   ];
   for (let ln = s; ln <= e; ln++) out.push(`L${ln}: ${allLines[ln - 1]}`);
   return out.join('\n');
 }
 
-export function renderBoundedSourceSlice(idx, rawTarget, hasContracts) {
+export function renderBoundedSourceSlice(idx, rawTarget, hasContracts, seenAdrFiles = null) {
   const fileSpec = parseFileRangeSpec(idx.root, rawTarget);
   if (fileSpec) {
-    return formatNumberedSliceBlock(idx, fileSpec.abs, fileSpec.rel, fileSpec.startLine, fileSpec.endLine, hasContracts);
+    return formatNumberedSliceBlock(idx, fileSpec.abs, fileSpec.rel, fileSpec.startLine, fileSpec.endLine, hasContracts, '', seenAdrFiles);
   }
   const trace = queryCbmSymbolTrace(idx.root, rawTarget);
   const codeDefs = (trace?.definitions || []).filter((d) => d.file && d.startLine > 0);
@@ -108,7 +120,7 @@ export function renderBoundedSourceSlice(idx, rawTarget, hasContracts) {
   return codeDefs.map((d) => {
     const abs = resolve(idx.root, d.file);
     if (!existsSync(abs)) return null;
-    return formatNumberedSliceBlock(idx, abs, d.file, d.startLine, Math.max(d.startLine, d.endLine), hasContracts, `${d.label} ${d.name}${d.signature}`);
+    return formatNumberedSliceBlock(idx, abs, d.file, d.startLine, Math.max(d.startLine, d.endLine), hasContracts, `${d.label} ${d.name}${d.signature}`, seenAdrFiles);
   }).filter(Boolean).join('\n\n') || null;
 }
 

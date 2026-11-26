@@ -9,7 +9,7 @@ const GE3_STATIC_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|import\s*\(|re
 const GE3_DYNAMIC_IMPORT_RE = /\b(?:import|require)\s*\(\s*[^'")\s]/g;
 
 export function collectCodeFilesForCoverage(projectRoot) {
-  const { files } = walk(projectRoot, { skipDirs: ['node_modules', '.git', '.donegate', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'] });
+  const { files } = walk(projectRoot, { skipDirs: ['node_modules', '.git', '.donegate', '.deps', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'] });
   const codeExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
   const codeFiles = [];
   const testFiles = [];

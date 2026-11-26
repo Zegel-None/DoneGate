@@ -293,7 +293,7 @@ function collectProjectCode(dir) {
   const out = [];
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
-      if (e.name === '.git' || e.name === 'node_modules' || e.name === '.donegate' || e.name === 'dist' || e.name === 'build') continue;
+      if (e.name === '.git' || e.name === 'node_modules' || e.name === '.donegate' || e.name === '.deps' || e.name === 'dist' || e.name === 'build') continue;
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
       else if (CODE_EXTS.some((ext) => e.name.endsWith(ext))) out.push(p);
@@ -397,6 +397,8 @@ if (has('--self-check')) {
     ['skill/check-module-integrity.mjs', ['--red-self-test']],
     ['skill/check-terminology.mjs', ['--red-self-test']],
     ['skill/check-terminology.mjs', []],
+    ['skill/check-doc-budgets.mjs', ['--red-self-test']],
+    ['skill/check-doc-budgets.mjs', []],
     ['skill/install-hooks.mjs', ['--red-self-test']],
     ['skill/new-adapter.mjs', ['--self-test']],
     ['skill/symbols-fixtures.mjs', []],

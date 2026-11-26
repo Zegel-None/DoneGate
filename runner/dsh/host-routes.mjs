@@ -22,7 +22,14 @@ import { buildJitBootstrapSummary } from './workflow-jit.mjs';
 import { starGitHubRepo } from './github-star.mjs';
 import { importExternalProject, initWorkspaceProject } from './project-ops.mjs';
 import { SUBAGENT_HUMAN_ISOLATION_MSG, installSubagentHumanIsolationGuard } from './subagent-isolation.mjs';
-export { SUBAGENT_HUMAN_ISOLATION_MSG, installSubagentHumanIsolationGuard };
+import { sendJson } from './http-utils.mjs';
+import {
+  hagCreateControlPlaneGuard,
+  hagInjectSessionTokenHtml,
+  hagSanitizeSubagentEnv,
+  hagValidateControlPlaneRequest
+} from './host-auth-guard.mjs';
+export { SUBAGENT_HUMAN_ISOLATION_MSG, installSubagentHumanIsolationGuard, hagSanitizeSubagentEnv };
 
 const DONEGATE_INSTALL_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -76,15 +83,6 @@ function syncHubDepsRefreshStamp(root, hub) {
     });
   }
   return stamp;
-}
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff'
-  });
-  res.end(JSON.stringify(payload));
 }
 
 function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
@@ -591,8 +589,12 @@ async function handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub,
     const htmlPath = join(root, '.donegate', 'dashboard-dsh.html');
     mkdirSync(join(root, '.donegate'), { recursive: true });
     exportDashboardHtml(root, htmlPath);
+    const rawHtml = readFileSync(htmlPath, 'utf8');
+    const finalHtml = opts && opts._guardState?.requireAuth
+      ? hagInjectSessionTokenHtml(rawHtml, opts._guardState.sessionToken)
+      : rawHtml;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(readFileSync(htmlPath, 'utf8'));
+    res.end(finalHtml);
     return true;
   }
   if (cleanPath === '/state' && req.method === 'POST') {
@@ -714,10 +716,16 @@ async function handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub) {
 export function createDoneGateWebRouteHandler(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const hub = getRunEventHub(root);
-  return async function handleDoneGateRoute(req, res, subPath) {
+  const guardState = hagCreateControlPlaneGuard(opts);
+  const effectiveOpts = { ...opts, _guardState: guardState };
+  async function handleDoneGateRoute(req, res, subPath) {
+    if (!hagValidateControlPlaneRequest(req, res, guardState)) return true;
     const cleanPath = String(subPath || '/').split('?')[0];
-    if (await handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opts)) return true;
-    if (await handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub, opts)) return true;
+    if (await handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, effectiveOpts)) return true;
+    if (await handleCanvasDepsAndDispatchRoutes(req, res, cleanPath, root, hub, effectiveOpts)) return true;
     return handleDispatchAndPreviewRoutes(req, res, cleanPath, root, hub);
-  };
+  }
+  handleDoneGateRoute.sessionToken = guardState.sessionToken;
+  handleDoneGateRoute.requireAuth = guardState.requireAuth;
+  return handleDoneGateRoute;
 }

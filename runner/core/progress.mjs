@@ -270,7 +270,10 @@ function prgAppendStage2Lines(lines, snap, cTotal, cDoneCount, customNotes, hasS
     const detail = c.totalObs === 0 ? '待补验收项' : (c.frozen ? `${c.passedClean}/${c.totalObs} 项通过` : `待锁定（${c.totalObs} 项）`);
     lines.push(`  2-${idx + 1} ${prgContractIcon(c)} ${c.title}（${detail}）`);
     if (opts.focusContractId === c.id && c.obligations.length > 0) {
-      c.obligations.forEach((o, j) => lines.push(`    2-${idx + 1}.${j + 1} ${PRG_OB_ICONS[o.state] || '⏳'} ${summarizeObligationLabel(o)}`));
+      for (let j = 0; j < c.obligations.length; j++) {
+        const o = c.obligations[j];
+        lines.push(`    2-${idx + 1}.${j + 1} ${PRG_OB_ICONS[o.state] || '⏳'} ${summarizeObligationLabel(o)}`);
+      }
     }
   }
   if (cTotal > 6 && displayList.length < cTotal) {

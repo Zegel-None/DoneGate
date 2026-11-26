@@ -178,7 +178,11 @@ describe('问题 #7 · Visio 级画布智能吸附对齐线与水平/垂直等�
       classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
       getAttribute: (k) => attrs[k] ?? null,
       getBoundingClientRect: () => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h }),
-      addEventListener(ev, fn) { if (id === 'canvas-stage') (stageHandlers[ev] = stageHandlers[ev] || []).push(fn); },
+      addEventListener(ev, fn) {
+        if (id !== 'canvas-stage') return;
+        if (!stageHandlers[ev]) stageHandlers[ev] = [];
+        stageHandlers[ev].push(fn);
+      },
       querySelectorAll: () => [],
       closest(sel) {
         if (sel === '[data-card-id]' && attrs['data-card-id']) return this;
@@ -210,11 +214,21 @@ describe('问题 #7 · Visio 级画布智能吸附对齐线与水平/垂直等�
     };
 
     const ctx = vm.createContext({
-      window: { innerWidth: 1400, innerHeight: 900, addEventListener(ev, fn) { (winHandlers[ev] = winHandlers[ev] || []).push(fn); } },
+      window: {
+        innerWidth: 1400,
+        innerHeight: 900,
+        addEventListener(ev, fn) {
+          if (!winHandlers[ev]) winHandlers[ev] = [];
+          winHandlers[ev].push(fn);
+        }
+      },
       document: {
         getElementById: (id) => idMap[id] || null,
         querySelectorAll: () => [],
-        addEventListener(ev, fn) { (docHandlers[ev] = docHandlers[ev] || []).push(fn); }
+        addEventListener(ev, fn) {
+          if (!docHandlers[ev]) docHandlers[ev] = [];
+          docHandlers[ev].push(fn);
+        }
       },
       Set, Map, Math, Number, String, Boolean, Array, Object,
       requestAnimationFrame: () => 1, setTimeout: () => 1, clearTimeout() {},

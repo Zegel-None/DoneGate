@@ -1,8 +1,35 @@
 // 过夜挂机 Git Worktree 零污染隔离沙箱引擎（全绿自动快进合回主分支，熔断停机时主工作区 100% 干净零污染）
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { normalizeSlashes } from './win-paths.mjs';
+
+export function snapshotHeldOutContractsForWorktree(projectRoot, runId) {
+  const root = resolve(projectRoot);
+  const contractsDir = join(root, 'contracts');
+  const safeId = sanitizeId(runId);
+  const snapDir = join(root, '.donegate', 'heldout', safeId);
+  if (!existsSync(contractsDir)) {
+    return { ok: false, count: 0, snapshotDir: null, relSnapshotDir: null };
+  }
+  mkdirSync(snapDir, { recursive: true });
+  let count = 0;
+  for (const e of readdirSync(contractsDir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const src = join(contractsDir, e.name, 'contract.json');
+    if (!existsSync(src)) continue;
+    const dstDir = join(snapDir, e.name);
+    mkdirSync(dstDir, { recursive: true });
+    cpSync(src, join(dstDir, 'contract.json'), { force: true });
+    count++;
+  }
+  return {
+    ok: count > 0,
+    count,
+    snapshotDir: snapDir,
+    relSnapshotDir: normalizeSlashes(`.donegate/heldout/${safeId}`)
+  };
+}
 
 function sanitizeId(raw) {
   return String(raw || 'run').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 48) || 'run';
@@ -52,6 +79,7 @@ export function prepareAutopilotWorktree(projectRoot, runId) {
   const mainBranchRes = runGit(root, ['symbolic-ref', '--short', '-q', 'HEAD']);
   const mainBranch = mainBranchRes.ok ? mainBranchRes.stdout : null;
 
+  const heldOut = snapshotHeldOutContractsForWorktree(root, safeId);
   if (existsSync(join(wtDir, '.git'))) {
     ensureWorktreeRuntimeExcludes(wtDir);
     return {
@@ -59,6 +87,8 @@ export function prepareAutopilotWorktree(projectRoot, runId) {
       reused: true,
       worktreePath: wtDir,
       relWorktreePath: normalizeSlashes(`.donegate/worktrees/${safeId}`),
+      heldOutSnapshotDir: heldOut.snapshotDir,
+      relHeldOutSnapshotDir: heldOut.relSnapshotDir,
       branchName,
       baseHead,
       mainBranch
@@ -84,6 +114,8 @@ export function prepareAutopilotWorktree(projectRoot, runId) {
     reused: false,
     worktreePath: wtDir,
     relWorktreePath: normalizeSlashes(`.donegate/worktrees/${safeId}`),
+    heldOutSnapshotDir: heldOut.snapshotDir,
+    relHeldOutSnapshotDir: heldOut.relSnapshotDir,
     branchName,
     baseHead,
     mainBranch

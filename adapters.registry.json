@@ -343,6 +343,19 @@
       "blindSpots": [
         "长于单文件与轻量跨文件模式匹配，深度跨模块污点追踪弱于发版前的 CodeQL 全量数据流分析"
       ]
+    },
+    {
+      "id": "pbt-fastcheck@stage4",
+      "tool": "pbt-fastcheck",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-pbt-invariants",
+      "entry": "skill/adapters/pbt-fastcheck.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=3.0.0 <5.0.0",
+      "blindSpots": [
+        "仅验证契约或测试声明的数学/状态不变量，无法自动推导未声明的业务语义或视觉体验"
+      ]
     }
   ]
 }

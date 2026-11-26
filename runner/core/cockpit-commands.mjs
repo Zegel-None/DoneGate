@@ -227,7 +227,7 @@ function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
   if (stubsFlag) {
     return (idx.graph.nodes || []).map((c) => renderDomainOrContract(null, c, true, hasContracts)).join('\n\n') || ckcBuildZoomZeroMarkdown(idx);
   }
-  return idx.domains.map((d) => renderDomainOrContract(d, null, false, hasContracts)).join('\n\n');
+  return idx.domains.map((d) => renderDomainOrContract(d, null, false, hasContracts, true)).join('\n\n');
 }
 
 function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts) {
@@ -239,9 +239,9 @@ function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts) {
   return renderSingleFileZoom(fileInfo, hasContracts, { adrLines, cbmGraph: queryCbmFileGraph(idx.root, fileInfo.file) });
 }
 
-function ckcResolveSingleTarget(idx, target, arg1, opts) {
+function ckcResolveSingleTarget(idx, target, arg1, opts, batchCtx = null) {
   const hasContracts = (idx.graph.nodes || []).length > 0;
-  if (opts.source) return renderBoundedSourceSlice(idx, target, hasContracts);
+  if (opts.source) return renderBoundedSourceSlice(idx, target, hasContracts, batchCtx?.seenAdrFiles || null);
   if (opts.decisions) return renderDecisionsZoom(idx, target, Boolean(opts.full), arg1 || '');
   if (target === 'all') return ckcResolveAllTarget(idx, Boolean(opts.stubs), hasContracts);
   if (!opts.stubs && !opts.trace) {
@@ -250,7 +250,7 @@ function ckcResolveSingleTarget(idx, target, arg1, opts) {
   }
   const dom = idx.domains.find((d) => d.step === target || d.id === target);
   const con = (idx.graph.nodes || []).find((c) => c.id === target);
-  if (dom || con) return renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts);
+  if (dom || con) return renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts, Boolean(batchCtx?.multiDomain));
   return (!opts.stubs && !ckcLooksLikeExplicitFilePath(target)) ? renderCbmSymbolZoom(idx, target, hasContracts) : null;
 }
 
@@ -267,11 +267,13 @@ function ckcFormatMissingZoomError(idx, target) {
 
 function ckcRunZoomTargetLoop(idx, targets, opts) {
   const chunks = [], errors = [];
+  const domHits = targets.filter((t) => idx.domains.some((d) => d.step === t || d.id === t)).length;
+  const batchCtx = { seenAdrFiles: new Set(), multiDomain: domHits > 1 };
   for (let i = 0; i < targets.length; i++) {
     const cleanT = targets[i].replace(/^\.\//, '');
     const canTakeFilter = !opts.source && (cleanT === 'tests' || cleanT === 'gaps') && i + 1 < targets.length;
     const arg1 = (canTakeFilter && !ckcIsStandaloneZoomTarget(idx, targets[i + 1])) ? targets[++i] : '';
-    const out = ckcResolveSingleTarget(idx, cleanT, arg1, opts);
+    const out = ckcResolveSingleTarget(idx, cleanT, arg1, opts, batchCtx);
     if (out !== null) chunks.push(out);
     else errors.push(ckcFormatMissingZoomError(idx, cleanT));
   }

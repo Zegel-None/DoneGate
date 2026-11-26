@@ -28,7 +28,7 @@ const BUILTINS = new Set(
   builtinModules.flatMap((m) => (m.startsWith('node:') ? [m, m.slice(5)] : [m, 'node:' + m]))
 );
 const SKIP_DIRS = new Set([
-  '.git', 'node_modules', '.donegate', 'dist', 'build', '_dist', 'coverage',
+  '.git', 'node_modules', '.donegate', '.deps', 'dist', 'build', '_dist', 'coverage',
   'reports', '.stryker-tmp', '参考', '归档', '证据', '设计', 'vendor'
 ]);
 const JS_EXTS = new Set(['.mjs', '.cjs', '.js']);

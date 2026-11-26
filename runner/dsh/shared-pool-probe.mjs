@@ -95,6 +95,7 @@ function sppRegisterAlias(aliasIndex, token, entry) {
   const clean = String(token || '').trim().toLowerCase();
   if (!clean) return;
   if (!aliasIndex.has(clean)) aliasIndex.set(clean, entry);
+  if (clean.startsWith('@')) return;
   const slashTail = sppNormSlashTail(clean);
   if (slashTail && !aliasIndex.has(slashTail)) aliasIndex.set(slashTail, entry);
 }
@@ -181,6 +182,7 @@ function sppLookupAlias(aliasIndex, candidates = []) {
     const clean = String(c || '').trim().toLowerCase();
     if (!clean) continue;
     if (aliasIndex.has(clean)) return aliasIndex.get(clean);
+    if (clean.startsWith('@')) continue;
     const tail = sppNormSlashTail(clean);
     if (tail && aliasIndex.has(tail)) return aliasIndex.get(tail);
   }

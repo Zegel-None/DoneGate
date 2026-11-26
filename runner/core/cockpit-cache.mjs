@@ -8,7 +8,7 @@ import { readJsonStrict } from '../../skill/io.mjs';
 
 export const CK_CACHE_SCHEMA = 'cockpit-idx-v9';
 export const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools', 'contracts', 'decisions'];
-export const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', 'dist', '_dist', 'coverage', 'reports', 'workflows/.deps'];
+export const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', 'dist', '_dist', 'coverage', 'reports'];
 const CK_ROOT_FILE_RE = /\.(?:mjs|cjs|js|ts|json|jsonl|cmd|yml|yaml)$/i;
 const CK_WAIT_SLICE = new Int32Array(new SharedArrayBuffer(4));
 

@@ -161,13 +161,20 @@ describe('Windows 11 共享底座池 (_shared) 全链路加固回归测试', () 
       expect(existsSync(join(ws, 'workflows', '.deps', '_shared', '.gradle-home'))).toBe(true);
       for (const p of [out.batPath, out.cmdPath]) {
         const raw = readFileSync(p, 'utf8');
-        expect(/^[\x00-\x7F]*$/.test(raw)).toBe(true);
+        expect(Buffer.from(raw, 'utf8').every((b) => b <= 0x7f)).toBe(true);
         expect(/(^|[^\r])\n/.test(raw)).toBe(false);
         for (const token of ['%~dp0', '..\\dists\\gradle-8.10.2', '..\\.gradle-home', 'GRADLE_USER_HOME']) expect(raw).toContain(token);
       }
 
       const outsideCwd = join(tmp, 'arbitrary-cwd'), readOnlyHome = join(tmp, 'readonly-gradle-home');
-      mkdirSync(outsideCwd, { recursive: true }); mkdirSync(readOnlyHome, { recursive: true }); chmodSync(readOnlyHome, 0o555);
+      mkdirSync(outsideCwd, { recursive: true });
+      if (process.platform === 'win32') {
+        // Windows NTFS 上 chmodSync(0o555) 不拦截目录写入，用同名普通文件真实阻塞 nested 子目录创建
+        writeFileSync(readOnlyHome, 'not-a-directory', 'utf8');
+      } else {
+        mkdirSync(readOnlyHome, { recursive: true });
+        chmodSync(readOnlyHome, 0o555);
+      }
       try {
         if (process.platform !== 'win32') {
           const run = spawnSync(out.posixPath, ['--version'], { cwd: outsideCwd, encoding: 'utf8', env: { ...process.env, GRADLE_USER_HOME: join(readOnlyHome, 'nested') } });
@@ -178,7 +185,7 @@ describe('Windows 11 共享底座池 (_shared) 全链路加固回归测试', () 
         const wfEnv = buildWorkflowDepEnv(ws, 'pack-android', { PATH: '', GRADLE_USER_HOME: join(readOnlyHome, 'nested') });
         expect(wfEnv.GRADLE_USER_HOME).toBe(join(ws, 'workflows', '.deps', '_shared', '.gradle-home'));
       } finally {
-        chmodSync(readOnlyHome, 0o755);
+        if (process.platform !== 'win32') chmodSync(readOnlyHome, 0o755);
       }
     } finally {
       rmSync(tmp, { recursive: true, force: true });

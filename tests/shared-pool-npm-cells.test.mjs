@@ -64,7 +64,7 @@ for (const [depPkg, depVer] of Object.entries(pj.dependencies)) {
     const shBin = join(binDir, binTail);
     writeFileSync(shBin, '#!/usr/bin/env node\\nconst v = require("vite");\\nconsole.log(' + JSON.stringify(binTail + ' ' + depVer + ' vite=') + ' + v.viteVersion);\\n', 'utf8');
     chmodSync(shBin, 0o755);
-    writeFileSync(join(binDir, binTail + '.cmd'), '@echo off\\r\\necho ' + binTail + ' ' + depVer + '\\r\\n', 'ascii');
+    writeFileSync(join(binDir, binTail + '.cmd'), '@echo off\\r\\nnode "%~dp0\\\\' + binTail + '" %*\\r\\n', 'ascii');
   }
 }
 
@@ -109,13 +109,16 @@ test('dg-deps-cli install-npm 将 CLI 工具隔离进 npm-cells 消除 vite 6/8 
 
     // 3. 在外部临时目录（无本地 node_modules）直接调用 .bin/storybook 与 .bin/lhci，验证 NODE_PATH 生效且各自解析正确的 vite 版本
     const extDir = mkdtempSync(join(tmpdir(), 'dg-ext-run-'));
+    const runPoolBin = (name) => process.platform === 'win32'
+      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${join(ws, `workflows/.deps/_shared/.bin/${name}.bat`)}" --version"`], { cwd: extDir, encoding: 'utf8', windowsVerbatimArguments: true })
+      : spawnSync(join(ws, `workflows/.deps/_shared/.bin/${name}`), ['--version'], { cwd: extDir, encoding: 'utf8' });
     try {
-      const sbRun = spawnSync(join(ws, 'workflows/.deps/_shared/.bin/storybook'), ['--version'], { cwd: extDir, encoding: 'utf8' });
-      assert.equal(sbRun.status, 0);
+      const sbRun = runPoolBin('storybook');
+      assert.equal(sbRun.status, 0, sbRun.stderr || sbRun.stdout);
       assert.match(sbRun.stdout, /storybook 8\.4\.7 vite=6\.4\.6/);
 
-      const lhRun = spawnSync(join(ws, 'workflows/.deps/_shared/.bin/lhci'), ['--version'], { cwd: extDir, encoding: 'utf8' });
-      assert.equal(lhRun.status, 0);
+      const lhRun = runPoolBin('lhci');
+      assert.equal(lhRun.status, 0, lhRun.stderr || lhRun.stdout);
       assert.match(lhRun.stdout, /lhci 0\.14\.0 vite=8\.3\.8/);
     } finally {
       rmSync(extDir, { recursive: true, force: true });
@@ -157,7 +160,7 @@ test('dg-deps-cli install-npm 将 CLI 工具隔离进 npm-cells 消除 vite 6/8 
 
     // 6. 验证生成的 Windows .bat 启动器 100% 纯 ASCII + CRLF 且含 NODE_PATH
     const batTxt = readFileSync(join(ws, 'workflows/.deps/_shared/.bin/storybook.bat'), 'utf8');
-    assert.ok(/^[\x00-\x7F]+$/.test(batTxt));
+    assert.ok(batTxt.length > 0 && Buffer.from(batTxt, 'utf8').every((b) => b <= 0x7f));
     assert.match(batTxt, /NODE_PATH/);
     assert.match(batTxt, /npm-cells\\storybook/);
   } finally {

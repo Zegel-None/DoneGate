@@ -9,6 +9,7 @@ import { finalizeAutopilotWorktree, prepareAutopilotWorktree } from './autopilot
 import { assignComponentWorkflow } from './workflow-jit.mjs';
 import { collectGitDiffStats, executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
+import { planCampaignExecutionStrategy } from './campaign-routing.mjs';
 
 function campTopoIsActiveNode(n) {
   if (!n || !n.id) return false;
@@ -143,6 +144,12 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
   if (ordered.length === 0) {
     return { ok: false, exitCode: 3, code: 'EMPTY_PROJECT_COMPONENTS', reason: '当前项目看板无可挂机组件节点（已跳过空白与外部子仓节点）' };
   }
+  const executionPlan = planCampaignExecutionStrategy(rawNodes, rawLinks, {
+    projectRoot: root,
+    tools: spec.tools,
+    maxConcurrency: spec.maxConcurrency,
+    hasSharedExternalState: spec.hasSharedExternalState
+  });
 
   const wtInfo = spec.useWorktreeSandbox !== false ? prepareAutopilotWorktree(root, campaignId) : { ok: false };
   const workCwd = wtInfo.ok ? wtInfo.worktreePath : root;
@@ -212,7 +219,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
   const finalizedWt = finalizeAutopilotWorktree(root, wtInfo, 'COMPLETED', campaignId);
   const campState = saveCampaignState(root, {
     campaignId, state: 'COMPLETED', orderedIds, completedComponentIds: [...completedComponentIds],
-    componentReports, sandboxWorktree: finalizedWt, totalCacheHits, totalPassedGates, totalGates
+    componentReports, sandboxWorktree: finalizedWt, totalCacheHits, totalPassedGates, totalGates, executionPlan
   });
   const summaryCard = buildMicroVerdictCard({
     ticketId: campaignId, targetUri: null, exitCode: 0,
@@ -229,7 +236,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
     }
   });
   return {
-    ok: true, exitCode: 0, campaignId, state: 'COMPLETED', orderedIds,
+    ok: true, exitCode: 0, campaignId, state: 'COMPLETED', orderedIds, executionPlan,
     completedCount: completedComponentIds.size, totalComponents: ordered.length,
     cacheHits: totalCacheHits, componentReports, sandboxWorktree: finalizedWt, campaign: campState
   };

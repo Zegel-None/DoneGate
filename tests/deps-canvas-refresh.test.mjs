@@ -45,7 +45,7 @@ describe('共享底座池自包含 CLI、repair-git 安全锁、版本一致性�
       const lnRes = spawnSync(process.execPath, [cliAbs, 'write-launchers', '--bin', 'gradle', '--dist', 'gradle-8.10.2'], { cwd: extWs, encoding: 'utf8' });
       expect(lnRes.status).toBe(0);
       const batTxt = readFileSync(join(extWs, 'workflows', '.deps', '_shared', '.bin', 'gradle.bat'), 'utf8');
-      expect(/^[\x00-\x7F]*$/.test(batTxt)).toBe(true);
+      expect(Buffer.from(batTxt, 'utf8').every((b) => b <= 0x7f)).toBe(true);
       expect(batTxt).toContain('..\\.gradle-home');
       expect(batTxt).toContain('GRADLE_USER_HOME=');
 
@@ -103,6 +103,9 @@ describe('共享底座池自包含 CLI、repair-git 安全锁、版本一致性�
     expect(p2.lookup(['maestro'])?.ready).toBe(true);
     const p3 = parseFlexibleDepsManifest({ gradle: { status: 'ready', version: '8.10.2' } });
     expect(p3.lookup(['gradle'])?.ready).toBe(true);
+    const p4 = parseFlexibleDepsManifest({ installed: { puck: { id: 'puck', pkg: '@puckeditor/core', ready: true, version: '0.24.1' } } });
+    expect(p4.lookup(['@puckeditor/core'])?.id).toBe('puck');
+    expect(p4.lookup(['@stryker-mutator/core'])).toBeNull();
   });
 });
 
@@ -148,7 +151,14 @@ describe('DSH 会话动态工作区、免重下二进制兜底识别、画布刷
       expect(refRes.ok).toBe(true);
       expect(refRes.sharedPool.summaryLabel).toContain('Gradle 8.10.2');
       expect(refRes.packDepReports['pack-android'].items.find((x) => x.id === 'gradle')?.ready).toBe(true);
-      expect(refRes.packDepReports['pack-android'].missingCount).toBe(1);
+      const maestroItem = refRes.packDepReports['pack-android'].items.find((x) => x.id === 'maestro');
+      expect(maestroItem).toBeTruthy();
+      if (maestroItem.ready) {
+        expect(maestroItem.resolvedVia).toBe('host-env');
+        expect(refRes.packDepReports['pack-android'].missingCount).toBe(0);
+      } else {
+        expect(refRes.packDepReports['pack-android'].missingCount).toBe(1);
+      }
 
       // 初次打开 / 重进画布水合即携带已就绪的 pack-android 依赖状态
       const canvasHtml = await (await fetch(`${baseUrl}/donegate/api/canvas?dsh=1&sessionId=sess-w11`)).text();
@@ -231,7 +241,15 @@ describe('DSH 会话动态工作区、免重下二进制兜底识别、画布刷
       const bodyMock = { appendChild() {}, getAttribute: (k) => ((k === 'data-lovinsp-active' || k === 'data-react-grab-active') ? '1' : null) };
       vm.runInNewContext(buildInjectedUiBridgeScript(), {
         window: { location: { pathname: '/' }, innerWidth: 1024, parent: { postMessage: (m) => posted.push(m) }, addEventListener() {} },
-        document: { body: bodyMock, documentElement: { style: { setProperty() {} } }, createElement: () => ({ style: {}, setAttribute() {}, getAttribute: () => '1' }), addEventListener: (ev, fn) => { (docEvents[ev] = docEvents[ev] || []).push(fn); } },
+        document: {
+          body: bodyMock,
+          documentElement: { style: { setProperty() {} } },
+          createElement: () => ({ style: {}, setAttribute() {}, getAttribute: () => '1' }),
+          addEventListener: (ev, fn) => {
+            if (!docEvents[ev]) docEvents[ev] = [];
+            docEvents[ev].push(fn);
+          }
+        },
         Date, Math, Object, String, Number
       });
       for (const fn of (docEvents.pointerdown || [])) {

@@ -115,6 +115,13 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     const routeData = JSON.parse(routeImpact.stdout);
     expect(routeData.affectedProdFiles.some((p) => p.file === 'runner/dsh/ui-board-routes.mjs')).toBe(true);
     expect(routeData.transitiveTests.some((t) => t.file === 'tests/round3-dsh-uiboard.test.mjs')).toBe(true);
+
+    // 传入目录路径不抛 EISDIR，而是展开目录下源码与配置联合分析波及面
+    const dirImpact = dispatchCommand(['impact', 'runner/core', '--json'], REPO_ROOT);
+    expect(dirImpact.exitCode).toBe(0);
+    const dirData = JSON.parse(dirImpact.stdout);
+    expect(dirData.affectedTests.some((t) => t.file === 'tests/cockpit-zoom-blindfold.test.mjs')).toBe(true);
+    expect(dirData.affectedProdFiles.length).toBeGreaterThanOrEqual(5);
   });
 
   it('跨进程单飞文件锁缓存：回收死进程残留锁并防止多子进程冷启动惊群重算', async () => {
@@ -186,6 +193,15 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
       const symSlice = dispatchCommand(['zoom', 'mutateComponentWorkflowJit', '--source'], REPO_ROOT);
       expect(symSlice.exitCode).toBe(0);
       expect(symSlice.stdout).toContain('export function mutateComponentWorkflowJit');
+
+      // 同批多符号 --source 对重复路径直连 ADR 自动去重，避免刷屏截断源码
+      const batchSlice = dispatchCommand(['zoom', 'resolveCbmBinary', 'getCbmGraphSummary', '--source'], REPO_ROOT);
+      expect(batchSlice.exitCode).toBe(0);
+      expect(batchSlice.stdout).toContain('export function resolveCbmBinary');
+      expect(batchSlice.stdout).toContain('export function getCbmGraphSummary');
+      if (existsSync(join(REPO_ROOT, 'decisions'))) {
+        expect(batchSlice.stdout).toContain('已于同批前文展示');
+      }
     }
   });
 });

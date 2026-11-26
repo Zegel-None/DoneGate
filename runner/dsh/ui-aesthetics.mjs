@@ -283,3 +283,48 @@ export function auditHtmlAntiAiSlop(htmlText) {
   }
   return { pass: warnings.length === 0, warnings };
 }
+
+export const UI_AESTHETICS_RUBRIC_DIMENSIONS = Object.freeze([
+  { id: 'designQuality', label: '设计质量 (Design Quality)', weight: 0.25, focus: '色彩层级、视觉令牌与对比度一致性' },
+  { id: 'originality', label: '原创性 (Originality)', weight: 0.25, focus: '杜绝紫粉霓虹渐变与 Emoji 按钮等 AI 模板脸' },
+  { id: 'craft', label: '工艺细节 (Craft)', weight: 0.25, focus: '语义化标签、focus 态与组件归属锚点 data-ui-owner' },
+  { id: 'functionality', label: '功能完整度 (Functionality)', weight: 0.25, focus: '零控制台报错、零页面崩溃、零 4xx/5xx、零空壳死按钮' }
+]);
+
+export const UI_RUBRIC_FEW_SHOT_CALIBRATION = Object.freeze({
+  goodExample: '使用 :root 语义 CSS 变量、单焦点主色、SVG 几何图标与真实响应状态变更的可交互控件',
+  badExample: '紫粉霓虹线性渐变卡片 + 纯 Emoji 按钮 + 点击后零反应的空壳按钮 + 控制台未捕获异常'
+});
+
+export function evaluateUiAestheticsRubric(htmlText, runtime = {}) {
+  const src = String(htmlText || '');
+  const antiSlop = auditHtmlAntiAiSlop(src);
+  const warnings = [...antiSlop.warnings];
+
+  const usesCssVars = /--[a-z0-9-]+\s*:/i.test(src) || /var\(--[a-z0-9-]+\)/i.test(src);
+  const hasFocusStyle = /:focus(?:-visible)?\b/i.test(src);
+  const hasUiOwner = /data-ui-owner=/i.test(src);
+  const hasSemanticMain = /<(?:main|header|nav|section)\b/i.test(src);
+
+  const designQuality = Math.max(0, 100 - (usesCssVars ? 0 : 15) - (hasSemanticMain ? 0 : 10));
+  const originality = Math.max(0, 100 - antiSlop.warnings.length * 35);
+  const craft = Math.max(0, 100 - (hasFocusStyle ? 0 : 10) - (hasUiOwner ? 0 : 10));
+
+  const consoleErrs = Number(runtime.consoleErrorCount || 0);
+  const pageErrs = Number(runtime.pageErrorCount || 0);
+  const httpErrs = Number(runtime.httpErrorCount || 0);
+  const deadBtns = Number(runtime.deadButtonCount || 0);
+  const functionality = Math.max(0, 100 - consoleErrs * 25 - pageErrs * 35 - httpErrs * 20 - deadBtns * 25);
+
+  const dimensions = { designQuality, originality, craft, functionality };
+  const totalScore = Math.round((designQuality + originality + craft + functionality) / 4);
+  const pass = antiSlop.pass && functionality >= 75 && totalScore >= 75;
+  return {
+    pass,
+    totalScore,
+    dimensions,
+    warnings,
+    antiSlopChecklist: ANTI_AI_SLOP_RULES,
+    calibration: UI_RUBRIC_FEW_SHOT_CALIBRATION
+  };
+}

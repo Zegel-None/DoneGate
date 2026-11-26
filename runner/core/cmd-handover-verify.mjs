@@ -9,6 +9,8 @@ import { appendChainEntry, readAndVerifyChain } from './chain.mjs';
 import { computeProjectStatus } from './gates.mjs';
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 import { CMDB_REPO, collectGapsList } from './cmd-inspect.mjs';
+import { verifyHeldOutContract } from './heldout-verifier.mjs';
+import { vcAggregateVoteFiles, vcBuildEscapesRegressionBundle, vcEvaluateVerdictMatrix } from './verify-consensus.mjs';
 
 export function cmdHandover(projectRoot, opts = {}) {
   const st = computeProjectStatus(projectRoot);
@@ -187,6 +189,10 @@ export function cmdVerifyPack(projectRoot, opts = {}) {
       }
     }
     versText = `base ${baseRev}\nhead ${headRev}\n`;
+    const hoRes = verifyHeldOutContract(projectRoot, contract, { baseRef: baseRev, heldOutDir: opts.heldOutDir });
+    if (!hoRes.ok) {
+      return { exitCode: 2, code: hoRes.code, stderr: hoRes.fails.join('\n') };
+    }
     const d1 = spawnSync('git', ['-C', projectRoot, 'diff', `${baseRev}..${headRev}`, '--', '.', ':(exclude)contracts'], { encoding: 'utf8' }).stdout || '';
     const d2 = spawnSync('git', ['-C', projectRoot, 'diff', `${baseRev}..${headRev}`, '--', `contracts/${id}`], { encoding: 'utf8' }).stdout || '';
     diffText = [d1.trimEnd(), d2.trimEnd()].filter(Boolean).join('\n') + '\n';
@@ -213,20 +219,62 @@ export function cmdVerifyPack(projectRoot, opts = {}) {
   if (chk.status !== 0) {
     return { exitCode: chk.status === 3 ? 3 : 2, stderr: `自建复核包未通过 check-reviewpack：\n${chk.stdout}\n${chk.stderr}` };
   }
+  const escapesRegression = opts.escapesRegression ? vcBuildEscapesRegressionBundle(projectRoot, id) : null;
   return {
     exitCode: 0,
     stdout: `复核包已生成并通过 INV-14 自检：${packDir}\n\n` +
       renderProgressBlock(projectRoot, { focusContractId: id, headline: `📦 [4-1] 「${contract.title || id}」独立复核材料包已就绪（待 /donegate-judge 盲审） · 总进度 {{PCT}}` }),
     packDir,
+    escapesRegression,
     packageHash: sha256(manifestBody)
   };
+}
+
+function hvRenderApplyNonPass(projectRoot, evalRes) {
+  if (evalRes.isContradiction) {
+    return {
+      exitCode: 2,
+      stderr: '门 5 发现材料自相矛盾（G-02 按 §八 退 2）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 2, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '提交送审的材料自相矛盾',
+          reason: '独立复核指出不同文件或声称之间互相冲突',
+          action: '核对代码 diff、运行输出与完成声称后重新打包送审'
+        })
+    };
+  }
+  if (evalRes.hasFail) {
+    return {
+      exitCode: 1,
+      stdout: '门 5 判定：未通过（存在 fail 项，退 1）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 1, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '独立 AI 复核驳回（存在未通过项）',
+          reason: '独立盲审在标准核对中发现 fail 项',
+          action: '按判定书指出的 fail 项修复后，重跑 check 与 verify pack'
+        })
+    };
+  }
+  if (evalRes.hasUnknown) {
+    return {
+      exitCode: 3,
+      stdout: '门 5 判定：无法判断（材料不足，退 3）\n\n' +
+        renderWorryBlock(projectRoot, {
+          exitCode: 3, stage: 4, stageTitle: '独立 AI 盲审裁决',
+          title: '复核材料不足，无法裁决',
+          reason: '判定书中存在因缺失材料而给出的 unknown',
+          action: '补齐缺失证据或说明后重新运行 verify pack'
+        })
+    };
+  }
+  return null;
 }
 
 export function cmdVerifyApply(projectRoot, opts = {}) {
   const packDir = opts.packDir ? resolve(projectRoot, opts.packDir) : null;
   const verdictPath = opts.verdict ? resolve(projectRoot, opts.verdict) : null;
   if (!packDir || !existsSync(packDir)) return { exitCode: 3, stderr: '复核包目录不存在' };
-  if (!verdictPath || !existsSync(verdictPath)) return { exitCode: 3, stderr: '判定书文件不存在' };
+  if (!opts.votes && (!verdictPath || !existsSync(verdictPath))) return { exitCode: 3, stderr: '判定书文件不存在' };
 
   // 先由 check-reviewpack.mjs 核验复核包是否被篡改（清单闭合 / 哈希）
   const packChk = spawnSync(process.execPath, [join(CMDB_REPO, 'skill', 'check-reviewpack.mjs'), '--pack', packDir], { encoding: 'utf8' });
@@ -244,67 +292,20 @@ export function cmdVerifyApply(projectRoot, opts = {}) {
     };
   }
 
-  const vRes = readJsonStrict(verdictPath);
-  if (!vRes.ok) return { exitCode: vRes.error === 'parse' ? 2 : 3, stderr: '判定书读不出或 JSON 损坏' };
-  const v = vRes.value;
-  const items = ['V1', 'V2', 'V3', 'V4', 'V5'];
-  const allowed = new Set(['pass', 'fail', 'unknown']);
-  let hasFail = false, hasUnknown = false, isContradiction = false;
-
-  for (const k of items) {
-    const entry = v[k];
-    const val = typeof entry === 'string' ? entry : entry?.verdict;
-    const reason = typeof entry === 'object' ? (entry?.reason || entry?.rationale || '') : (v.reasons?.[k] || '');
-    if (!allowed.has(val)) {
-      return { exitCode: 3, stderr: `非法作答词 ${k}=${val}（只允许 pass/fail/unknown，退 3）` };
-    }
-    if (val === 'fail') hasFail = true;
-    if (val === 'unknown') {
-      hasUnknown = true;
-      if (!String(reason).trim() || !/(缺失|缺|矛盾|不一致|对不上|不可读|材料)/.test(String(reason))) {
-        return { exitCode: 3, stderr: `invalid-abstain：${k}=unknown 未指明缺失或矛盾材料（退 3）` };
-      }
-      if (/(矛盾|不一致|对不上)/.test(String(reason))) isContradiction = true;
-    }
+  let v = null;
+  if (opts.votes) {
+    const agg = vcAggregateVoteFiles(projectRoot, opts.votes);
+    if (!agg.ok) return { exitCode: agg.exitCode, stderr: agg.stderr };
+    v = agg.merged;
+  } else {
+    const vRes = readJsonStrict(verdictPath);
+    if (!vRes.ok) return { exitCode: vRes.error === 'parse' ? 2 : 3, stderr: '判定书读不出或 JSON 损坏' };
+    v = vRes.value;
   }
-
-  // G-02：材料自相矛盾导致的 unknown，总结论按 §八 退 2（不降级为 3）
-  if (isContradiction) {
-    return {
-      exitCode: 2,
-      stderr: '门 5 发现材料自相矛盾（G-02 按 §八 退 2）\n\n' +
-        renderWorryBlock(projectRoot, {
-          exitCode: 2, stage: 4, stageTitle: '独立 AI 盲审裁决',
-          title: '提交送审的材料自相矛盾',
-          reason: '独立复核指出不同文件或声称之间互相冲突',
-          action: '核对代码 diff、运行输出与完成声称后重新打包送审'
-        })
-    };
-  }
-  if (hasFail) {
-    return {
-      exitCode: 1,
-      stdout: '门 5 判定：未通过（存在 fail 项，退 1）\n\n' +
-        renderWorryBlock(projectRoot, {
-          exitCode: 1, stage: 4, stageTitle: '独立 AI 盲审裁决',
-          title: '独立 AI 复核驳回（存在未通过项）',
-          reason: '独立盲审在标准核对中发现 fail 项',
-          action: '按判定书指出的 fail 项修复后，重跑 check 与 verify pack'
-        })
-    };
-  }
-  if (hasUnknown) {
-    return {
-      exitCode: 3,
-      stdout: '门 5 判定：无法判断（材料不足，退 3）\n\n' +
-        renderWorryBlock(projectRoot, {
-          exitCode: 3, stage: 4, stageTitle: '独立 AI 盲审裁决',
-          title: '复核材料不足，无法裁决',
-          reason: '判定书中存在因缺失材料而给出的 unknown',
-          action: '补齐缺失证据或说明后重新运行 verify pack'
-        })
-    };
-  }
+  const evalRes = vcEvaluateVerdictMatrix(v);
+  if (!evalRes.ok) return { exitCode: evalRes.exitCode, stderr: evalRes.stderr };
+  const nonPass = hvRenderApplyNonPass(projectRoot, evalRes);
+  if (nonPass) return nonPass;
 
   const contractId = v.contractId || packDir.split(/[\\/]/).pop();
   const maniPath = join(packDir, 'MANIFEST.txt');

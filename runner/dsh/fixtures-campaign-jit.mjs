@@ -257,12 +257,18 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   const winObj = {
     location: { pathname: '/' }, innerWidth: 1024,
     parent: { postMessage: (msg) => posted.push(msg) },
-    addEventListener: (ev, fn) => { (winListeners[ev] = winListeners[ev] || []).push(fn); }
+    addEventListener: (ev, fn) => {
+      if (!winListeners[ev]) winListeners[ev] = [];
+      winListeners[ev].push(fn);
+    }
   };
   const docObj = {
     body: bodyEl, documentElement: { style: { setProperty() {} } },
     createElement: () => ({ style: {}, setAttribute() {}, getAttribute: () => '1' }),
-    addEventListener: (ev, fn) => { (docListeners[ev] = docListeners[ev] || []).push(fn); }
+    addEventListener: (ev, fn) => {
+      if (!docListeners[ev]) docListeners[ev] = [];
+      docListeners[ev].push(fn);
+    }
   };
   vm.runInNewContext(buildInjectedUiBridgeScript(), { window: winObj, document: docObj, Date, Math, Object, String, Number });
 

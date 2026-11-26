@@ -443,7 +443,7 @@ async function verifyWorkflowDepsIsolation(check) {
       const winGit = buildWinHardenedGitArgs(['fetch'], { HTTPS_PROXY: 'http://127.0.0.1:7897' });
       assert.ok(winGit.includes('http.sslBackend=openssl') && winGit.includes('core.longpaths=true'));
       const lnch = writeSharedPoolLaunchers(tmp, { binName: 'gradle', distSubdir: 'gradle-8.10.2', comment: '安卓工作流启动器' });
-      assert.ok(/^[\x00-\x7F]*$/.test(readFileSync(lnch.batPath, 'utf8')));
+      assert.ok(Buffer.from(readFileSync(lnch.batPath, 'utf8'), 'utf8').every((b) => b <= 0x7f));
       recordSharedPoolDepReady(tmp, { id: 'gradle', version: '8.10.2', workflowId: 'pack-android', bin: lnch.relBin });
       assert.equal(readWorkflowDepsStatus(tmp, 'pack-android').ready, true);
     } finally {
