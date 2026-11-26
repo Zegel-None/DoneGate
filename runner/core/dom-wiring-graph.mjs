@@ -9,7 +9,7 @@ export const ATLAS_SUBPACK_DEFAULTS = {
     'runner/atlas/scan-graph.mjs', 'runner/atlas/humanize.mjs', 'runner/atlas/hydrate-workbench.mjs'
   ],
   '@canvas': [
-    'runner/atlas/render-html.mjs', 'runner/atlas/serve-atlas.mjs', 'runner/atlas/ui-shell.mjs',
+    'runner/atlas/render-html.mjs', 'runner/dsh/host/serve-atlas.mjs', 'runner/atlas/ui-shell.mjs',
     'runner/atlas/ui-views.mjs', 'runner/atlas/wb-dom.mjs', 'runner/atlas/wb-events-actions.mjs',
     'runner/atlas/wb-events-pointer.mjs', 'runner/atlas/wb-events-wheel-drop.mjs', 'runner/atlas/wb-graph-engine.mjs',
     'runner/atlas/wb-history.mjs', 'runner/atlas/wb-inline-rename.mjs', 'runner/atlas/wb-layout-tidy.mjs',
@@ -27,7 +27,7 @@ export const ATLAS_SUBPACK_DEFAULTS = {
   ],
   '@dsh-dock': [
     'runner/atlas/wb-dsh-bridge.mjs', 'runner/atlas/wb-dsh-shell.mjs', 'runner/atlas/wb-dsh-style.mjs',
-    'runner/atlas/wb-subagent.mjs', 'runner/atlas/serve-atlas.mjs'
+    'runner/atlas/wb-subagent.mjs', 'runner/dsh/host/serve-atlas.mjs'
   ]
 };
 

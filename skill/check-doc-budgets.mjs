@@ -25,9 +25,17 @@ const CDB_PERISHABLE_RE = /\b(?:WIP|TEMP|TBD|TODO|FIXME|XXX)\b|待补充|临时�
 export function cdbLoadDocBudgets(projectRoot) {
   const thPath = join(resolve(projectRoot), 'thresholds.json');
   const res = existsSync(thPath) ? readJsonStrict(thPath) : { ok: false };
-  const raw = res.ok && res.value?.docBudgets && typeof res.value.docBudgets === 'object'
+  const baseRaw = res.ok && res.value?.docBudgets && typeof res.value.docBudgets === 'object'
     ? res.value.docBudgets
     : {};
+  let envRaw = {};
+  if (process.env.DG_NODE_CONFIG) {
+    try {
+      const parsed = JSON.parse(process.env.DG_NODE_CONFIG);
+      if (parsed && typeof parsed === 'object') envRaw = parsed;
+    } catch (err) { void err; }
+  }
+  const raw = { ...baseRaw, ...envRaw };
   return {
     rootAgentsMaxLines: Number(raw.rootAgentsMaxLines) || CDB_DEFAULT_BUDGETS.rootAgentsMaxLines,
     rootAgentsMaxBytes: Number(raw.rootAgentsMaxBytes) || CDB_DEFAULT_BUDGETS.rootAgentsMaxBytes,

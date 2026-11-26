@@ -2,9 +2,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { stripCommentsKeepStrings } from './js-mask-lexer.mjs';
+import { resolvePythonImport } from './python-imports.mjs';
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'];
 const REEXPORT_SIG_RE = /^export\s+(\*(?:\s+as\s+([A-Za-z_$][\w$]*))?|\{[\s\S]+?\})(?:\s+from\s+['"]([^'"]+)['"])?\s*;?$/;
+const PY_REEXPORT_SIG_RE = /^from\s+(\.+)([A-Za-z0-9_.]*)\s+import\s+(.+)$/;
 const ROUTE_FULL_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)?(\/(?:donegate\/api|api)\/[A-Za-z0-9/_:${}.-]+)\1|\/(\^?\\\/(?:donegate\\\/api|api)\\\/[^\s/;]+)\/[gimsuy]*/g;
 const ROUTE_SUB_RE = /(['"`])(?:(GET|POST|PUT|DELETE|PATCH)\s+)(\/[A-Za-z0-9/_:${}.-]+)\1|(?:sub|p|rel|subPath|subRoute|routePath|relPath|apiPath|pathname|route|cleanPath)\s*[!=]==?\s*(['"`])(\/[A-Za-z0-9/_:${}.-]+)\4/g;
 const SERVER_SIGNAL_RE = /\b(?:req\.method|req\.url|res\.writeHead|res\.end|createServer|router\.|app\.(?:get|post|put|delete))\b/;
@@ -127,7 +129,37 @@ function bseMergeSubModuleExports(clause, nsAlias, fromSpec, sub, reg) {
   for (const sp of parseSpecifiers(clause)) reg(bseFormatNamedSubExport(sp, fromSpec, sub));
 }
 
+function bseParsePyImportSpecs(clause) {
+  return clause.split(',').map((raw) => raw.trim()).filter(Boolean).map((p) => {
+    const m = p.match(/^([A-Za-z_][\w]*)\s+as\s+([A-Za-z_][\w]*)$/);
+    if (m) return { orig: m[1], exported: m[2] };
+    return /^[A-Za-z_][\w]*$/.test(p) ? { orig: p, exported: p } : null;
+  }).filter(Boolean);
+}
+
+function bseProcessPythonReexport(ex, relFile, rawByFile, fileMetrics, scopeSet, maskFn, projectRoot, nextVisited, reg) {
+  const pm = ex.signature.match(PY_REEXPORT_SIG_RE);
+  if (!pm) { reg(ex); return; }
+  const dots = pm[1].length, modName = pm[2] || '', clause = pm[3].trim();
+  const targetFile = resolvePythonImport(relFile, modName, dots, scopeSet);
+  if (!targetFile) { reg(ex); return; }
+  const sub = resolveModuleTable(targetFile, rawByFile, fileMetrics, scopeSet, maskFn, projectRoot, nextVisited);
+  if (clause === '*') {
+    for (const subItem of sub.items) if (!subItem.symbol.startsWith('.')) reg(subItem);
+    return;
+  }
+  for (const sp of bseParsePyImportSpecs(clause)) {
+    const hit = sub.bySymbol.get(sp.orig);
+    if (hit) reg({ symbol: sp.exported, doc: hit.doc || '', signature: renameSym(hit.signature, hit.symbol, sp.exported) });
+    else reg({ symbol: sp.exported, doc: '', signature: `from ${pm[1]}${modName} import ${sp.orig}${sp.exported !== sp.orig ? ` as ${sp.exported}` : ''}` });
+  }
+}
+
 function bseProcessModuleExport(ex, relFile, rawByFile, fileMetrics, scopeSet, maskFn, projectRoot, nextVisited, localDecls, typedefSet, reg) {
+  if (ex.symbol.startsWith('reexport:py:')) {
+    bseProcessPythonReexport(ex, relFile, rawByFile, fileMetrics, scopeSet, maskFn, projectRoot, nextVisited, reg);
+    return;
+  }
   if (!ex.symbol.startsWith('reexport:')) {
     reg({ symbol: ex.symbol, doc: ex.doc || '', signature: ex.signature });
     return;
@@ -180,6 +212,12 @@ function bseEnrichSingleFacade(entryRel, parsed, facadeSet, emittedTypedefs, raw
   for (const ex of parsed.exports) {
     if (!ex.symbol.startsWith('reexport:')) {
       bseAddUniqueExports([{ symbol: ex.symbol, doc: ex.doc || '', signature: ex.signature }], seenSymbols, resolvedExports);
+      continue;
+    }
+    if (ex.symbol.startsWith('reexport:py:')) {
+      const singleMetrics = new Map([...fileMetrics.entries(), [entryRel, { ...parsed, exports: [ex] }]]);
+      const single = resolveModuleTable(entryRel, rawByFile, singleMetrics, scopeSet, maskFn, projectRoot);
+      bseAddUniqueExports(single.items, seenSymbols, resolvedExports);
       continue;
     }
     const reMatch = ex.signature.match(REEXPORT_SIG_RE);

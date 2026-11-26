@@ -162,8 +162,65 @@ function hyTrackFnSpan(trimmed, li, startsInPlainCode, braceBefore, hasEffective
   }
 }
 
-export function countEffectiveCodeLines(text) {
+function hySkipPySingleQuote(raw, i, ch) {
+  let cur = i + 1;
+  while (cur < raw.length && raw[cur] !== ch) cur += raw[cur] === '\\' ? 2 : 1;
+  return cur + 1;
+}
+
+function hyScanPythonLineEffective(raw, state) {
+  let i = 0;
+  let hasCode = false;
+  while (i < raw.length) {
+    if (state.tripleQuote) {
+      const closeAt = raw.indexOf(state.tripleQuote, i);
+      if (closeAt < 0) break;
+      state.tripleQuote = null;
+      i = closeAt + 3;
+      continue;
+    }
+    const ch = raw[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === '#') break;
+    if ((ch === '"' || ch === "'") && raw.slice(i, i + 3) === ch.repeat(3)) {
+      const delim = ch.repeat(3);
+      const sameLineEnd = raw.indexOf(delim, i + 3);
+      if (sameLineEnd >= 0) { i = sameLineEnd + 3; continue; }
+      state.tripleQuote = delim;
+      break;
+    }
+    hasCode = true;
+    i = (ch === '"' || ch === "'") ? hySkipPySingleQuote(raw, i, ch) : i + 1;
+  }
+  return hasCode;
+}
+
+function hyCountEffectivePythonLines(rawLines) {
+  let effectiveLines = 0;
+  const state = { tripleQuote: null };
+  for (const raw of rawLines) {
+    if (hyScanPythonLineEffective(raw, state)) effectiveLines++;
+  }
+  return { rawLines: rawLines.length, effectiveLines, maxFnLines: 0 };
+}
+
+function hyComputeMaxFnLines(fnSpans, lineEffective, foldedLines) {
+  let maxFnLines = 0;
+  for (const [fnStart, fnEnd] of fnSpans) {
+    let fnLogical = 0;
+    for (let k = fnStart; k <= fnEnd; k++) {
+      if (lineEffective[k] && !foldedLines.has(k)) fnLogical++;
+    }
+    if (fnLogical > maxFnLines) maxFnLines = fnLogical;
+  }
+  return maxFnLines;
+}
+
+export function countEffectiveCodeLines(text, opts = {}) {
   const rawLines = String(text || '').split(/\r?\n/), n = rawLines.length;
+  if (opts?.lang === 'python' || /\.py$/i.test(String(opts?.filePath || ''))) {
+    return hyCountEffectivePythonLines(rawLines);
+  }
   const lineEffective = new Array(n).fill(false), plainCodeLine = new Array(n).fill(false), foldedLines = new Set();
   const fnSpans = [], modeStack = [], st = { inBlockComment: false, jsBraceDepth: 0, curFn: null };
   let effectiveLines = 0;
@@ -186,15 +243,7 @@ export function countEffectiveCodeLines(text) {
   }
 
   foldPureStringJoinBlocks(rawLines, lineEffective, plainCodeLine, foldedLines);
-  let maxFnLines = 0;
-  for (const [fnStart, fnEnd] of fnSpans) {
-    let fnLogical = 0;
-    for (let k = fnStart; k <= fnEnd; k++) {
-      if (lineEffective[k] && !foldedLines.has(k)) fnLogical++;
-    }
-    if (fnLogical > maxFnLines) maxFnLines = fnLogical;
-  }
-  return { rawLines: n, effectiveLines, maxFnLines };
+  return { rawLines: n, effectiveLines, maxFnLines: hyComputeMaxFnLines(fnSpans, lineEffective, foldedLines) };
 }
 
 function normalizeRelocatedLine(raw) {
@@ -220,13 +269,25 @@ export function computeRelocatedCodeLines(removedLines, addedLines) {
   return relocated;
 }
 
+function hyReadNodeConfigOverrides() {
+  const raw = process.env.DG_NODE_CONFIG;
+  if (!raw || typeof raw !== 'string') return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    void err;
+    return {};
+  }
+}
+
 export function loadHygieneBudgets(projectRoot) {
   const p = join(projectRoot, 'thresholds.json');
-  const base = { ...DEFAULT_HYGIENE_BUDGETS, maxFunctionLines: 0, allowedRootDirs: [], bannedPatterns: [] };
-  if (!existsSync(p)) return base;
-  const r = readJsonStrict(p);
-  if (!r.ok || !r.value) return base;
-  const v = r.value;
+  const nodeCfg = hyReadNodeConfigOverrides();
+  const base = { ...DEFAULT_HYGIENE_BUDGETS, maxFunctionLines: 0, allowedRootDirs: [], bannedPatterns: [], blockEmptyCatch: true };
+  const r = existsSync(p) ? readJsonStrict(p) : { ok: false };
+  const fileVals = (r.ok && r.value && typeof r.value === 'object') ? r.value : {};
+  const v = { ...fileVals, ...nodeCfg };
   return {
     warnCommitCodeLines: Number(v.warnCommitCodeLines) || DEFAULT_HYGIENE_BUDGETS.warnCommitCodeLines,
     maxCommitCodeLines: Number(v.maxCommitCodeLines) || DEFAULT_HYGIENE_BUDGETS.maxCommitCodeLines,
@@ -240,6 +301,8 @@ export function loadHygieneBudgets(projectRoot) {
     maxFunctionLines: Number(v.maxFunctionLines) || 0,
     warnCognitiveComplexity: Number(v.warnCognitiveComplexity) || DEFAULT_HYGIENE_BUDGETS.warnCognitiveComplexity,
     maxCognitiveComplexity: Number(v.maxCognitiveComplexity) || DEFAULT_HYGIENE_BUDGETS.maxCognitiveComplexity,
+    maxCoreFileLines: Number(v.maxCoreFileLines) || 350,
+    blockEmptyCatch: v.blockEmptyCatch !== false,
     allowedRootDirs: Array.isArray(v.allowedRootDirs) ? v.allowedRootDirs.map(String) : [],
     bannedPatterns: Array.isArray(v.bannedPatterns) ? v.bannedPatterns : []
   };

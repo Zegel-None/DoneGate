@@ -67,7 +67,7 @@ export function probeExecutableTmpDir(dirPath) {
       chmodSync(probeFile, 0o700);
     }
     const r = isWin
-      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', probeFile], { windowsHide: true, stdio: 'ignore', timeout: 3000 })
+      ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${probeFile.replace(/"/g, '""')}""`], { windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore', timeout: 3000 })
       : spawnSync(probeFile, [], { stdio: 'ignore', timeout: 3000 });
     if (r.error) return false;
     return r.status === 0;
@@ -139,13 +139,13 @@ export function buildSanitizedEnv(baseEnv = process.env, extra = {}, opts = {}) 
 export function checkCommandBans(command) {
   const cmd = String(command || '').trim();
   const hits = [];
-  if (/\|\|\s*true\b|;\s*exit\s+0\b|--no-fail\b/i.test(cmd)) {
-    hits.push('禁令 1：命令包含吞失败写法（|| true / ; exit 0 / --no-fail）');
+  if (/\|\|\s*(?:true\b|exit\s+0\b|:(?:\s|$|[;&|]))|(?:;|&&)\s*exit\s+0\b|--no-fail\b/i.test(cmd)) {
+    hits.push('禁令 1：命令包含吞失败写法（|| true / || exit 0 / || : / ; exit 0 / --no-fail）');
   }
-  if (/^(?:pnpm|npm|npx|yarn|bun)(?:\.cmd|\.ps1)?\s+(?:run|exec|test)\b/i.test(cmd)) {
+  if (/(?:^|[;&|]\s*)(?:pnpm|npm|npx|yarn|bun)(?:\.cmd|\.ps1)?\s+(?:run|exec|test)\b/i.test(cmd)) {
     hits.push('禁令 2：命令经包管理器包装执行（会替换退出码）');
   }
-  if (/(?:>|>>)\s*[^\s]*(?:contracts\/|CONSTRAINTS\.md|INTENT\.md)/i.test(cmd)) {
+  if (/(?:>|>>)\s*[^\s]*(?:contracts[/\\]|CONSTRAINTS\.md|INTENT\.md)/i.test(cmd)) {
     hits.push('禁令 3：命令试图改写契约、意图或约束文件');
   }
   return hits;

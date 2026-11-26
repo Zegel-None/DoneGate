@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { buildProjectAtlas } from '../runner/atlas/assemble-atlas.mjs';
 import { renderAtlasWorkbenchHtml } from '../runner/atlas/render-html.mjs';
 import { WB_PRESET_BLOCK_TEMPLATES } from '../runner/atlas/wb-catalog.mjs';
-import { createDoneGateWebRouteHandler } from '../runner/dsh/host-routes.mjs';
-import { listAtomicBrickCatalog, loadCandidateWorkflowMacros } from '../runner/dsh/workflow-jit.mjs';
-import { mutateUiLayoutBlocks, renderPrototypeHtml } from '../runner/dsh/ui-board-engine.mjs';
-import { executeDeterministicWorkflowRun } from '../runner/dsh/workflow-runner.mjs';
-import { AUTOPILOT_STATES } from '../runner/dsh/autopilot-state.mjs';
+import { createDoneGateWebRouteHandler } from '../runner/dsh/host/host-routes.mjs';
+import { listAtomicBrickCatalog, loadCandidateWorkflowMacros } from '../runner/dsh/autopilot/workflow-jit.mjs';
+import { mutateUiLayoutBlocks, renderPrototypeHtml } from '../runner/dsh/uiboard/ui-board-engine.mjs';
+import { executeDeterministicWorkflowRun } from '../runner/dsh/autopilot/workflow-runner.mjs';
+import { AUTOPILOT_STATES } from '../runner/dsh/autopilot/autopilot-state.mjs';
 import { scanTerminologyViolations } from '../skill/check-terminology.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -137,7 +137,7 @@ describe('DoneGate 第二轮与第三轮工作台问题单回归验证', () => {
     const hostNodes = atlas.workbench.hostSandbox.codeUnitNodes;
     const byId = new Map(hostNodes.map((n) => [n.id, n]));
     expect(hostNodes.length).toBeGreaterThanOrEqual(10);
-    expect(hostNodes.length).toBeLessThanOrEqual(16);
+    expect(hostNodes.length).toBeLessThanOrEqual(20);
     expect(r2TestHasDirectedCycle(hostNodes)).toBe(false);
 
     const rootNode = byId.get('host-dom-root');

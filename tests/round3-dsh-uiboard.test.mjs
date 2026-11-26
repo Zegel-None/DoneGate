@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 import { buildWbDshBridge } from '../runner/atlas/wb-dsh-bridge.mjs';
 import { buildWbDshShell } from '../runner/atlas/wb-dsh-shell.mjs';
 import { buildWbUiBoardScript } from '../runner/atlas/wb-uiboard.mjs';
-import { renderDshClientBundleJs } from '../runner/dsh/client-bundle-gen.mjs';
-import { buildDshBundleDirectory } from '../runner/dsh/install-dsh-web.mjs';
+import { renderDshClientBundleJs } from '../runner/dsh/host/client-bundle-gen.mjs';
+import { buildDshBundleDirectory } from '../runner/dsh/host/install-dsh-web.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -346,21 +346,25 @@ describe('问题 #8：UI 看板默认真实展示当前开发项目（开发完�
       expect(selfProtoHtml).toContain('UIBOARD_EMBEDDED_BRIDGE');
       expect(selfProtoHtml).not.toContain('智能协作与全流程数据中枢');
 
-      // 2) 含真实 public/index.html 的其他项目：渲染真实页面并注入拾取桥
+      // 2) 含真实 public/index.html 的其他项目：渲染真实页面并注入拾取桥（绝不向第三方项目页面注入控制面令牌）
       const realProtoHtml = await (await fetch(`${baseUrl}/donegate/api/uiboard/prototype?sessionId=sess-real`)).text();
       expect(realProtoHtml).toContain('真实外部商城首页');
       expect(realProtoHtml).toContain('/donegate/api/uiboard/bridge.js');
+      expect(realProtoHtml).not.toContain('donegate-session-token');
       expect(realProtoHtml).not.toContain('智能协作与全流程数据中枢');
 
       // 3) 尚无前端界面文件的项目：展示诚实引导页，绝不展示虚假样板间
       const emptyProtoHtml = await (await fetch(`${baseUrl}/donegate/api/uiboard/prototype?sessionId=sess-empty`)).text();
       expect(emptyProtoHtml).toContain('当前项目暂未检测到前端界面文件，可在左侧新增按钮/页面需求描述并传达到项目看板启动开发');
       expect(emptyProtoHtml).not.toContain('智能协作与全流程数据中枢');
+      const tokMatch = emptyProtoHtml.match(/name="donegate-session-token"\s+content="([^"]+)"/);
+      expect(tokMatch).toBeTruthy();
+      const sessionTok = tokMatch[1];
 
       // 4) 新增按钮/界面功能记录 -> 保存在 .donegate/uiboard-requirements.json -> 点击「传达到项目看板」落入 grill me 环节
       const addReq = await (await fetch(`${baseUrl}/donegate/api/uiboard/requirements?sessionId=sess-empty`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-DoneGate-Session-Token': sessionTok },
         body: JSON.stringify({
           label: '导出月度对账单按钮',
           description: '点击后校验账期范围，异步生成 CSV 并写入审计流水',
@@ -375,7 +379,7 @@ describe('问题 #8：UI 看板默认真实展示当前开发项目（开发完�
 
       const conveyRes = await (await fetch(`${baseUrl}/donegate/api/uiboard/convey-to-kanban?sessionId=sess-empty`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-DoneGate-Session-Token': sessionTok },
         body: JSON.stringify({ requirementIds: [addReq.item.id] })
       })).json();
       expect(conveyRes.ok).toBe(true);
@@ -399,7 +403,8 @@ describe('问题 #8：UI 看板默认真实展示当前开发项目（开发完�
       });
       dshEmbedVm.vmCtx.fetch = (url, init) => {
         const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
-        return fetch(fullUrl, init);
+        const mergedInit = init ? { ...init, headers: { ...(init.headers || {}), 'X-DoneGate-Session-Token': sessionTok } } : init;
+        return fetch(fullUrl, mergedInit);
       };
       await vm.runInContext('syncUiBoardBackendStatus(false)', dshEmbedVm.vmCtx);
       const headEl = { innerHTML: '' };
@@ -420,7 +425,7 @@ describe('问题 #8：UI 看板默认真实展示当前开发项目（开发完�
       // 再新增一条并触发前端传达，验证按钮「📤 传达到项目看板」与 postMessage dg:insert-quote
       await fetch(`${baseUrl}/donegate/api/uiboard/requirements?sessionId=sess-empty`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-DoneGate-Session-Token': sessionTok },
         body: JSON.stringify({ label: '批量归档按钮', description: '勾选多条已完成单据后一键归档' })
       });
       await vm.runInContext('syncUiBoardBackendStatus(false)', dshEmbedVm.vmCtx);

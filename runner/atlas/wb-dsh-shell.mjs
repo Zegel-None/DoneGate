@@ -274,13 +274,16 @@ function wbDshRenderShell() {
   }
   if (IS_DSH_EMBED) {
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        source: 'donegate-canvas',
-        sessionId: DSH_SESSION_ID,
-        type: 'dg:dock-sync',
-        items: dshRuntime.dockItems,
-        messages: dshRuntime.chatHistory
-      }, '*');
+      const targetOrigin = (location && location.origin && location.origin !== 'null') ? location.origin : (location && location.protocol === 'http:' ? 'http://127.0.0.1' : '');
+      if (targetOrigin) {
+        window.parent.postMessage({
+          source: 'donegate-canvas',
+          sessionId: DSH_SESSION_ID,
+          type: 'dg:dock-sync',
+          items: dshRuntime.dockItems,
+          messages: dshRuntime.chatHistory
+        }, targetOrigin);
+      }
     }
     return;
   }

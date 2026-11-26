@@ -165,16 +165,25 @@ function hyAuditTestCheats(f, p, isFixture, ctx) {
   if (!f.isNew) {
     const addedAsserts = f.added.filter((l) => ASSERT_TOKEN_RE.test(l)).length;
     const removedAsserts = f.removed.filter((l) => ASSERT_TOKEN_RE.test(l)).length;
-    if (removedAsserts > addedAsserts && !ctx.files.some((x) => x.isNew && x.path.startsWith('decisions/')) && !ctx.budgetBypassed) {
+    const hasValidDecision = ctx.files.some((x) => x.isNew && /^decisions\/\d{4}-\d{2}-\d{2}-.+\.md$/.test(x.path));
+    if (removedAsserts > addedAsserts && !hasValidDecision && !ctx.budgetBypassed) {
       ctx.fails.push(`C2 疑似删断言凑绿 (${p})：删除了 ${removedAsserts} 处断言但仅新增 ${addedAsserts} 处（确需废弃无效断言请同步新增 decisions/ 记录说明）`);
     }
   }
 }
 
-function hyAuditAntiHandroll(f, p, absFile, ctx) {
+function hyReadTargetSource(projectRoot, relPath, absFile, mode) {
+  if (mode === 'staged') {
+    const r = spawnSync('git', ['-C', projectRoot, 'show', `:${relPath}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    if (r.status === 0 && typeof r.stdout === 'string') return r.stdout;
+  }
+  return existsSync(absFile) ? readFileSync(absFile, 'utf8') : null;
+}
+
+function hyAuditAntiHandroll(f, p, src, ctx) {
   const isConcreteAdapter = /^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(p);
-  if (isConcreteAdapter && existsSync(absFile)) {
-    const adpLines = readFileSync(absFile, 'utf8').split(/\r?\n/).length;
+  if (isConcreteAdapter && typeof src === 'string') {
+    const adpLines = src.split(/\r?\n/).length;
     if (adpLines > 90) ctx.fails.push(`C6 具体适配器行数超限 (${p})：当前 ${adpLines} 行 > 上限 90 行（请复用 ./_shared.mjs 的 runAdapter）`);
   }
   for (const line of f.added) {
@@ -193,12 +202,13 @@ function hyAuditAntiHandroll(f, p, absFile, ctx) {
   }
 }
 
-function auditCodeFileRules(f, p, absFile, isFixture, isTestFile, ctx) {
+function auditCodeFileRules(f, p, src, isFixture, isTestFile, ctx) {
   if (isTestFile) hyAuditTestCheats(f, p, isFixture, ctx);
-  if (!isFixture) hyAuditAntiHandroll(f, p, absFile, ctx);
+  if (!isFixture) hyAuditAntiHandroll(f, p, src, ctx);
   if (!isTestFile && !isFixture) {
     for (const line of f.added) {
       for (const pat of CODE_SLOP_PATTERNS) {
+        if (ctx.budgets?.blockEmptyCatch === false && pat.name.includes('空 catch')) continue;
         if (pat.re.test(line)) applyAllowOrFail(line, p, 'C3', `C3:${pat.name}`, `C3 源码反空壳拦截 [${pat.name}] (${p})：${line.trim().slice(0, 100)}`, ctx);
       }
     }
@@ -209,29 +219,31 @@ function hyRangeOverlaps(startA, endA, ranges) {
   return ranges.some(([s, e]) => startA <= e && endA >= s);
 }
 
-function hyAuditFileScaleAndComplexity(f, p, absFile, isFixture, isExemptTest, budgets, budgetBypassed, warnings, fails) {
-  if (!existsSync(absFile) || budgetBypassed) return;
-  const src = readFileSync(absFile, 'utf8');
-  if (f.isNew || f.added.length > f.removed.length) {
-    const m = countEffectiveCodeLines(src);
-    if (m.effectiveLines > budgets.maxEffectiveFileLines || m.rawLines > budgets.maxFileLines) {
-      fails.push(`C1 单文件规模超限：${p} 当前有效代码 ${m.effectiveLines} 行（总 ${m.rawLines} 行）> 上限 ${budgets.maxEffectiveFileLines} 有效行 / ${budgets.maxFileLines} 总行（请按职责语义拆分子模块）`);
-    } else if (m.effectiveLines > budgets.warnEffectiveFileLines) {
-      warnings.push(`C1 软预警：${p} 有效代码 ${m.effectiveLines} 行（已超 ${budgets.warnEffectiveFileLines} 舒适区）`);
-    }
-    if (budgets.maxFunctionLines > 0 && m.maxFnLines > budgets.maxFunctionLines) {
-      fails.push(`C1 单函数过程逻辑超限：${p} 存在 ${m.maxFnLines} 行的超长过程函数 > 上限 ${budgets.maxFunctionLines} 行`);
-    } else if (m.maxFnLines > budgets.warnFunctionLines) {
-      warnings.push(`V8 内联预警：${p} 存在 ${m.maxFnLines} 行的超长单函数（> ${budgets.warnFunctionLines} 行建议提取语义子函数）`);
-    }
+function hyDidEffectiveLinesGrow(projectRoot, p, curEffective) {
+  const prevR = spawnSync('git', ['-C', projectRoot, 'show', `HEAD:${p}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  if (prevR.status !== 0) return true;
+  return curEffective > countEffectiveCodeLines(prevR.stdout || '', { filePath: p }).effectiveLines;
+}
+
+function hyCheckFileLineBudgets(m, p, budgets, warnings, fails) {
+  if (m.effectiveLines > budgets.maxEffectiveFileLines || m.rawLines > budgets.maxFileLines) {
+    fails.push(`C1 单文件规模超限：${p} 当前有效代码 ${m.effectiveLines} 行（总 ${m.rawLines} 行）> 上限 ${budgets.maxEffectiveFileLines} 有效行 / ${budgets.maxFileLines} 总行（请按职责语义拆分子模块）`);
+  } else if (m.effectiveLines > budgets.warnEffectiveFileLines) {
+    warnings.push(`C1 软预警：${p} 有效代码 ${m.effectiveLines} 行（已超 ${budgets.warnEffectiveFileLines} 舒适区）`);
   }
-  if (isFixture || isExemptTest || !/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(p)) return;
+  if (budgets.maxFunctionLines > 0 && m.maxFnLines > budgets.maxFunctionLines) {
+    fails.push(`C1 单函数过程逻辑超限：${p} 存在 ${m.maxFnLines} 行的超长过程函数 > 上限 ${budgets.maxFunctionLines} 行`);
+  } else if (m.maxFnLines > budgets.warnFunctionLines) {
+    warnings.push(`V8 内联预警：${p} 存在 ${m.maxFnLines} 行的超长单函数（> ${budgets.warnFunctionLines} 行建议提取语义子函数）`);
+  }
+}
+
+function hyCheckFileComplexity(f, p, src, budgets, warnings, fails) {
   const cx = analyzeCodeComplexityAndGolfing(src);
   for (const g of cx.golfingIssues) {
-    if (f.isNew || hyRangeOverlaps(g.line, g.line, f.hunkRanges)) {
-      const label = g.kind === 'dense-statements' ? `单行挤压 ${g.count} 条语句` : `单行嵌套 ${g.count} 重三元表达式`;
-      fails.push(`C4g 反压行钻空子拦截 (${p}:L${g.line})：检测到${label}（严禁为省行数压缩可读性）→ ${g.preview}`);
-    }
+    if (!f.isNew && !hyRangeOverlaps(g.line, g.line, f.hunkRanges)) continue;
+    const label = g.kind === 'dense-statements' ? `单行挤压 ${g.count} 条语句` : `单行嵌套 ${g.count} 重三元表达式`;
+    fails.push(`C4g 反压行钻空子拦截 (${p}:L${g.line})：检测到${label}（严禁为省行数压缩可读性）→ ${g.preview}`);
   }
   for (const fn of cx.functions) {
     if (!f.isNew && !hyRangeOverlaps(fn.startLine, fn.endLine, f.hunkRanges)) continue;
@@ -243,6 +255,33 @@ function hyAuditFileScaleAndComplexity(f, p, absFile, isFixture, isExemptTest, b
   }
 }
 
+function hyAuditFileScaleAndComplexity(projectRoot, f, p, src, isFixture, isExemptTest, budgets, budgetBypassed, warnings, fails) {
+  if (typeof src !== 'string' || budgetBypassed) return;
+  const m = countEffectiveCodeLines(src, { filePath: p });
+  const checkScale = f.isNew || f.added.length > f.removed.length || (f.added.length > 0 && hyDidEffectiveLinesGrow(projectRoot, p, m.effectiveLines));
+  if (checkScale) hyCheckFileLineBudgets(m, p, budgets, warnings, fails);
+  if (isFixture || isExemptTest || !/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(p)) return;
+  hyCheckFileComplexity(f, p, src, budgets, warnings, fails);
+}
+
+function hyAuditNewDecisionFile(p, projectRoot, fails) {
+  const base = p.split('/')[1];
+  const dateMatch = base.match(/^(\d{4}-\d{2}-\d{2})-(.+)\.md$/);
+  if (!dateMatch) {
+    fails.push(`C4 决策记录命名必须以 YYYY-MM-DD-NN- 开头：${p}`);
+  } else {
+    const decDir = join(projectRoot, 'decisions');
+    const sameDayPeers = existsSync(decDir) ? readdirSync(decDir).filter((x) => x.startsWith(dateMatch[1] + '-') && x !== base) : [];
+    if (sameDayPeers.length > 0 && !/^\d{2,3}-/.test(dateMatch[2])) {
+      fails.push(`C4 同日（${dateMatch[1]}）已存在决策记录，新记录必须加序号前缀 YYYY-MM-DD-NN-<标题>.md：${p}`);
+    }
+  }
+  const decAbs = join(projectRoot, p);
+  if (!existsSync(decAbs)) return;
+  const dv = validateDecisionFiveSections(readFileSync(decAbs, 'utf8'), base, { ignoreLegacy: true });
+  if (!dv.ok) fails.push(`C4 新决策记录必须包含 §2.5 完整五段非空章节 (${p})：缺 [${dv.missing.join('、')}] 空 [${dv.empty.join('、')}]`);
+}
+
 function hyAuditFilePathHygiene(f, p, isFixture, projectRoot, allowedRootSet, fails) {
   if (!isFixture) {
     const conflictLine = f.added.find((line) => CONFLICT_MARKER_RE.test(line));
@@ -251,28 +290,14 @@ function hyAuditFilePathHygiene(f, p, isFixture, projectRoot, allowedRootSet, fa
   if (/\.(bak|orig|tmp|swp)$/i.test(p) || /(?:_copy|-copy|_backup)\./i.test(p)) {
     fails.push(`C4 禁止提交临时或备份文件：${p}`);
   }
-  if (!p.startsWith('归档/') && !p.startsWith('证据/') && /(?:[-_]v\d+|[-_]final|[-_]new)\.(?:md|mjs|js|ts|json)$/i.test(p) && f.isNew) {
+  const isDraftFile = !p.startsWith('归档/') && !p.startsWith('证据/') && /(?:[-_]v\d+|[-_]final|[-_]new)\.(?:md|mjs|js|ts|json)$/i.test(p);
+  if (f.isNew && isDraftFile) {
     fails.push(`C4 禁止新建带版本号后缀的平行草稿文件（请直接迭代主文件或用 git mv 归档旧版）：${p}`);
   }
   if (f.isNew && !isFixture && MECHANICAL_SHARD_RE.test(p)) {
     fails.push(`C4 禁止机械按字母/序号切碎代码文件 (${p})：请按职责语义命名模块`);
   }
-  if (f.isNew && /^decisions\/[^/]+\.md$/.test(p)) {
-    const base = p.split('/')[1], dateMatch = base.match(/^(\d{4}-\d{2}-\d{2})-(.+)\.md$/);
-    if (!dateMatch) fails.push(`C4 决策记录命名必须以 YYYY-MM-DD-NN- 开头：${p}`);
-    else {
-      const decDir = join(projectRoot, 'decisions');
-      const sameDayPeers = existsSync(decDir) ? readdirSync(decDir).filter((x) => x.startsWith(dateMatch[1] + '-') && x !== base) : [];
-      if (sameDayPeers.length > 0 && !/^\d{2,3}-/.test(dateMatch[2])) {
-        fails.push(`C4 同日（${dateMatch[1]}）已存在决策记录，新记录必须加序号前缀 YYYY-MM-DD-NN-<标题>.md：${p}`);
-      }
-    }
-    const decAbs = join(projectRoot, p);
-    if (existsSync(decAbs)) {
-      const dv = validateDecisionFiveSections(readFileSync(decAbs, 'utf8'), base, { ignoreLegacy: true });
-      if (!dv.ok) fails.push(`C4 新决策记录必须包含 §2.5 完整五段非空章节 (${p})：缺 [${dv.missing.join('、')}] 空 [${dv.empty.join('、')}]`);
-    }
-  }
+  if (f.isNew && /^decisions\/[^/]+\.md$/.test(p)) hyAuditNewDecisionFile(p, projectRoot, fails);
   const seg0 = p.includes('/') ? p.split('/')[0] : null;
   if ((f.isNew || f.isRename) && seg0 && ROGUE_ROOT_DIR_RE.test(seg0) && !allowedRootSet.has(seg0)) {
     fails.push(`C5 禁止向仓库根级非标临时目录提交文件：${p}`);
@@ -317,55 +342,39 @@ function hyEvaluateFourDimBudgets(stats, budgets, explicitProdFileCap, isPureCon
   }
 }
 
-export function auditCommitDiff(projectRoot, opts = {}) {
-  const mode = opts.range ? 'range' : 'staged';
-  const gitArgs = mode === 'range'
-    ? ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--unified=0', opts.range]
-    : ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--cached', '--unified=0'];
-  const diffR = spawnSync('git', gitArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-  if (diffR.status !== 0) return { exitCode: 3, fails: [`无法读取 git diff (${mode})：${diffR.stderr || ''}`], warnings: [], bypasses: [] };
-
-  const loaded = loadHygieneBudgets(projectRoot), budgets = { ...loaded, ...(opts.budgets || {}) };
-  const explicitProdFileCap = opts.budgets?.maxCommitFiles && !opts.budgets?.maxProdCommitFiles
-    ? Number(opts.budgets.maxCommitFiles)
-    : budgets.maxProdCommitFiles;
-  const allowedRootSet = new Set(budgets.allowedRootDirs || []), activeScopes = loadActiveContractScopes(projectRoot);
-  const { activeFiles: files, deletedFiles } = parseUnifiedDiff(diffR.stdout || '');
-  const fails = [], warnings = [], abuses = [], bypasses = [];
-  const compiledBanned = hyCompileBannedRules(budgets.bannedPatterns, abuses);
-
-  if (mode === 'staged' && opts.checkUntracked !== false) {
-    for (const u of listUntrackedFiles(projectRoot)) {
-      const seg0 = u.includes('/') ? u.split('/')[0] : null;
-      if (seg0 && ROGUE_ROOT_DIR_RE.test(seg0) && !allowedRootSet.has(seg0)) {
-        fails.push(`C5 仓库根下存在未跟踪野目录文件：${u}（一次性草稿请放入 .donegate/scratch/，或跑 node skill/check-commit-hygiene.mjs --quarantine 移入隔离箱）`);
-      }
+function hyAuditUntrackedRogueDirs(projectRoot, allowedRootSet, fails) {
+  for (const u of listUntrackedFiles(projectRoot)) {
+    const seg0 = u.includes('/') ? u.split('/')[0] : null;
+    if (seg0 && ROGUE_ROOT_DIR_RE.test(seg0) && !allowedRootSet.has(seg0)) {
+      fails.push(`C5 仓库根下存在未跟踪野目录文件：${u}（一次性草稿请放入 .donegate/scratch/，或跑 node skill/check-commit-hygiene.mjs --quarantine 移入隔离箱）`);
     }
   }
-  if (files.length === 0 && fails.length === 0) {
-    return { exitCode: 0, fails: [], warnings: [], bypasses: [], stats: { codeFiles: 0, prodFiles: 0, testFiles: 0, codeAdded: 0, prodAdded: 0, testAdded: 0, relocatedCodeLines: 0, netNewCodeLines: 0 } };
-  }
+}
 
-  let budgetBypassed = false;
+function hyResolveBudgetBypass(opts, abuses, bypasses) {
   const envBudgetBypass = typeof opts.budgetBypassReason === 'string' ? opts.budgetBypassReason : (process.env.DG_ALLOW_COMMIT_BUDGET || '');
-  if (envBudgetBypass !== '') {
-    const cleanReason = envBudgetBypass.trim();
-    if (cleanReason.length < 6) abuses.push(`DG_ALLOW_COMMIT_BUDGET 逃生口理由过短（「${cleanReason}」< 6 字），拒绝放行（退 2）`);
-    else { budgetBypassed = true; bypasses.push({ rule: 'C1-budget', file: '*', reason: cleanReason }); }
+  if (envBudgetBypass === '') return false;
+  const cleanReason = envBudgetBypass.trim();
+  if (cleanReason.length < 6) {
+    abuses.push(`DG_ALLOW_COMMIT_BUDGET 逃生口理由过短（「${cleanReason}」< 6 字），拒绝放行（退 2）`);
+    return false;
   }
+  bypasses.push({ rule: 'C1-budget', file: '*', reason: cleanReason });
+  return true;
+}
 
-  let codeFilesCount = 0, prodFilesCount = 0, testFilesCount = 0, prodAddedLines = 0, testAddedLines = 0;
-  const prodAddedArr = [], deletedProdFiles = deletedFiles.filter((f) => {
+function hyAuditDiffFiles(projectRoot, mode, files, deletedFiles, activeScopes, allowedRootSet, ruleCtx, warnings) {
+  const deletedProdFiles = deletedFiles.filter((f) => {
     const dp = f.path.replace(/\\/g, '/');
     return CODE_EXT_RE.test(dp) && !TEST_BUDGET_EXEMPT_RE.test(dp);
   });
   const deletedProdLines = deletedProdFiles.reduce((s, f) => s + f.removed.length, 0);
-  const prodRemovedArr = deletedProdFiles.flatMap((f) => f.removed);
-  const ruleCtx = { files, compiledBanned, budgetBypassed, fails, abuses, bypasses };
+  const prodAddedArr = [], prodRemovedArr = deletedProdFiles.flatMap((f) => f.removed);
+  let codeFilesCount = 0, prodFilesCount = 0, testFilesCount = 0, prodAddedLines = 0, testAddedLines = 0;
 
   for (const f of files) {
     const p = f.path.replace(/\\/g, '/'), isFixture = FIXTURE_OR_PILOT_RE.test(p);
-    hyAuditFilePathHygiene(f, p, isFixture, projectRoot, allowedRootSet, fails);
+    hyAuditFilePathHygiene(f, p, isFixture, projectRoot, allowedRootSet, ruleCtx.fails);
     if (!CODE_EXT_RE.test(p)) continue;
     codeFilesCount++;
     const isTestFile = TEST_FILE_RE.test(p), isExemptTest = TEST_BUDGET_EXEMPT_RE.test(p);
@@ -378,37 +387,64 @@ export function auditCommitDiff(projectRoot, opts = {}) {
       prodAddedArr.push(...f.added);
       prodRemovedArr.push(...f.removed);
     }
-    if (f.isNew && activeScopes.length > 0 && !isTestFile && !ROOT_CONFIG_FILE_RE.test(p) && !budgetBypassed && !isClaimedByScopes(p, activeScopes)) {
-      fails.push(`C5 新增代码文件未被任何活跃契约 scope[] 认领：${p}`);
+    const unclaimed = f.isNew && activeScopes.length > 0 && !isTestFile && !ROOT_CONFIG_FILE_RE.test(p) && !ruleCtx.budgetBypassed;
+    if (unclaimed && !isClaimedByScopes(p, activeScopes)) {
+      ruleCtx.fails.push(`C5 新增代码文件未被任何活跃契约 scope[] 认领：${p}`);
     }
-    const absFile = resolve(projectRoot, p);
-    hyAuditFileScaleAndComplexity(f, p, absFile, isFixture, isExemptTest, budgets, budgetBypassed, warnings, fails);
-    auditCodeFileRules(f, p, absFile, isFixture, isTestFile, ruleCtx);
+    const src = hyReadTargetSource(projectRoot, p, resolve(projectRoot, p), mode);
+    hyAuditFileScaleAndComplexity(projectRoot, f, p, src, isFixture, isExemptTest, ruleCtx.budgets, ruleCtx.budgetBypassed, warnings, ruleCtx.fails);
+    auditCodeFileRules(f, p, src, isFixture, isTestFile, ruleCtx);
   }
 
   const relocatedCodeLines = computeRelocatedCodeLines(prodRemovedArr, prodAddedArr);
   const netNewCodeLines = Math.max(0, prodAddedLines - relocatedCodeLines);
-  const isPureConsolidation = deletedProdFiles.length >= 2 && (prodAddedLines - deletedProdLines) <= budgets.maxCommitCodeLines;
+  const isPureConsolidation = deletedProdFiles.length >= 2 && (prodAddedLines - deletedProdLines) <= ruleCtx.budgets.maxCommitCodeLines;
   const stats = {
-    codeFiles: codeFilesCount,
-    prodFiles: prodFilesCount,
-    testFiles: testFilesCount,
-    codeAdded: prodAddedLines + testAddedLines,
-    prodAdded: prodAddedLines,
-    testAdded: testAddedLines,
-    relocatedCodeLines,
-    netNewCodeLines
+    codeFiles: codeFilesCount, prodFiles: prodFilesCount, testFiles: testFilesCount,
+    codeAdded: prodAddedLines + testAddedLines, prodAdded: prodAddedLines, testAdded: testAddedLines,
+    relocatedCodeLines, netNewCodeLines
   };
+  return { stats, isPureConsolidation };
+}
 
-  if (!budgetBypassed) {
-    hyEvaluateFourDimBudgets(stats, budgets, explicitProdFileCap, isPureConsolidation, warnings, fails);
+function hyRecordBypassesIfNeeded(projectRoot, bypasses, opts) {
+  if (bypasses.length === 0 || opts.recordBypasses === false) return;
+  const dgDir = join(projectRoot, '.donegate'), now = new Date().toISOString();
+  mkdirSync(dgDir, { recursive: true });
+  for (const bp of bypasses) {
+    appendFileSync(join(dgDir, 'hygiene-bypasses.jsonl'), JSON.stringify({ at: now, ...bp }) + '\n', 'utf8');
   }
+}
+
+export function auditCommitDiff(projectRoot, opts = {}) {
+  const mode = opts.range ? 'range' : 'staged';
+  const gitArgs = mode === 'range'
+    ? ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--unified=0', opts.range]
+    : ['-C', projectRoot, '-c', 'core.quotepath=false', 'diff', '--cached', '--unified=0'];
+  const diffR = spawnSync('git', gitArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (diffR.status !== 0) return { exitCode: 3, fails: [`无法读取 git diff (${mode})：${diffR.stderr || ''}`], warnings: [], bypasses: [] };
+
+  const budgets = { ...loadHygieneBudgets(projectRoot), ...(opts.budgets || {}) };
+  const explicitProdFileCap = opts.budgets?.maxCommitFiles && !opts.budgets?.maxProdCommitFiles
+    ? Number(opts.budgets.maxCommitFiles)
+    : budgets.maxProdCommitFiles;
+  const allowedRootSet = new Set(budgets.allowedRootDirs || []), activeScopes = loadActiveContractScopes(projectRoot);
+  const { activeFiles: files, deletedFiles } = parseUnifiedDiff(diffR.stdout || '');
+  const fails = [], warnings = [], abuses = [], bypasses = [];
+  const compiledBanned = hyCompileBannedRules(budgets.bannedPatterns, abuses);
+
+  if (mode === 'staged' && opts.checkUntracked !== false) hyAuditUntrackedRogueDirs(projectRoot, allowedRootSet, fails);
+  if (files.length === 0 && fails.length === 0) {
+    return { exitCode: 0, fails: [], warnings: [], bypasses: [], stats: { codeFiles: 0, prodFiles: 0, testFiles: 0, codeAdded: 0, prodAdded: 0, testAdded: 0, relocatedCodeLines: 0, netNewCodeLines: 0 } };
+  }
+
+  const budgetBypassed = hyResolveBudgetBypass(opts, abuses, bypasses);
+  const ruleCtx = { files, compiledBanned, budgetBypassed, budgets, fails, abuses, bypasses };
+  const { stats, isPureConsolidation } = hyAuditDiffFiles(projectRoot, mode, files, deletedFiles, activeScopes, allowedRootSet, ruleCtx, warnings);
+
+  if (!budgetBypassed) hyEvaluateFourDimBudgets(stats, budgets, explicitProdFileCap, isPureConsolidation, warnings, fails);
   if (abuses.length > 0) return { exitCode: 2, fails: [...abuses, ...fails], warnings, bypasses, stats };
-  if (fails.length === 0 && bypasses.length > 0 && opts.recordBypasses !== false) {
-    const dgDir = join(projectRoot, '.donegate'), now = new Date().toISOString();
-    mkdirSync(dgDir, { recursive: true });
-    for (const bp of bypasses) appendFileSync(join(dgDir, 'hygiene-bypasses.jsonl'), JSON.stringify({ at: now, ...bp }) + '\n', 'utf8');
-  }
+  if (fails.length === 0) hyRecordBypassesIfNeeded(projectRoot, bypasses, opts);
   return { exitCode: fails.length > 0 ? 1 : 0, fails, warnings, bypasses, stats };
 }
 
@@ -511,6 +547,126 @@ function runExtendedFourDimCases(makeRepo, stage, commit, t) {
     rGolf.exitCode === 1 && rGolf.fails.filter((f) => f.includes('C4g 反压行钻空子拦截')).length === 2, rGolf.fails.join('；'));
 }
 
+function hyStageRepo(d) {
+  spawnSync('git', ['-C', d, 'add', '.']);
+}
+
+function hyCommitRepo(d, m) {
+  hyStageRepo(d);
+  spawnSync('git', ['-C', d, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', m]);
+}
+
+function hyMakeTestRepo(tmp, name, withContract = false) {
+  const d = join(tmp, name);
+  mkdirSync(join(d, 'src'), { recursive: true });
+  mkdirSync(join(d, 'tests'), { recursive: true });
+  mkdirSync(join(d, 'decisions'), { recursive: true });
+  if (withContract) {
+    mkdirSync(join(d, 'contracts/c1'), { recursive: true });
+    writeFileSync(join(d, 'contracts/c1/contract.json'), JSON.stringify({ id: 'c1', scope: ['src/'], obligations: [] }));
+  }
+  writeFileSync(join(d, '.gitignore'), '.donegate/\n');
+  writeFileSync(join(d, 'src/app.mjs'), 'export const run = (x) => x + 1;\n');
+  writeFileSync(join(d, 'tests/app.test.mjs'), 'import { expect, it } from "vitest";\nit("ok", () => {\n  expect(1 + 1).toBe(2);\n  expect(2 + 2).toBe(4);\n});\n');
+  writeFileSync(join(d, 'decisions/2026-11-21-01-init.md'), '# init\n');
+  spawnSync('git', ['-C', d, 'init', '-q']);
+  spawnSync('git', ['-C', d, 'config', 'user.email', 't@local']);
+  spawnSync('git', ['-C', d, 'config', 'user.name', 'T']);
+  hyCommitRepo(d, 'base');
+  return d;
+}
+
+function runCoreHygieneRedCases(makeRepo, stage, commit, t) {
+  const dGood = makeRepo('good', true);
+  const richComments = Array.from({ length: 520 }, (_, i) => `// 详尽设计注释第 ${i} 行（不计入有效代码行上限）`).join('\n');
+  writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\n');
+  commit(dGood, 'seed-doc');
+  writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\nexport const nextApi = (x) => x + 3;\n');
+  stage(dGood);
+  const rGood = auditCommitDiff(dGood, { recordBypasses: false, budgetBypassReason: '' });
+  t('好样本：有效代码行智能剥离 520 行注释（总 523 行但仅 2 有效行）→ 退 0 不误伤', rGood.exitCode === 0, rGood.fails.join('；'));
+
+  const dBig = makeRepo('big');
+  writeFileSync(join(dBig, 'src/huge.mjs'), Array.from({ length: 465 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+  stage(dBig);
+  const rBig = auditCommitDiff(dBig, { budgetBypassReason: '' });
+  t('必红样本 1 (维度2)：单次提交超 450 行净增生产代码 → 必红退 1', rBig.exitCode === 1 && rBig.fails.some((f) => f.includes('生产代码加行数超预算')));
+
+  const dMany = makeRepo('many');
+  for (let i = 0; i < 7; i++) writeFileSync(join(dMany, `src/f${i}.mjs`), `export const a = ${i};\n`);
+  stage(dMany);
+  const rMany = auditCommitDiff(dMany, { budgetBypassReason: '' });
+  t('必红样本 2 (维度3)：单次提交跨 7 个生产源码文件（>6 上限）→ 必红退 1', rMany.exitCode === 1 && rMany.fails.some((f) => f.includes('生产源码文件数超预算')));
+
+  const dSkip = makeRepo('skip');
+  writeFileSync(join(dSkip, 'tests/app.test.mjs'), 'it.skip("broken", () => {\n  expect(true).toBe(true);\n});\n');
+  stage(dSkip);
+  const rSkip = auditCommitDiff(dSkip, { budgetBypassReason: '' });
+  t('必红样本 3 (C2)：测试加 it.skip / 恒真断言 / 净删断言 → 必红退 1', rSkip.exitCode === 1 && rSkip.fails.some((f) => f.includes('跳过用例')) && rSkip.fails.some((f) => f.includes('疑似删断言')));
+
+  const dSlop = makeRepo('slop');
+  writeFileSync(join(dSlop, 'src/app.mjs'), 'export function f() {\n  // TODO: finish later\n  try { work(); } catch (e) {}\n}\n');
+  stage(dSlop);
+  const rSlop = auditCommitDiff(dSlop, { budgetBypassReason: '' });
+  t('必红样本 4 (C3)：源码留 TODO 占位与空 catch {} 吞错 → 必红退 1', rSlop.exitCode === 1 && rSlop.fails.some((f) => f.includes('未完成占位符')) && rSlop.fails.some((f) => f.includes('空 catch')));
+
+  const dElide = makeRepo('elide');
+  writeFileSync(join(dElide, 'src/app.mjs'), 'export function f() {\n  // ... existing code ...\n}\n<<<<<<< HEAD\n');
+  stage(dElide);
+  const rElide = auditCommitDiff(dElide, { budgetBypassReason: '' });
+  t('必红样本 5 (C3b/C3c)：写 // ... existing code ... 省略删码与冲突标记残留 → 必红退 1', rElide.exitCode === 1 && rElide.fails.some((f) => f.includes('懒惰省略')) && rElide.fails.some((f) => f.includes('合并冲突标记')));
+
+  const dMess = makeRepo('mess');
+  writeFileSync(join(dMess, 'decisions/2026-11-21-无序号补记.md'), '# bad order\n');
+  writeFileSync(join(dMess, 'src/plan_v2.md'), '# draft\n');
+  writeFileSync(join(dMess, 'src/logic-a.mjs'), 'export const sliceA = 1;\n');
+  stage(dMess);
+  const rMess = auditCommitDiff(dMess, { budgetBypassReason: '' });
+  t('必红样本 6 (C4)：同日无序号决策记录、_v2 平行草稿与 logic-a.mjs 机械字母切片 → 必红退 1', rMess.exitCode === 1 && rMess.fails.some((f) => f.includes('必须加序号前缀')) && rMess.fails.some((f) => f.includes('版本号后缀')) && rMess.fails.some((f) => f.includes('禁止机械按字母')));
+}
+
+function runScopeBypassAndHandrollCases(makeRepo, stage, t) {
+  const dUnclaimed = makeRepo('unclaimed', true);
+  mkdirSync(join(dUnclaimed, '_gh-docs'), { recursive: true });
+  writeFileSync(join(dUnclaimed, '_gh-docs/draft.md'), '# rogue\n');
+  mkdirSync(join(dUnclaimed, 'extra'), { recursive: true });
+  writeFileSync(join(dUnclaimed, 'extra/rogue.mjs'), 'export const z = 1;\n');
+  spawnSync('git', ['-C', dUnclaimed, 'add', 'extra/rogue.mjs']);
+  const rUnclaimed = auditCommitDiff(dUnclaimed, { budgetBypassReason: '' });
+  t('必红样本 7 (C5)：根级野目录 _gh-docs 与未被契约 scope 认领的新源码 → 必红退 1', rUnclaimed.exitCode === 1 && rUnclaimed.fails.some((f) => f.includes('野目录')) && rUnclaimed.fails.some((f) => f.includes('未被任何活跃契约')));
+
+  const qRes = quarantineUnclaimedFiles(dUnclaimed);
+  mkdirSync(join(dUnclaimed, '.donegate/scratch'), { recursive: true });
+  writeFileSync(join(dUnclaimed, '.donegate/scratch/probe.mjs'), 'console.log(1);\n');
+  const scRes = cleanScratchDir(dUnclaimed);
+  t('正样本 (隔离箱与草稿箱)：--quarantine 安全归入隔离箱附还原账本，scratch 自动清扫', qRes.moved.includes('_gh-docs/draft.md') && existsSync(join(dUnclaimed, '.donegate/quarantine/manifest.jsonl')) && scRes.cleaned === 1);
+
+  const dAbuse = makeRepo('abuse');
+  writeFileSync(join(dAbuse, 'src/app.mjs'), 'export function f() {\n  try { work(); } catch (e) {} // dg-allow: ok\n}\n');
+  stage(dAbuse);
+  t('必红样本 8 (逃生口防滥用)：写 dg-allow: ok 敷衍理由 → 必退 2（事故）', auditCommitDiff(dAbuse, { budgetBypassReason: '' }).exitCode === 2);
+
+  const dAllow = makeRepo('allow');
+  writeFileSync(join(dAllow, 'src/app.mjs'), 'export function f() {\n  try { cleanupTmp(); } catch (e) {} // dg-allow: 临时目录清理失败不影响主退出码\n}\n');
+  stage(dAllow);
+  t('正样本 (合规逃生口)：带具体理由放行退 0 且写入 hygiene-bypasses.jsonl 留痕', auditCommitDiff(dAllow, { budgetBypassReason: '' }).exitCode === 0 && existsSync(join(dAllow, '.donegate/hygiene-bypasses.jsonl')));
+
+  const dHandroll = makeRepo('handroll', true);
+  const c1Hr = JSON.parse(readFileSync(join(dHandroll, 'contracts/c1/contract.json'), 'utf8'));
+  c1Hr.scope.push('skill/adapters/');
+  writeFileSync(join(dHandroll, 'contracts/c1/contract.json'), JSON.stringify(c1Hr));
+  writeFileSync(join(dHandroll, 'thresholds.json'), JSON.stringify({ bannedPatterns: [{ id: 'use-shared-http', pattern: String.raw`\bfetch\s*\(`, pathRegex: '^src/', excludePathRegex: '^src/shared/', message: '请调用 src/shared/http.mjs 的 request()，禁止业务层裸调 fetch' }] }));
+  mkdirSync(join(dHandroll, 'src/shared'), { recursive: true });
+  mkdirSync(join(dHandroll, 'skill/adapters'), { recursive: true });
+  writeFileSync(join(dHandroll, 'src/shared/http.mjs'), 'export const request = (u) => fetch(u);\n');
+  writeFileSync(join(dHandroll, 'src/page.mjs'), 'export const load = () => fetch("/api/items");\n');
+  writeFileSync(join(dHandroll, 'skill/adapters/custom.mjs'), 'import { spawnSync } from "node:child_process";\nexport const a = spawnSync;\n');
+  stage(dHandroll);
+  const rHandroll = auditCommitDiff(dHandroll, { budgetBypassReason: '' });
+  t('必红样本 9 (C6)：适配器直引 child_process 或业务代码绕过公共库命中 bannedPatterns → 必红退 1',
+    rHandroll.exitCode === 1 && rHandroll.fails.some((f) => f.includes('具体适配器禁止直引')) && rHandroll.fails.some((f) => f.includes('use-shared-http') && f.includes('src/page.mjs')) && !rHandroll.fails.some((f) => f.includes('(src/shared/http.mjs)')), rHandroll.fails.join('；'));
+}
+
 function runRedSelfTest() {
   const tmp = mkdtempSync(join(tmpdir(), 'dg-hygiene-red-'));
   let bad = 0;
@@ -518,120 +674,11 @@ function runRedSelfTest() {
     console.log('  ' + (cond ? '✓' : '✗') + ' ' + label + (!cond && detail ? ' → ' + detail : ''));
     if (!cond) bad++;
   };
-  const stage = (d) => spawnSync('git', ['-C', d, 'add', '.']);
-  const commit = (d, m) => {
-    stage(d);
-    spawnSync('git', ['-C', d, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', m]);
-  };
-  const makeRepo = (name, withContract = false) => {
-    const d = join(tmp, name);
-    mkdirSync(join(d, 'src'), { recursive: true });
-    mkdirSync(join(d, 'tests'), { recursive: true });
-    mkdirSync(join(d, 'decisions'), { recursive: true });
-    if (withContract) {
-      mkdirSync(join(d, 'contracts/c1'), { recursive: true });
-      writeFileSync(join(d, 'contracts/c1/contract.json'), JSON.stringify({ id: 'c1', scope: ['src/'], obligations: [] }));
-    }
-    writeFileSync(join(d, '.gitignore'), '.donegate/\n');
-    writeFileSync(join(d, 'src/app.mjs'), 'export const run = (x) => x + 1;\n');
-    writeFileSync(join(d, 'tests/app.test.mjs'), 'import { expect, it } from "vitest";\nit("ok", () => {\n  expect(1 + 1).toBe(2);\n  expect(2 + 2).toBe(4);\n});\n');
-    writeFileSync(join(d, 'decisions/2026-11-21-01-init.md'), '# init\n');
-    spawnSync('git', ['-C', d, 'init', '-q']);
-    spawnSync('git', ['-C', d, 'config', 'user.email', 't@local']);
-    spawnSync('git', ['-C', d, 'config', 'user.name', 'T']);
-    commit(d, 'base');
-    return d;
-  };
-
+  const makeRepo = (name, withContract = false) => hyMakeTestRepo(tmp, name, withContract);
   try {
-    const dGood = makeRepo('good', true);
-    const richComments = Array.from({ length: 520 }, (_, i) => `// 详尽设计注释第 ${i} 行（不计入有效代码行上限）`).join('\n');
-    writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\n');
-    commit(dGood, 'seed-doc');
-    writeFileSync(join(dGood, 'src/documented.mjs'), richComments + '\nexport const documentedApi = (x) => x * 2;\nexport const nextApi = (x) => x + 3;\n');
-    stage(dGood);
-    const rGood = auditCommitDiff(dGood, { recordBypasses: false, budgetBypassReason: '' });
-    t('好样本：有效代码行智能剥离 520 行注释（总 523 行但仅 2 有效行）→ 退 0 不误伤', rGood.exitCode === 0, rGood.fails.join('；'));
-
-    const dBig = makeRepo('big');
-    writeFileSync(join(dBig, 'src/huge.mjs'), Array.from({ length: 465 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
-    stage(dBig);
-    const rBig = auditCommitDiff(dBig, { budgetBypassReason: '' });
-    t('必红样本 1 (维度2)：单次提交超 450 行净增生产代码 → 必红退 1', rBig.exitCode === 1 && rBig.fails.some((f) => f.includes('生产代码加行数超预算')));
-
-    const dMany = makeRepo('many');
-    for (let i = 0; i < 7; i++) writeFileSync(join(dMany, `src/f${i}.mjs`), `export const a = ${i};\n`);
-    stage(dMany);
-    const rMany = auditCommitDiff(dMany, { budgetBypassReason: '' });
-    t('必红样本 2 (维度3)：单次提交跨 7 个生产源码文件（>6 上限）→ 必红退 1', rMany.exitCode === 1 && rMany.fails.some((f) => f.includes('生产源码文件数超预算')));
-
-    const dSkip = makeRepo('skip');
-    writeFileSync(join(dSkip, 'tests/app.test.mjs'), 'it.skip("broken", () => {\n  expect(true).toBe(true);\n});\n');
-    stage(dSkip);
-    const rSkip = auditCommitDiff(dSkip, { budgetBypassReason: '' });
-    t('必红样本 3 (C2)：测试加 it.skip / 恒真断言 / 净删断言 → 必红退 1', rSkip.exitCode === 1 && rSkip.fails.some((f) => f.includes('跳过用例')) && rSkip.fails.some((f) => f.includes('疑似删断言')));
-
-    const dSlop = makeRepo('slop');
-    writeFileSync(join(dSlop, 'src/app.mjs'), 'export function f() {\n  // TODO: finish later\n  try { work(); } catch (e) {}\n}\n');
-    stage(dSlop);
-    const rSlop = auditCommitDiff(dSlop, { budgetBypassReason: '' });
-    t('必红样本 4 (C3)：源码留 TODO 占位与空 catch {} 吞错 → 必红退 1', rSlop.exitCode === 1 && rSlop.fails.some((f) => f.includes('未完成占位符')) && rSlop.fails.some((f) => f.includes('空 catch')));
-
-    const dElide = makeRepo('elide');
-    writeFileSync(join(dElide, 'src/app.mjs'), 'export function f() {\n  // ... existing code ...\n}\n<<<<<<< HEAD\n');
-    stage(dElide);
-    const rElide = auditCommitDiff(dElide, { budgetBypassReason: '' });
-    t('必红样本 5 (C3b/C3c)：写 // ... existing code ... 省略删码与冲突标记残留 → 必红退 1', rElide.exitCode === 1 && rElide.fails.some((f) => f.includes('懒惰省略')) && rElide.fails.some((f) => f.includes('合并冲突标记')));
-
-    const dMess = makeRepo('mess');
-    writeFileSync(join(dMess, 'decisions/2026-11-21-无序号补记.md'), '# bad order\n');
-    writeFileSync(join(dMess, 'src/plan_v2.md'), '# draft\n');
-    writeFileSync(join(dMess, 'src/logic-a.mjs'), 'export const sliceA = 1;\n');
-    stage(dMess);
-    const rMess = auditCommitDiff(dMess, { budgetBypassReason: '' });
-    t('必红样本 6 (C4)：同日无序号决策记录、_v2 平行草稿与 logic-a.mjs 机械字母切片 → 必红退 1', rMess.exitCode === 1 && rMess.fails.some((f) => f.includes('必须加序号前缀')) && rMess.fails.some((f) => f.includes('版本号后缀')) && rMess.fails.some((f) => f.includes('禁止机械按字母')));
-
-    const dUnclaimed = makeRepo('unclaimed', true);
-    mkdirSync(join(dUnclaimed, '_gh-docs'), { recursive: true });
-    writeFileSync(join(dUnclaimed, '_gh-docs/draft.md'), '# rogue\n');
-    mkdirSync(join(dUnclaimed, 'extra'), { recursive: true });
-    writeFileSync(join(dUnclaimed, 'extra/rogue.mjs'), 'export const z = 1;\n');
-    spawnSync('git', ['-C', dUnclaimed, 'add', 'extra/rogue.mjs']);
-    const rUnclaimed = auditCommitDiff(dUnclaimed, { budgetBypassReason: '' });
-    t('必红样本 7 (C5)：根级野目录 _gh-docs 与未被契约 scope 认领的新源码 → 必红退 1', rUnclaimed.exitCode === 1 && rUnclaimed.fails.some((f) => f.includes('野目录')) && rUnclaimed.fails.some((f) => f.includes('未被任何活跃契约')));
-
-    const qRes = quarantineUnclaimedFiles(dUnclaimed);
-    mkdirSync(join(dUnclaimed, '.donegate/scratch'), { recursive: true });
-    writeFileSync(join(dUnclaimed, '.donegate/scratch/probe.mjs'), 'console.log(1);\n');
-    const scRes = cleanScratchDir(dUnclaimed);
-    t('正样本 (隔离箱与草稿箱)：--quarantine 安全归入隔离箱附还原账本，scratch 自动清扫', qRes.moved.includes('_gh-docs/draft.md') && existsSync(join(dUnclaimed, '.donegate/quarantine/manifest.jsonl')) && scRes.cleaned === 1);
-
-    const dAbuse = makeRepo('abuse');
-    writeFileSync(join(dAbuse, 'src/app.mjs'), 'export function f() {\n  try { work(); } catch (e) {} // dg-allow: ok\n}\n');
-    stage(dAbuse);
-    t('必红样本 8 (逃生口防滥用)：写 dg-allow: ok 敷衍理由 → 必退 2（事故）', auditCommitDiff(dAbuse, { budgetBypassReason: '' }).exitCode === 2);
-
-    const dAllow = makeRepo('allow');
-    writeFileSync(join(dAllow, 'src/app.mjs'), 'export function f() {\n  try { cleanupTmp(); } catch (e) {} // dg-allow: 临时目录清理失败不影响主退出码\n}\n');
-    stage(dAllow);
-    t('正样本 (合规逃生口)：带具体理由放行退 0 且写入 hygiene-bypasses.jsonl 留痕', auditCommitDiff(dAllow, { budgetBypassReason: '' }).exitCode === 0 && existsSync(join(dAllow, '.donegate/hygiene-bypasses.jsonl')));
-
-    const dHandroll = makeRepo('handroll', true);
-    const c1Hr = JSON.parse(readFileSync(join(dHandroll, 'contracts/c1/contract.json'), 'utf8'));
-    c1Hr.scope.push('skill/adapters/');
-    writeFileSync(join(dHandroll, 'contracts/c1/contract.json'), JSON.stringify(c1Hr));
-    writeFileSync(join(dHandroll, 'thresholds.json'), JSON.stringify({ bannedPatterns: [{ id: 'use-shared-http', pattern: String.raw`\bfetch\s*\(`, pathRegex: '^src/', excludePathRegex: '^src/shared/', message: '请调用 src/shared/http.mjs 的 request()，禁止业务层裸调 fetch' }] }));
-    mkdirSync(join(dHandroll, 'src/shared'), { recursive: true });
-    mkdirSync(join(dHandroll, 'skill/adapters'), { recursive: true });
-    writeFileSync(join(dHandroll, 'src/shared/http.mjs'), 'export const request = (u) => fetch(u);\n');
-    writeFileSync(join(dHandroll, 'src/page.mjs'), 'export const load = () => fetch("/api/items");\n');
-    writeFileSync(join(dHandroll, 'skill/adapters/custom.mjs'), 'import { spawnSync } from "node:child_process";\nexport const a = spawnSync;\n');
-    stage(dHandroll);
-    const rHandroll = auditCommitDiff(dHandroll, { budgetBypassReason: '' });
-    t('必红样本 9 (C6)：适配器直引 child_process 或业务代码绕过公共库命中 bannedPatterns → 必红退 1',
-      rHandroll.exitCode === 1 && rHandroll.fails.some((f) => f.includes('具体适配器禁止直引')) && rHandroll.fails.some((f) => f.includes('use-shared-http') && f.includes('src/page.mjs')) && !rHandroll.fails.some((f) => f.includes('(src/shared/http.mjs)')), rHandroll.fails.join('；'));
-
-    runExtendedFourDimCases(makeRepo, stage, commit, t);
+    runCoreHygieneRedCases(makeRepo, hyStageRepo, hyCommitRepo, t);
+    runScopeBypassAndHandrollCases(makeRepo, hyStageRepo, t);
+    runExtendedFourDimCases(makeRepo, hyStageRepo, hyCommitRepo, t);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -643,26 +690,86 @@ function runRedSelfTest() {
 function hyFindComplexipyBin(root) {
   const isWin = process.platform === 'win32';
   const venvBins = isWin
-    ? [join(root, '.venv', 'Scripts', 'complexipy.exe'), join(root, 'venv', 'Scripts', 'complexipy.exe')]
+    ? [
+        join(root, '.venv', 'Scripts', 'complexipy.exe'),
+        join(root, '.venv', 'Scripts', 'complexipy.cmd'),
+        join(root, 'venv', 'Scripts', 'complexipy.exe'),
+        join(root, 'venv', 'Scripts', 'complexipy.cmd')
+      ]
     : [join(root, '.venv', 'bin', 'complexipy'), join(root, 'venv', 'bin', 'complexipy')];
   const hit = venvBins.find((p) => existsSync(p));
   if (hit) return hit;
   const w = spawnSync(isWin ? 'where.exe' : 'which', ['complexipy'], { encoding: 'utf8', windowsHide: true });
-  return w.status === 0 && (w.stdout || '').trim() ? w.stdout.trim().split(/\r?\n/)[0].trim() : null;
+  if (w.status !== 0 || !(w.stdout || '').trim()) return null;
+  const lines = w.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return (isWin && lines.find((l) => /\.(exe|cmd|bat|com)$/i.test(l))) || lines[0] || null;
+}
+
+function hySpawnComplexipy(binCmd, args, cwd) {
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binCmd)) {
+    const q = (s) => (/[\s"&|<>^()=;,^%]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s));
+    const inner = [q(binCmd), ...args.map(q)].join(' ');
+    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${inner}"`], {
+      cwd, encoding: 'utf8', timeout: 60000, windowsHide: true, windowsVerbatimArguments: true
+    });
+  }
+  return spawnSync(binCmd, args, { cwd, encoding: 'utf8', timeout: 60000, windowsHide: true });
 }
 
 function hyTryRunPythonComplexipyAudit(root, budgets) {
   const binCmd = hyFindComplexipyBin(root);
-  if (!binCmd) return { ran: false, offenders: [] };
-  const r = spawnSync(binCmd, ['.', '--max-complexity-allowed', String(budgets.maxCognitiveComplexity), '--output-format', 'json'], {
-    cwd: root, encoding: 'utf8', timeout: 60000, windowsHide: true
-  });
-  if (r.error || (r.status !== 0 && r.status !== 1)) return { ran: false, offenders: [] };
-  let parsed = null;
-  try { parsed = JSON.parse(r.stdout || '[]'); } catch (err) { void err; }
-  const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.functions) ? parsed.functions : []);
-  const offenders = rawList.filter((fn) => Number(fn?.complexity ?? fn?.cognitive_complexity ?? 0) > budgets.maxCognitiveComplexity);
-  return { ran: true, exitCode: r.status === 1 || offenders.length > 0 ? 1 : 0, offenders };
+  if (!binCmd) return { ran: false, offenders: [], parseError: null };
+  const tmpOut = mkdtempSync(join(tmpdir(), 'dg-cxpy-'));
+  try {
+    const r = hySpawnComplexipy(binCmd, [root, '--max-complexity-allowed', String(budgets.maxCognitiveComplexity), '--output-format', 'json'], tmpOut);
+    if (r.error || (r.status !== 0 && r.status !== 1)) return { ran: false, offenders: [], parseError: r.error?.message || r.stderr || null };
+    let rawJsonText = (r.stdout || '').trim();
+    if (!rawJsonText.startsWith('[') && !rawJsonText.startsWith('{')) {
+      const jsonFile = readdirSync(tmpOut).find((n) => n.endsWith('.json'));
+      if (jsonFile) rawJsonText = readFileSync(join(tmpOut, jsonFile), 'utf8').trim();
+    }
+    let parsed = null;
+    try { parsed = JSON.parse(rawJsonText || '[]'); } catch (err) {
+      return { ran: false, offenders: [], parseError: `complexipy JSON 解析失败：${err.message}` };
+    }
+    const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.functions) ? parsed.functions : []);
+    const offenders = rawList.filter((fn) => Number(fn?.complexity ?? fn?.cognitive_complexity ?? 0) > budgets.maxCognitiveComplexity);
+    return { ran: true, exitCode: r.status === 1 || offenders.length > 0 ? 1 : 0, offenders, parseError: null };
+  } finally {
+    rmSync(tmpOut, { recursive: true, force: true });
+  }
+}
+
+function hyEmitPythonOnlyAuditCli(stats, pyRes, budgets, asJson) {
+  if (asJson) {
+    console.log(JSON.stringify({
+      status: pyRes.ran ? (pyRes.exitCode === 0 ? 'PASS_PYTHON_COMPLEXIPY' : 'FAIL_PYTHON_COMPLEXIPY') : 'SKIPPED_PYTHON_UNSCANNED',
+      budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
+      scannedJsFiles: 0, detectedPyFiles: stats.detectedPyFiles, pyOffenders: pyRes.offenders, hardViolationFiles: pyRes.offenders.length, items: []
+    }, null, 2));
+    return pyRes.ran ? pyRes.exitCode : 3;
+  }
+  if (!pyRes.ran) {
+    console.log(`RESULT: SKIPPED 未扫描到 JS/TS 文件（scanned=0），但检测到 ${stats.detectedPyFiles} 个 .py 文件且本机/项目 .venv 未装 complexipy——拒绝假 PASS（请安装 uv tool install complexipy 或通过 Python 治理流审计）`);
+    return 3;
+  }
+  console.log(pyRes.exitCode === 0
+    ? `RESULT: PASS 已通过 complexipy 审计 ${stats.detectedPyFiles} 个 Python 文件，全部函数认知复杂度 ≤${budgets.maxCognitiveComplexity}`
+    : `RESULT: FAIL complexipy 检出 ${pyRes.offenders.length} 个 Python 函数认知复杂度超过硬顶 ${budgets.maxCognitiveComplexity}`);
+  return pyRes.exitCode;
+}
+
+function hyPrintAuditReportLines(report, pyRes, verbose) {
+  for (const r of report) {
+    for (const f of r.overMaxFns) console.log(`  ✗ [超硬顶] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity} (嵌套=${f.maxNesting})`);
+    for (const g of r.golfingIssues) console.log(`  ✗ [C4g压行] ${r.file}:L${g.line} (${g.kind} count=${g.count}) → ${g.preview}`);
+    if (verbose) {
+      for (const f of r.warnFns) console.log(`  ⚠ [软预警] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity}`);
+    }
+  }
+  for (const pf of pyRes.offenders) {
+    console.log(`  ✗ [Python超硬顶] ${pf.path || pf.file || ''} · ${pf.function_name || pf.name || ''} 认知复杂度=${pf.complexity ?? pf.cognitive_complexity}`);
+  }
 }
 
 function runRepoFourDimAuditCli(root, argv) {
@@ -670,49 +777,38 @@ function runRepoFourDimAuditCli(root, argv) {
   const stats = auditRepository4DWithStats(root, budgets);
   const report = stats.items;
   const hardFiles = report.filter((r) => r.overMaxFns.length > 0 || r.golfingIssues.length > 0);
+  const pyRes = stats.detectedPyFiles > 0 ? hyTryRunPythonComplexipyAudit(root, budgets) : { ran: false, offenders: [], parseError: null };
+  const asJson = argv.includes('--json');
+
   if (stats.scannedJsFiles === 0 && stats.detectedPyFiles > 0) {
-    const pyRes = hyTryRunPythonComplexipyAudit(root, budgets);
-    if (argv.includes('--json')) {
-      console.log(JSON.stringify({
-        status: pyRes.ran ? (pyRes.exitCode === 0 ? 'PASS_PYTHON_COMPLEXIPY' : 'FAIL_PYTHON_COMPLEXIPY') : 'SKIPPED_PYTHON_UNSCANNED',
-        budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
-        scannedJsFiles: 0, detectedPyFiles: stats.detectedPyFiles, pyOffenders: pyRes.offenders, hardViolationFiles: pyRes.offenders.length, items: []
-      }, null, 2));
-      return pyRes.ran ? pyRes.exitCode : 3;
-    }
-    if (!pyRes.ran) {
-      console.log(`RESULT: SKIPPED 未扫描到 JS/TS 文件（scanned=0），但检测到 ${stats.detectedPyFiles} 个 .py 文件且本机/项目 .venv 未装 complexipy——拒绝假 PASS（请安装 uv tool install complexipy 或通过 Python 治理流审计）`);
-      return 3;
-    }
-    console.log(pyRes.exitCode === 0
-      ? `RESULT: PASS 已通过 complexipy 审计 ${stats.detectedPyFiles} 个 Python 文件，全部函数认知复杂度 ≤${budgets.maxCognitiveComplexity}`
-      : `RESULT: FAIL complexipy 检出 ${pyRes.offenders.length} 个 Python 函数认知复杂度超过硬顶 ${budgets.maxCognitiveComplexity}`);
-    return pyRes.exitCode;
+    return hyEmitPythonOnlyAuditCli(stats, pyRes, budgets, asJson);
   }
-  if (argv.includes('--json')) {
+
+  const pyUnscannedMixed = stats.detectedPyFiles > 0 && !pyRes.ran;
+  const totalHardViolations = hardFiles.length + pyRes.offenders.length;
+  const finalExit = totalHardViolations > 0 ? 1 : (pyUnscannedMixed ? 3 : 0);
+  if (asJson) {
+    const status = stats.scannedJsFiles === 0
+      ? 'SKIPPED_NO_FILES'
+      : (totalHardViolations > 0 ? 'FAIL' : (pyUnscannedMixed ? 'PARTIAL_PYTHON_UNSCANNED' : 'PASS'));
     console.log(JSON.stringify({
-      status: stats.scannedJsFiles === 0 ? 'SKIPPED_NO_FILES' : (hardFiles.length > 0 ? 'FAIL' : 'PASS'),
-      budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
-      scannedJsFiles: stats.scannedJsFiles, detectedPyFiles: stats.detectedPyFiles, hardViolationFiles: hardFiles.length, items: report
+      status, budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
+      scannedJsFiles: stats.scannedJsFiles, detectedPyFiles: stats.detectedPyFiles,
+      pyAuditRan: pyRes.ran, pyOffenders: pyRes.offenders, hardViolationFiles: totalHardViolations, items: report
     }, null, 2));
-    return hardFiles.length > 0 ? 1 : 0;
+    return finalExit;
   }
-  console.log(`=== DoneGate 四维标准全仓扫描（已扫 JS/TS ${stats.scannedJsFiles} 个文件，认知复杂度预警 >${budgets.warnCognitiveComplexity} / 硬顶 >${budgets.maxCognitiveComplexity} + 反压行 C4g） ===`);
-  for (const r of report) {
-    for (const f of r.overMaxFns) console.log(`  ✗ [超硬顶] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity} (嵌套=${f.maxNesting})`);
-    for (const g of r.golfingIssues) console.log(`  ✗ [C4g压行] ${r.file}:L${g.line} (${g.kind} count=${g.count}) → ${g.preview}`);
-    if (argv.includes('--verbose')) {
-      for (const f of r.warnFns) console.log(`  ⚠ [软预警] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity}`);
-    }
+  console.log(`=== DoneGate 四维标准全仓扫描（已扫 JS/TS ${stats.scannedJsFiles} 个文件${stats.detectedPyFiles > 0 ? `，检出 Python ${stats.detectedPyFiles} 个文件` : ''}，认知复杂度预警 >${budgets.warnCognitiveComplexity} / 硬顶 >${budgets.maxCognitiveComplexity} + 反压行 C4g） ===`);
+  hyPrintAuditReportLines(report, pyRes, argv.includes('--verbose'));
+  if (stats.scannedJsFiles === 0) { console.log('RESULT: SKIPPED 仓库内未检出可扫描源码文件（0 files scanned）'); return 0; }
+  if (pyUnscannedMixed && totalHardViolations === 0) {
+    console.log(`RESULT: SKIPPED JS/TS 通过但仓库还含 ${stats.detectedPyFiles} 个 .py 文件未装 complexipy——拒绝混合仓假 PASS`);
+    return 3;
   }
-  if (stats.scannedJsFiles === 0) {
-    console.log('RESULT: SKIPPED 仓库内未检出可扫描源码文件（0 files scanned）');
-    return 0;
-  }
-  console.log(hardFiles.length === 0
+  console.log(totalHardViolations === 0
     ? `RESULT: PASS 全仓源码 100% 符合四维认知复杂度（≤${budgets.maxCognitiveComplexity}）与反压行标准（软预警文件 ${report.length} 个）`
-    : `RESULT: FAIL 共 ${hardFiles.length} 个源码文件存在超硬顶高复杂度函数或压行违规`);
-  return hardFiles.length > 0 ? 1 : 0;
+    : `RESULT: FAIL 共 ${totalHardViolations} 项存在超硬顶高复杂度函数或压行违规`);
+  return finalExit;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

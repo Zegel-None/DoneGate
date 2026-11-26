@@ -61,6 +61,55 @@ const parseFrontmatter = (text) => {
   return { fm, body: text.slice(m[0].length) };
 };
 
+function forgeAuditSkillFrontmatter(skillText, dirName, fails) {
+  const parsed = parseFrontmatter(skillText);
+  if (parsed.error) {
+    fails.push('SKILL.md ' + parsed.error);
+    return;
+  }
+  const { fm, body } = parsed;
+  if (!fm.name) fails.push('SKILL.md frontmatter 缺 name');
+  else if (fm.name.trim() !== dirName) fails.push(`SKILL.md name「${fm.name.trim()}」与目录名「${dirName}」不一致`);
+  if (!fm.description) fails.push('SKILL.md frontmatter 缺 description');
+  const descLine = (skillText.match(/^description:.*$/m) || [''])[0];
+  if (descLine && !/^description:\s*(>-?|\|-?)/.test(descLine)) {
+    fails.push('SKILL.md description 不是块标量（plain scalar 含冒号会让整条技能静默消失）');
+  }
+  if (!body.trim()) fails.push('SKILL.md 正文为空');
+}
+
+function forgeAuditRelativeLinks(filePath, text, label, fails) {
+  let count = 0;
+  for (const u of links(text)) {
+    count++;
+    if (!existsSync(resolve(dirname(filePath), u))) fails.push(`${label} → 死链 ${u}`);
+  }
+  return count;
+}
+
+function forgeAuditCardContent(card, cardPath, text, fails) {
+  for (const s of (card.full ? 四段 : 示范段)) {
+    if (!text.includes(s)) fails.push(`${card.file} 缺「${s}」`);
+  }
+  for (const w of 禁用措辞) {
+    if (text.includes(w)) fails.push(`${card.file} 出现禁用措辞「${w}」`);
+  }
+  const n = cjk(prose(text));
+  if (n < MIN_CJK) fails.push(`${card.file} 正文只有 ${n} 汉字，少于 ${MIN_CJK}（卡太薄，照做不了）`);
+  if (n > MAX_CJK) fails.push(`${card.file} 正文 ${n} 汉字，超过 ${MAX_CJK}（在抄规格，应该只引节号）`);
+  return forgeAuditRelativeLinks(cardPath, text, card.file, fails);
+}
+
+function forgeCheckMonotonicOrder(skillText, prevIdx, needle, missingMsg, orderMsg, fails) {
+  const idx = skillText.indexOf(needle);
+  if (idx < 0) {
+    fails.push(missingMsg);
+    return prevIdx;
+  }
+  if (idx < prevIdx) fails.push(orderMsg);
+  return idx;
+}
+
 export function auditForge(dir) {
   const fails = [];
   const dirName = dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
@@ -69,19 +118,7 @@ export function auditForge(dir) {
 
   // ① SKILL.md：frontmatter 可加载 + name 等于目录名 + description 是块标量
   const skillText = readFileSync(skillPath, 'utf8');
-  const parsed = parseFrontmatter(skillText);
-  if (parsed.error) fails.push('SKILL.md ' + parsed.error);
-  else {
-    const { fm, body } = parsed;
-    if (!fm.name) fails.push('SKILL.md frontmatter 缺 name');
-    else if (fm.name.trim() !== dirName) fails.push(`SKILL.md name「${fm.name.trim()}」与目录名「${dirName}」不一致`);
-    if (!fm.description) fails.push('SKILL.md frontmatter 缺 description');
-    const descLine = (skillText.match(/^description:.*$/m) || [''])[0];
-    if (descLine && !/^description:\s*(>-?|\|-?)/.test(descLine)) {
-      fails.push('SKILL.md description 不是块标量（plain scalar 含冒号会让整条技能静默消失）');
-    }
-    if (!body.trim()) fails.push('SKILL.md 正文为空');
-  }
+  forgeAuditSkillFrontmatter(skillText, dirName, fails);
 
   // ② 五张卡必须存在、链接顺序递增，且六步闭环顺序不被打乱
   let cardCount = 0;
@@ -89,47 +126,31 @@ export function auditForge(dir) {
   let prevCardIdx = -1;
   for (const c of CARDS) {
     const p = join(dir, 'references', c.file);
-    if (!existsSync(p)) { fails.push('缺卡：references/' + c.file); continue; }
+    if (!existsSync(p)) {
+      fails.push('缺卡：references/' + c.file);
+      continue;
+    }
     cardCount++;
-    const t = readFileSync(p, 'utf8');
-
-    for (const s of (c.full ? 四段 : 示范段)) {
-      if (!t.includes(s)) fails.push(`${c.file} 缺「${s}」`);
-    }
-    for (const w of 禁用措辞) {
-      if (t.includes(w)) fails.push(`${c.file} 出现禁用措辞「${w}」`);
-    }
-    for (const u of links(t)) {
-      linkCount++;
-      if (!existsSync(resolve(dirname(p), u))) fails.push(`${c.file} → 死链 ${u}`);
-    }
-    const n = cjk(prose(t));
-    if (n < MIN_CJK) fails.push(`${c.file} 正文只有 ${n} 汉字，少于 ${MIN_CJK}（卡太薄，照做不了）`);
-    if (n > MAX_CJK) fails.push(`${c.file} 正文 ${n} 汉字，超过 ${MAX_CJK}（在抄规格，应该只引节号）`);
-
-    const idxInSkill = skillText.indexOf(c.file);
-    if (idxInSkill < 0) fails.push(`SKILL.md 没有指向 ${c.file} 的链接`);
-    else {
-      if (idxInSkill < prevCardIdx) fails.push(`SKILL.md 路由卡顺序被打乱：${c.file} 出现在前序卡之前`);
-      prevCardIdx = idxInSkill;
-    }
+    linkCount += forgeAuditCardContent(c, p, readFileSync(p, 'utf8'), fails);
+    prevCardIdx = forgeCheckMonotonicOrder(
+      skillText, prevCardIdx, c.file,
+      `SKILL.md 没有指向 ${c.file} 的链接`,
+      `SKILL.md 路由卡顺序被打乱：${c.file} 出现在前序卡之前`,
+      fails
+    );
   }
 
   let prevStepIdx = -1;
   for (const step of STEP_ANCHORS) {
-    const si = skillText.indexOf(step);
-    if (si < 0) fails.push(`SKILL.md 缺少六步固定动作锚点「${step}」`);
-    else {
-      if (si < prevStepIdx) fails.push(`SKILL.md 六步顺序被打乱：「${step}」位置倒置`);
-      prevStepIdx = si;
-    }
+    prevStepIdx = forgeCheckMonotonicOrder(
+      skillText, prevStepIdx, step,
+      `SKILL.md 缺少六步固定动作锚点「${step}」`,
+      `SKILL.md 六步顺序被打乱：「${step}」位置倒置`,
+      fails
+    );
   }
 
-  for (const u of links(skillText)) {
-    linkCount++;
-    if (!existsSync(resolve(dirname(skillPath), u))) fails.push(`SKILL.md → 死链 ${u}`);
-  }
-
+  linkCount += forgeAuditRelativeLinks(skillPath, skillText, 'SKILL.md', fails);
   return { fails, links: linkCount, cards: cardCount };
 }
 

@@ -11,7 +11,7 @@ import {
   BUILTIN_CATALOG_PACK_SPECS, buildInjectedUiBridgeScript, parseFlexibleDepsManifest,
   provisionWorkflowDeps, readUiToolchainStatus, readWorkflowDepsStatus
 } from '../runner/dsh/index.mjs';
-import { buildDshBundleDirectory } from '../runner/dsh/install-dsh-web.mjs';
+import { buildDshBundleDirectory } from '../runner/dsh/host/install-dsh-web.mjs';
 
 function makeTempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -37,7 +37,7 @@ describe('共享底座池自包含 CLI、repair-git 安全锁、版本一致性�
       const cliAbs = join(extWs, 'workflows', '.deps', '_shared', 'dg-deps-cli.mjs');
       expect(existsSync(cliAbs)).toBe(true);
       expect(prov.agentPrompt).toContain('workflows/.deps/_shared/dg-deps-cli.mjs');
-      expect(prov.agentPrompt).not.toContain('runner/dsh/workflow-deps.mjs');
+      expect(prov.agentPrompt).not.toContain('runner/dsh/deps/workflow-deps.mjs');
 
       writeExecutableMock(join(extWs, 'workflows', '.deps', '_shared', 'dists', 'gradle-8.10.2', 'bin'), 'gradle',
         'console.log("Gradle 8.10.2");\n');
@@ -146,8 +146,13 @@ describe('DSH 会话动态工作区、免重下二进制兜底识别、画布刷
       writeExecutableMock(join(sessionWs, 'workflows', '.deps', '_shared', '.bin'), 'gradle',
         'console.log("Gradle 8.10.2");\n');
 
+      // 获取当前会话控制面令牌（遵循 P0 写操作鉴权边界）
+      const initCanvasHtml = await (await fetch(`${baseUrl}/donegate/api/canvas?dsh=1&sessionId=sess-w11`)).text();
+      const tokMatch = initCanvasHtml.match(/name="donegate-session-token"\s+content="([^"]+)"/);
+      const authHeaders = tokMatch ? { 'X-DoneGate-Session-Token': tokMatch[1] } : {};
+
       // 点击画布「刷新最新数据」调用 /donegate/api/atlas/refresh
-      const refRes = await (await fetch(`${baseUrl}/donegate/api/atlas/refresh?sessionId=sess-w11`, { method: 'POST' })).json();
+      const refRes = await (await fetch(`${baseUrl}/donegate/api/atlas/refresh?sessionId=sess-w11`, { method: 'POST', headers: authHeaders })).json();
       expect(refRes.ok).toBe(true);
       expect(refRes.sharedPool.summaryLabel).toContain('Gradle 8.10.2');
       expect(refRes.packDepReports['pack-android'].items.find((x) => x.id === 'gradle')?.ready).toBe(true);
@@ -214,7 +219,7 @@ describe('DSH 会话动态工作区、免重下二进制兜底识别、画布刷
       expect(puckHtml).toContain('@puckeditor/core@0.24.1 已激活');
 
       const mutRes = await (await fetch(`${baseUrl}/donegate/api/uiboard/layout?sessionId=sess-w11`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ op: 'update_props', blockId: 'blk-hero', props: { headline: 'Puck 实时拖拽编排已落盘' } })
       })).json();
       expect(mutRes.ok).toBe(true);
@@ -261,7 +266,7 @@ describe('DSH 会话动态工作区、免重下二进制兜底识别、画布刷
 
       // 6) 真激活 agent-browser 异步回环自测（不传 liveUrl 亦自动拉起本机回环页实跑快照）
       const spRes = await (await fetch(`${baseUrl}/donegate/api/uiboard/self-play?sessionId=sess-w11`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders }, body: JSON.stringify({})
       })).json();
       expect(spRes.ok).toBe(true);
       expect(spRes.engine).toBe('agent-browser');

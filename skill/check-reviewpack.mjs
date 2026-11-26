@@ -31,6 +31,9 @@ const ROOT = resolve(HERE, '..');
 const 行序 = ['①判据原文', '②base..head', '③运行输出', '④scope与why', '⑤完成声称', '清单闭合', '无第六类', '无越界材料'];
 const 第六类名 = /(ledger|总账|缺口清单|计划|思路|草稿|对话)/i;
 const 第六类词 = /(ledger|总账|缺口清单|计划|思路|草稿|对话)/i;
+const LEAK_FILE_RE = /(?:^|\/)(?:verdict\.json|answer-key|reference-answer|writer-draft|solutions?\/)/i;
+const LEAK_BODY_RE = /(?:\b[A-Za-z]:(?:\\\\|\\|\/)(?:Users|home)|(?:^|\s)\/(?:Users|home)\/[A-Za-z0-9._-]+|DSH-(?:ZegelUI|DoneGate))/;
+const SCOPE_WHY_SIXTH_RE = /(缺口清单|思路|草稿|对话|本轮\s*\d+\s*项|写方[^\n]*总账|总账\s*[：:]\s*\d+)/i;
 // 卡出口 4：判据原文里可能合法出现这些词（如 scope 写「不覆盖排课计划变更」），
 // 所以正文检索豁免「判据原文形状」的文件。代价见文件头诚实边界 2。
 const 判据原文形状 = (b) => /claim/i.test(b) && /observable/i.test(b) && /scope/i.test(b);
@@ -360,34 +363,38 @@ if (fails === 0) { console.log('RESULT: PASS 判方材料包口径 + 7 份夹具
 console.log('RESULT: FAIL ' + fails + ' 处不过');
 process.exit(1);
 
+function crpIsStructuralCarrier(r) {
+  return /^(criterion|diff)\//i.test(r) ||
+    /^evidence\/.*\/(start|report|end)\.json$/i.test(r) ||
+    /^(contract-scope-why\.md|完成声称\.md|MANIFEST\.txt)$/i.test(r);
+}
+
+function crpIsSixthName(r, domainRe) {
+  if (LEAK_FILE_RE.test(r)) return true;
+  if (crpIsStructuralCarrier(r)) {
+    return !/^(criterion|diff|evidence)\//i.test(r) && 第六类名.test(r.replace(domainRe, ''));
+  }
+  return 第六类名.test(basename(r)) || 第六类名.test(r.replace(domainRe, ''));
+}
+
+function crpIsSixthBody(r, body, domainRe) {
+  if (body === null) return false;
+  if (LEAK_BODY_RE.test(body) && !/^diff\//i.test(r)) return true;
+  if (判据原文形状(body)) return false;
+  if (/^(diff\/|evidence\/.*\/(start|report|end)\.json$|MANIFEST\.txt$)/i.test(r)) return false;
+  const cleaned = /^(contract-scope-why\.md|完成声称\.md)$/i.test(r) ? body.replace(domainRe, '') : body;
+  if (/^contract-scope-why\.md$/i.test(r) && /^#\s*契约\s+/.test(cleaned)) {
+    return SCOPE_WHY_SIXTH_RE.test(cleaned);
+  }
+  return 第六类词.test(cleaned);
+}
+
 function checkSixthCategory(own, rels, bodies) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const ownParts = [own, ...own.split('-').filter((t) => t.length >= 4)].map(esc);
   const domainRe = new RegExp(`(?:src|scripts|tests|contracts|lib|bin)/[\\w./-]+|\\b(?:${ownParts.join('|')})\\b`, 'gi');
-  const isStructuralCarrier = (r) =>
-    /^(criterion|diff)\//i.test(r) ||
-    /^evidence\/.*\/(start|report|end)\.json$/i.test(r) ||
-    /^(contract-scope-why\.md|完成声称\.md|MANIFEST\.txt)$/i.test(r);
-  const LEAK_FILE_RE = /(?:^|\/)(?:verdict\.json|answer-key|reference-answer|writer-draft|solutions?\/)/i;
-  const LEAK_BODY_RE = /(?:\b[A-Za-z]:(?:\\\\|\\|\/)(?:Users|home)|(?:^|\s)\/(?:Users|home)\/[A-Za-z0-9._-]+|DSH-(?:ZegelUI|DoneGate))/;
-  const hitNames = rels.filter((r) => {
-    if (LEAK_FILE_RE.test(r)) return true;
-    if (isStructuralCarrier(r)) {
-      return !/^(criterion|diff|evidence)\//i.test(r) && 第六类名.test(r.replace(domainRe, ''));
-    }
-    return 第六类名.test(basename(r)) || 第六类名.test(r.replace(domainRe, ''));
-  });
-  const hitBodies = rels.filter((r, i) => {
-    if (bodies[i] === null) return false;
-    if (LEAK_BODY_RE.test(bodies[i]) && !/^diff\//i.test(r)) return true;
-    if (判据原文形状(bodies[i])) return false;
-    if (/^(diff\/|evidence\/.*\/(start|report|end)\.json$|MANIFEST\.txt$)/i.test(r)) return false;
-    const cleaned = /^(contract-scope-why\.md|完成声称\.md)$/i.test(r) ? bodies[i].replace(domainRe, '') : bodies[i];
-    if (/^contract-scope-why\.md$/i.test(r) && /^#\s*契约\s+/.test(cleaned)) {
-      return /(缺口清单|思路|草稿|对话|本轮\s*\d+\s*项|写方[^\n]*总账|总账\s*[：:]\s*\d+)/i.test(cleaned);
-    }
-    return 第六类词.test(cleaned);
-  });
+  const hitNames = rels.filter((r) => crpIsSixthName(r, domainRe));
+  const hitBodies = rels.filter((r, i) => crpIsSixthBody(r, bodies[i], domainRe));
   if (hitNames.length === 0 && hitBodies.length === 0) return { ok: true, why: '' };
   const w = [];
   if (hitNames.length) w.push('名字：' + hitNames.join(','));

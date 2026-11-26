@@ -15,7 +15,7 @@ describe('Stage 1 · 派生台账松绑与单文件毫秒级 ACI 微门禁 (lint
     expect(parsed.files).toHaveLength(2);
     expect(parsed.files[0].ok).toBe(true);
     if (existsSync(join(REPO_ROOT, 'contracts'))) {
-      expect(parsed.files[0].owners).toContain('verdict-core');
+      expect(parsed.files[0].owners).toContain('donegate-cli');
     }
     expect(parsed.files[1].ok).toBe(true);
   });

@@ -1,6 +1,6 @@
 // L0 项目配置、契约/功能清单与运行证据加载原语（<= 350 行聚焦子模块）
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
 import { materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
 
@@ -48,7 +48,7 @@ export const DEFAULT_THRESHOLDS = {
   bannedPatterns: []
 };
 
-export const SELF_WRITER_RE = /^(自己|本人|本轮写方|写方|写方自己|写手|agent|ai|llm|model|claude|gpt|deepseek|gemini|codex|cursor|windsurf)$/i;
+export const SELF_WRITER_RE = /^(?:自己|本人|本轮写方|写方|写方自己|写手|agent|ai|llm|model|assistant|bot|copilot|devin|aider|cline|roo|codex|cursor|windsurf|antigravity|(?:claude|gpt|gemini|deepseek|qwen|llama|mistral|sonnet|opus|haiku|o[134])(?:[-._\s][A-Za-z0-9._-]+)*)$/i;
 
 export function isSelfWriterIdentity(val) {
   if (typeof val !== 'string') return false;
@@ -57,7 +57,11 @@ export function isSelfWriterIdentity(val) {
   return SELF_WRITER_RE.test(t) || /写方自己|本轮写方/.test(t);
 }
 
-export const STATE_PRIORITY = { '无法判断': 5, '未通过': 4, '过期': 3, '未验证': 2, '通过': 1 };
+export function isDeliveryContract(c) {
+  return Boolean(c && !c.retired && c.track !== 'explore');
+}
+
+export const STATE_PRIORITY = { '无法判断': 6, '未通过': 5, '不稳定': 4, '过期': 3, '未验证': 2, '通过': 1 };
 export const VALID_TEETH = new Set([
   'killed', 'survived', 'no-coverage', 'compile-error', 'runtime-error',
   'timeout', 'red-wrong-assertion', 'restore-failed', 'pending', 'ignored', 'hollow-assertion'
@@ -154,15 +158,50 @@ export function readEvidenceRuns(projectRoot, contractId, obligationId) {
   return runs;
 }
 
-export function checkMaterialsFresh(projectRoot, startObj) {
-  if (!startObj || !Array.isArray(startObj.materials) || startObj.materials.length === 0) return true;
+function plCollectCurrentScopeFiles(projectRoot, contract) {
+  if (!contract || !Array.isArray(contract.scope)) return null;
+  const set = new Set();
+  for (const s of contract.scope) {
+    if (typeof s !== 'string' || !s.trim()) continue;
+    const abs = resolve(projectRoot, s);
+    if (!existsSync(abs)) continue;
+    try {
+      const st = statSync(abs);
+      if (st.isFile()) {
+        set.add(s.replace(/\\/g, '/').replace(/^\.\//, ''));
+      } else if (st.isDirectory()) {
+        for (const e of readdirSync(abs, { withFileTypes: true, recursive: true })) {
+          if (!e.isFile()) continue;
+          const full = join(e.parentPath || abs, e.name);
+          set.add(relative(projectRoot, full).replace(/\\/g, '/'));
+        }
+      }
+    } catch (err) { void err; }
+  }
+  return set;
+}
+
+export function checkMaterialsFresh(projectRoot, startObj, contract = null) {
+  if (!startObj || !Array.isArray(startObj.materials)) return true;
+  if (startObj.materials.length === 0) {
+    const scopeFiles = plCollectCurrentScopeFiles(projectRoot, contract);
+    return !scopeFiles || scopeFiles.size === 0;
+  }
   const current = [];
+  const recordedSet = new Set();
   for (const m of startObj.materials) {
     if (!m || !m.path) return false;
+    recordedSet.add(String(m.path).replace(/\\/g, '/').replace(/^\.\//, ''));
     const abs = resolve(projectRoot, m.path);
     if (!existsSync(abs)) return false;
     try { current.push({ path: m.path, sha256: sha256(readFileSync(abs)) }); }
     catch { return false; }
+  }
+  const scopeFiles = plCollectCurrentScopeFiles(projectRoot, contract);
+  if (scopeFiles) {
+    for (const f of scopeFiles) {
+      if (!recordedSet.has(f)) return false;
+    }
   }
   return materialFingerprintOf(startObj.materials) === materialFingerprintOf(current);
 }

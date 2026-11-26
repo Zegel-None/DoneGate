@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createDoneGateWebRouteHandler } from '../runner/dsh/host-routes.mjs';
+import { createDoneGateWebRouteHandler } from '../runner/dsh/host/host-routes.mjs';
 import {
   CONTROL_PLANE_AUTH_DENIED_CODE,
   CONTROL_PLANE_TOKEN_HEADER,
@@ -11,14 +11,14 @@ import {
   hagInjectSessionTokenHtml,
   hagIsLoopbackHost,
   hagSanitizeSubagentEnv
-} from '../runner/dsh/host-auth-guard.mjs';
+} from '../runner/dsh/host/host-auth-guard.mjs';
 import {
   AUTOPILOT_DEFAULT_MAX_SELF_HEAL_ROUNDS,
   AUTOPILOT_MAX_SUBAGENT_TOOLS,
   crPruneSubagentToolList,
   planCampaignExecutionStrategy
-} from '../runner/dsh/campaign-routing.mjs';
-import { executeDeterministicWorkflowRun } from '../runner/dsh/workflow-runner.mjs';
+} from '../runner/dsh/autopilot/campaign-routing.mjs';
+import { executeDeterministicWorkflowRun } from '../runner/dsh/autopilot/workflow-runner.mjs';
 
 async function invokeRoute(handler, { method = 'GET', subPath = '/ping', headers = {}, body = null } = {}) {
   let status = 200;

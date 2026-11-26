@@ -6,16 +6,16 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import vm from 'node:vm';
-import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
-import { inspectWorkflowDeps, provisionWorkflowDeps } from './workflow-deps.mjs';
+import { executeDeterministicWorkflowRun } from './autopilot/workflow-runner.mjs';
+import { inspectWorkflowDeps, provisionWorkflowDeps } from './deps/workflow-deps.mjs';
 import {
   assignComponentWorkflow, mutateComponentWorkflowJit, promoteComponentJitToMacro
-} from './workflow-jit.mjs';
-import { executeProjectCampaignAutopilot } from './campaign-autopilot.mjs';
+} from './autopilot/workflow-jit.mjs';
+import { executeProjectCampaignAutopilot } from './autopilot/campaign-autopilot.mjs';
 import { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, buildInjectedUiBridgeScript } from './contract.mjs';
-import { auditHtmlAntiAiSlop } from './ui-aesthetics.mjs';
-import { detectProjectUiEntry, renderPrototypeHtml } from './ui-board-engine.mjs';
-import { createDoneGateWebRouteHandler } from './host-routes.mjs';
+import { auditHtmlAntiAiSlop } from './uiboard/ui-aesthetics.mjs';
+import { detectProjectUiEntry, renderPrototypeHtml } from './uiboard/ui-board-engine.mjs';
+import { createDoneGateWebRouteHandler } from './host/host-routes.mjs';
 
 function verifyJitMacroLifecycle() {
   const tmp = mkdtempSync(join(tmpdir(), 'dg-jit-wf-'));
@@ -218,8 +218,7 @@ async function verifyProjectCampaignTopology(tmp, { uiNode, apiNode }) {
   assert.ok(readFileSync(join(tmp, 'src/ui/view.mjs'), 'utf8').includes('v2-ok'));
 }
 
-async function verifyStarImportAestheticsAndUiBridge(tmp) {
-  // 1) 12 套分组美学方案 + Puck 安装探测 + 全屏无白底高度
+function verifyAestheticProposalsAndPuck(tmp) {
   assert.equal(AESTHETIC_GROUPS.length, 4);
   assert.equal(AESTHETIC_PROPOSALS.length, 12);
   for (const id of ['swiss-minimal', 'bento-craft', 'industrial-dark', 'neo-brutal', 'enterprise-dense']) {
@@ -236,8 +235,9 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   mkdirSync(join(puckPkg, '..'), { recursive: true });
   writeFileSync(puckPkg, '{"name":"@puckeditor/core"}\n', 'utf8');
   assert.equal(detectProjectUiEntry(tmp).puckInstalled, true);
+}
 
-  // 2) UI 桥纯 Alt+单击拾取：普通点击 100% 原生放行，Alt+左键仅发 1 次胶囊且抑制 800ms 内 pointerup/click
+function createMockUiBridgeEnv() {
   const docListeners = {};
   const winListeners = {};
   const posted = [];
@@ -253,49 +253,56 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
     closest: () => btnEl,
     getBoundingClientRect: () => ({ left: 20, top: 40, bottom: 72, width: 96, height: 32 })
   };
-  const bodyEl = { appendChild: (el) => appended.push(el) };
+  const addListener = (bucket, ev, fn) => {
+    if (!bucket[ev]) bucket[ev] = [];
+    bucket[ev].push(fn);
+  };
   const winObj = {
     location: { pathname: '/' }, innerWidth: 1024,
     parent: { postMessage: (msg) => posted.push(msg) },
-    addEventListener: (ev, fn) => {
-      if (!winListeners[ev]) winListeners[ev] = [];
-      winListeners[ev].push(fn);
-    }
+    addEventListener: (ev, fn) => addListener(winListeners, ev, fn)
   };
   const docObj = {
-    body: bodyEl, documentElement: { style: { setProperty() {} } },
+    body: { appendChild: (el) => appended.push(el) },
+    documentElement: { style: { setProperty() {} } },
     createElement: () => ({ style: {}, setAttribute() {}, getAttribute: () => '1' }),
-    addEventListener: (ev, fn) => {
-      if (!docListeners[ev]) docListeners[ev] = [];
-      docListeners[ev].push(fn);
-    }
+    addEventListener: (ev, fn) => addListener(docListeners, ev, fn)
   };
   vm.runInNewContext(buildInjectedUiBridgeScript(), { window: winObj, document: docObj, Date, Math, Object, String, Number });
+  return { docListeners, winListeners, posted, appended, btnEl };
+}
 
-  const makeEv = (extra = {}) => {
-    const ev = { target: btnEl, altKey: false, button: 0, prevented: false, stopped: false, ...extra };
-    ev.preventDefault = () => { ev.prevented = true; };
-    ev.stopPropagation = () => { ev.stopped = true; };
-    ev.stopImmediatePropagation = () => { ev.stopped = true; };
-    return ev;
-  };
-  const normalClick = makeEv({ altKey: false });
-  for (const fn of (docListeners.click || [])) fn(normalClick);
+function makeMockBridgeEvent(btnEl, extra = {}) {
+  const ev = { target: btnEl, altKey: false, button: 0, prevented: false, stopped: false, ...extra };
+  ev.preventDefault = () => { ev.prevented = true; };
+  ev.stopPropagation = () => { ev.stopped = true; };
+  ev.stopImmediatePropagation = () => { ev.stopped = true; };
+  return ev;
+}
+
+function dispatchMockListeners(listenersMap, evName, evObj) {
+  for (const fn of (listenersMap[evName] || [])) fn(evObj);
+}
+
+function verifyUiBridgeAltPick() {
+  const { docListeners, winListeners, posted, appended, btnEl } = createMockUiBridgeEnv();
+  const normalClick = makeMockBridgeEvent(btnEl, { altKey: false });
+  dispatchMockListeners(docListeners, 'click', normalClick);
   assert.equal(normalClick.prevented, false, '普通点击严禁被 preventDefault 拦截');
   assert.equal(posted.filter((m) => m.type === 'dg-ui:element-selected').length, 0);
   assert.equal(posted.filter((m) => m.type === 'dg-ui:test-action-triggered').length, 1);
 
-  for (const fn of (docListeners.pointermove || [])) fn(makeEv({ altKey: true }));
+  dispatchMockListeners(docListeners, 'pointermove', makeMockBridgeEvent(btnEl, { altKey: true }));
   assert.equal(appended[0].style.display, 'block', 'Alt 悬停时必须显示蓝色虚线 hoverBox');
-  for (const fn of (winListeners.keyup || [])) fn({ key: 'Alt', altKey: false });
+  dispatchMockListeners(winListeners, 'keyup', { key: 'Alt', altKey: false });
   assert.equal(appended[0].style.display, 'none', '松开 Alt 时必须立即隐藏 hoverBox');
 
-  const altDown = makeEv({ altKey: true, button: 0 });
-  const altUp = makeEv({ altKey: false, button: 0 });
-  const altFollowClick = makeEv({ altKey: false, button: 0 });
-  for (const fn of (docListeners.pointerdown || [])) fn(altDown);
-  for (const fn of (docListeners.pointerup || [])) fn(altUp);
-  for (const fn of (docListeners.click || [])) fn(altFollowClick);
+  const altDown = makeMockBridgeEvent(btnEl, { altKey: true, button: 0 });
+  const altUp = makeMockBridgeEvent(btnEl, { altKey: false, button: 0 });
+  const altFollowClick = makeMockBridgeEvent(btnEl, { altKey: false, button: 0 });
+  dispatchMockListeners(docListeners, 'pointerdown', altDown);
+  dispatchMockListeners(docListeners, 'pointerup', altUp);
+  dispatchMockListeners(docListeners, 'click', altFollowClick);
   assert.equal(altDown.prevented && altUp.prevented && altFollowClick.prevented, true, 'Alt 拾取必须拦截按下与释放余波');
   const selMsgs = posted.filter((m) => m.type === 'dg-ui:element-selected');
   assert.equal(selMsgs.length, 1, '一次 Alt+单击必须且只能发送 1 次选中胶囊');
@@ -303,8 +310,29 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   assert.equal(selMsgs[0].payload.sourceLine, 42);
   assert.equal(selMsgs[0].payload.uiOwner, 'runner/atlas/wb-uiboard.mjs');
   assert.equal(selMsgs[0].payload.sliceCmd, 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-uiboard.mjs');
+}
 
-  // 3) GitHub Star 204/401 本地仿真与外部陈旧项目导入路由
+async function invokeFixtureWebRoute(tmp, method, subPath, bodyObj, routeOpts = {}) {
+  const handler = createDoneGateWebRouteHandler(tmp, routeOpts);
+  let status = 200;
+  let raw = '';
+  const fakeReq = {
+    method, url: `/donegate/api${subPath}`, headers: {},
+    on(ev, cb) {
+      if (ev === 'data' && bodyObj !== null) cb(Buffer.from(JSON.stringify(bodyObj)));
+      if (ev === 'end') cb();
+    },
+    destroy() {}
+  };
+  const fakeRes = {
+    writeHead(s) { status = s; },
+    end(chunk) { raw = chunk || ''; }
+  };
+  await handler(fakeReq, fakeRes, subPath);
+  return { status, json: raw ? JSON.parse(raw) : null };
+}
+
+async function verifyGitHubStarAndProjectImport(tmp) {
   const mockGh = http.createServer((req, res) => {
     const auth = req.headers.authorization || '';
     res.writeHead(auth === 'Bearer valid-tok' ? 204 : 401);
@@ -315,31 +343,14 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   const emptyHome = join(tmp, 'empty-home');
   mkdirSync(emptyHome, { recursive: true });
   try {
-    const invokeRoute = async (method, subPath, bodyObj, routeOpts = {}) => {
-      const handler = createDoneGateWebRouteHandler(tmp, routeOpts);
-      let status = 200;
-      let raw = '';
-      const fakeReq = {
-        method, url: `/donegate/api${subPath}`, headers: {},
-        on(ev, cb) {
-          if (ev === 'data' && bodyObj !== null) cb(Buffer.from(JSON.stringify(bodyObj)));
-          if (ev === 'end') cb();
-        },
-        destroy() {}
-      };
-      const fakeRes = { writeHead(s) { status = s; }, end(chunk) { raw = chunk || ''; } };
-      await handler(fakeReq, fakeRes, subPath);
-      return { status, json: raw ? JSON.parse(raw) : null };
-    };
-
-    const badSlug = await invokeRoute('POST', '/github/star', { repoSlug: '../evil' }, { githubApiBase: ghBase, skipGhCli: true });
+    const badSlug = await invokeFixtureWebRoute(tmp, 'POST', '/github/star', { repoSlug: '../evil' }, { githubApiBase: ghBase, skipGhCli: true });
     assert.equal(badSlug.status, 400);
-    const r401 = await invokeRoute('POST', '/github/star', { repoSlug: 'measuredco/puck' }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'bad-tok', homeDir: emptyHome });
+    const r401 = await invokeFixtureWebRoute(tmp, 'POST', '/github/star', { repoSlug: 'measuredco/puck' }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'bad-tok', homeDir: emptyHome });
     assert.equal(r401.status, 200);
     assert.equal(r401.json.ok, false);
     assert.equal(r401.json.unauthenticated, true);
 
-    const r204 = await invokeRoute('POST', '/github/star', { repoSlug: 'measuredco/puck', star: true }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'valid-tok', homeDir: emptyHome });
+    const r204 = await invokeFixtureWebRoute(tmp, 'POST', '/github/star', { repoSlug: 'measuredco/puck', star: true }, { githubApiBase: ghBase, skipGhCli: true, githubToken: 'valid-tok', homeDir: emptyHome });
     assert.equal(r204.status, 200);
     assert.equal(r204.json.ok, true);
     assert.equal(r204.json.via, 'github-rest');
@@ -350,7 +361,7 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
     mkdirSync(join(legacyDir, 'src'), { recursive: true });
     writeFileSync(join(legacyDir, 'package.json'), '{"name":"legacy-erp"}\n', 'utf8');
     writeFileSync(join(legacyDir, 'src', 'billing.mjs'), 'export const bill = () => 100;\n', 'utf8');
-    const impRes = await invokeRoute('POST', '/project/import', { targetDir: legacyDir });
+    const impRes = await invokeFixtureWebRoute(tmp, 'POST', '/project/import', { targetDir: legacyDir });
     assert.equal(impRes.status, 200);
     assert.equal(impRes.json.ok, true);
     assert.equal(impRes.json.sandbox.id, 'imp-legacy-erp');
@@ -359,6 +370,12 @@ async function verifyStarImportAestheticsAndUiBridge(tmp) {
   } finally {
     mockGh.close();
   }
+}
+
+async function verifyStarImportAestheticsAndUiBridge(tmp) {
+  verifyAestheticProposalsAndPuck(tmp);
+  verifyUiBridgeAltPick();
+  await verifyGitHubStarAndProjectImport(tmp);
 }
 
 export async function runJitAndCampaignChecks(check) {

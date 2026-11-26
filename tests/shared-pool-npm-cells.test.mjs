@@ -9,7 +9,7 @@ import {
   ensureSharedPoolSkeleton,
   inspectWorkflowDeps,
   verifyInstalledNpmPackage
-} from '../runner/dsh/workflow-deps.mjs';
+} from '../runner/dsh/deps/workflow-deps.mjs';
 
 function createFakeNpmExecutable(dir) {
   const fakeNpm = join(dir, 'fake-npm.mjs');

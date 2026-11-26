@@ -189,11 +189,22 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   if (cli.redSelfTest) process.exit(runTerminologyRedSelfTest());
   const res = scanTerminologyViolations(cli.root, { scopes: cli.scopes });
+  let strictMode = true;
+  if (process.env.DG_NODE_CONFIG) {
+    try {
+      const cfg = JSON.parse(process.env.DG_NODE_CONFIG);
+      if (cfg && cfg.strict === false) strictMode = false;
+    } catch (err) { void err; }
+  }
   if (res.exitCode !== 0) {
-    console.log(`=== 名词归一化门禁拦截（扫描 ${res.scannedFiles} 个文件，检出 ${res.violations.length} 处漂移） ===`);
+    console.log(`=== 名词归一化门禁${strictMode ? '拦截' : '预警'}（扫描 ${res.scannedFiles} 个文件，检出 ${res.violations.length} 处漂移） ===`);
     for (const v of res.violations) {
       console.log(`  ✗ [${v.ruleId}] ${v.file}:${v.line} 命中「${v.matches.join('、')}」(${v.message})`);
       console.log(`      ${v.excerpt}`);
+    }
+    if (!strictMode) {
+      console.log(`RESULT: PASS 非严格模式仅预警（${res.violations.length} 处漂移）`);
+      process.exit(0);
     }
     console.log(`RESULT: FAIL 检出 ${res.violations.length} 处未归一化名词，请统一修正后再提交`);
     process.exit(res.exitCode);

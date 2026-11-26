@@ -131,8 +131,40 @@ export function cogTokenizeJs(text) {
 function cogFindClose(tokens, openIdx, openChar, closeChar) {
   let depth = 0;
   for (let i = openIdx; i < tokens.length; i++) {
-    if (tokens[i].val === openChar) depth++;
-    else if (tokens[i].val === closeChar && --depth === 0) return i;
+    const v = tokens[i].val;
+    if (v === openChar || (openChar === '{' && v === '${')) depth++;
+    else if (v === closeChar && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function cogSkipBalancedAngles(tokens, idx) {
+  if (tokens[idx]?.val !== '<') return idx;
+  let depth = 0;
+  for (let i = idx; i < tokens.length; i++) {
+    const v = tokens[i].val;
+    if (v === '<') depth++;
+    else if (v === '>' && --depth === 0) return i + 1;
+    else if (v === ';' || v === '{' || v === '}') return idx;
+  }
+  return idx;
+}
+
+function cogSkipTsReturnType(tokens, idx) {
+  if (tokens[idx]?.val !== ':') return idx;
+  let aDepth = 0, pDepth = 0, bDepth = 0;
+  for (let i = idx + 1; i < tokens.length; i++) {
+    const v = tokens[i].val;
+    if (v === '<') aDepth++;
+    else if (v === '>' && aDepth > 0) aDepth--;
+    else if (v === '(' || v === '[') pDepth++;
+    else if ((v === ')' || v === ']') && pDepth > 0) pDepth--;
+    else if (v === '{' && aDepth === 0 && pDepth === 0 && bDepth === 0) return i;
+    else if (v === '{' || v === '${') bDepth++;
+    else if (v === '}') {
+      if (bDepth === 0) return -1;
+      bDepth--;
+    } else if (v === ';' && aDepth === 0 && pDepth === 0 && bDepth === 0) return -1;
   }
   return -1;
 }
@@ -146,14 +178,37 @@ function cogFindOpenRev(tokens, closeIdx) {
   return -1;
 }
 
+function cogFindArrowCloseParen(tokens, arrowIdx) {
+  if (tokens[arrowIdx - 1]?.val === ')') return arrowIdx - 1;
+  let depth = 0;
+  for (let i = arrowIdx - 1; i >= 0; i--) {
+    const v = tokens[i].val;
+    if (v === '>' || v === ')' || v === ']' || v === '}') depth++;
+    else if ((v === '<' || v === '(' || v === '[' || v === '{') && depth > 0) depth--;
+    else if (v === ':' && depth === 0 && tokens[i - 1]?.val === ')') return i - 1;
+    else if ((v === ';' || v === '=' || v === '=>' || v === '{') && depth === 0) break;
+  }
+  return -1;
+}
+
 function cogInferArrowName(tokens, arrowIdx) {
   if (tokens[arrowIdx - 1]?.type === 'id' && tokens[arrowIdx - 2]?.val === '=' && tokens[arrowIdx - 3]?.type === 'id') {
     return tokens[arrowIdx - 3].val;
   }
-  if (tokens[arrowIdx - 1]?.val !== ')') return '<arrow>';
-  const openP = cogFindOpenRev(tokens, arrowIdx - 1);
+  const closeP = cogFindArrowCloseParen(tokens, arrowIdx);
+  if (closeP < 0) return '<arrow>';
+  const openP = cogFindOpenRev(tokens, closeP);
   if (openP <= 0) return '<arrow>';
-  const eqIdx = tokens[openP - 1]?.val === 'async' ? openP - 2 : openP - 1;
+  let cur = openP - 1;
+  if (tokens[cur]?.val === '>') {
+    let aDepth = 0;
+    while (cur >= 0) {
+      if (tokens[cur].val === '>') aDepth++;
+      else if (tokens[cur].val === '<' && --aDepth === 0) { cur--; break; }
+      cur--;
+    }
+  }
+  const eqIdx = tokens[cur]?.val === 'async' ? cur - 1 : cur;
   return tokens[eqIdx]?.val === '=' && tokens[eqIdx - 1]?.type === 'id' ? tokens[eqIdx - 1].val : '<arrow>';
 }
 
@@ -176,11 +231,14 @@ function cogMatchFunctionAt(tokens, idx) {
   if (tk.type === 'kw' && tk.val === 'function') {
     let cur = tokens[idx + 1]?.val === '*' ? idx + 2 : idx + 1;
     const name = tokens[cur]?.type === 'id' ? tokens[cur++].val : '<anonymous>';
+    cur = cogSkipBalancedAngles(tokens, cur);
     if (tokens[cur]?.val !== '(') return null;
     const closeP = cogFindClose(tokens, cur, '(', ')');
-    if (closeP < 0 || tokens[closeP + 1]?.val !== '{') return null;
-    const closeB = cogFindClose(tokens, closeP + 1, '{', '}');
-    return closeB > closeP ? { name, headIdx: idx, bodyStart: closeP + 1, bodyEnd: closeB } : null;
+    if (closeP < 0) return null;
+    const bodyOpen = cogSkipTsReturnType(tokens, closeP + 1);
+    if (bodyOpen < 0 || tokens[bodyOpen]?.val !== '{') return null;
+    const closeB = cogFindClose(tokens, bodyOpen, '{', '}');
+    return closeB > bodyOpen ? { name, headIdx: idx, bodyStart: bodyOpen, bodyEnd: closeB } : null;
   }
   if (tk.type === 'op' && tk.val === '=>') {
     const name = cogInferArrowName(tokens, idx);
@@ -191,6 +249,24 @@ function cogMatchFunctionAt(tokens, idx) {
     return { name, headIdx: idx, bodyStart: idx + 1, bodyEnd: cogScanExprEnd(tokens, idx + 1, tokens.length - 1) };
   }
   return null;
+}
+
+const COG_METHOD_SKIP_PREV = new Set(['.', 'new', 'return', 'typeof', 'void', 'delete', 'throw', 'case', 'else', 'in', 'of']);
+
+function cogMatchClassMethodAt(tokens, idx, className) {
+  const tk = tokens[idx];
+  if (tk.type !== 'id' || tk.isProp) return null;
+  if (idx > 0 && COG_METHOD_SKIP_PREV.has(tokens[idx - 1]?.val)) return null;
+  const cur = cogSkipBalancedAngles(tokens, idx + 1);
+  if (tokens[cur]?.val !== '(') return null;
+  const closeP = cogFindClose(tokens, cur, '(', ')');
+  if (closeP < 0) return null;
+  const bodyOpen = cogSkipTsReturnType(tokens, closeP + 1);
+  if (bodyOpen < 0 || tokens[bodyOpen]?.val !== '{') return null;
+  const closeB = cogFindClose(tokens, bodyOpen, '{', '}');
+  if (closeB <= bodyOpen) return null;
+  const methodName = className ? `${className}.${tk.val}` : tk.val;
+  return { name: methodName, headIdx: idx, bodyStart: bodyOpen, bodyEnd: closeB };
 }
 
 function cogPushBodyEnd(tokens, afterIdx, limitEnd, nestEnds) {
@@ -221,6 +297,24 @@ function cogStepOperatorScore(tk, depth, st) {
   return false;
 }
 
+function cogStepDoKeyword(i, endIdx, tokens, depth, st) {
+  st.score += 1 + depth;
+  const bodyStart = i + 1;
+  let afterBody = bodyStart;
+  if (tokens[bodyStart]?.val === '{') {
+    const closeB = cogFindClose(tokens, bodyStart, '{', '}');
+    if (closeB > bodyStart) {
+      st.nestEnds.push(Math.min(closeB - 1, endIdx));
+      afterBody = closeB + 1;
+    }
+  } else {
+    const stmtEnd = cogScanExprEnd(tokens, bodyStart, endIdx);
+    st.nestEnds.push(stmtEnd);
+    afterBody = stmtEnd + 1;
+  }
+  if (tokens[afterBody]?.type === 'kw' && tokens[afterBody].val === 'while') st.doWhileSet.add(afterBody);
+}
+
 function cogStepControlKeyword(tk, i, endIdx, tokens, depth, st) {
   const v = tk.val;
   if (v === 'break' || v === 'continue') {
@@ -233,19 +327,15 @@ function cogStepControlKeyword(tk, i, endIdx, tokens, depth, st) {
     else cogPushBodyEnd(tokens, i + 1, endIdx, st.nestEnds);
     return;
   }
-  if (v === 'do') {
-    st.score += 1 + depth;
-    cogPushBodyEnd(tokens, i + 1, endIdx, st.nestEnds);
-    return;
-  }
-  if (!LOOP_OR_BRANCH_KWS.has(v)) return;
+  if (v === 'do') { cogStepDoKeyword(i, endIdx, tokens, depth, st); return; }
+  if (!LOOP_OR_BRANCH_KWS.has(v) || (v === 'while' && st.doWhileSet.has(i))) return;
   if (!st.elseIfSet.has(i)) st.score += 1 + depth;
   const cp = tokens[i + 1]?.val === '(' ? cogFindClose(tokens, i + 1, '(', ')') : -1;
   cogPushBodyEnd(tokens, cp > i ? cp + 1 : i + 1, endIdx, st.nestEnds);
 }
 
 function cogScoreTokenRange(tokens, startIdx, endIdx) {
-  const st = { nestEnds: [], elseIfSet: new Set(), score: 0, maxNest: 0, lastLogicOp: null, ternaryPending: 0 };
+  const st = { nestEnds: [], elseIfSet: new Set(), doWhileSet: new Set(), score: 0, maxNest: 0, lastLogicOp: null, ternaryPending: 0 };
   for (let i = startIdx; i <= endIdx; i++) {
     while (st.nestEnds.length > 0 && i > st.nestEnds[st.nestEnds.length - 1]) st.nestEnds.pop();
     const depth = st.nestEnds.length, tk = tokens[i];
@@ -287,20 +377,47 @@ export function cogDetectGolfing(text, tokens) {
   return issues;
 }
 
+function cogMatchTopOrMethodFn(tokens, i, braceDepth, activeClass) {
+  const tk = tokens[i];
+  if (braceDepth === 0 && ((tk.type === 'kw' && tk.val === 'function') || (tk.type === 'op' && tk.val === '=>'))) {
+    return cogMatchFunctionAt(tokens, i);
+  }
+  if (activeClass && braceDepth === activeClass.depth && tk.type === 'id') {
+    return cogMatchClassMethodAt(tokens, i, activeClass.name);
+  }
+  return null;
+}
+
+function cogStepClassBrace(tk, scanSt) {
+  if (tk.type === 'kw' && tk.val === 'class') {
+    const next = scanSt.tokens[scanSt.i + 1];
+    scanSt.pendingClass = { name: next?.type === 'id' ? next.val : '<class>' };
+  }
+  if (tk.val === '{' || tk.val === '${') {
+    scanSt.braceDepth++;
+    if (tk.val === '{' && scanSt.pendingClass) {
+      scanSt.classStack.push({ name: scanSt.pendingClass.name, depth: scanSt.braceDepth });
+      scanSt.pendingClass = null;
+    }
+  } else if (tk.val === '}' && scanSt.braceDepth > 0) {
+    const top = scanSt.classStack[scanSt.classStack.length - 1];
+    if (top && scanSt.braceDepth === top.depth) scanSt.classStack.pop();
+    scanSt.braceDepth--;
+  }
+}
+
 export function analyzeCodeComplexityAndGolfing(text) {
   const tokens = cogTokenizeJs(text), topFunctions = [];
-  let braceDepth = 0;
+  const scanSt = { tokens, i: 0, braceDepth: 0, pendingClass: null, classStack: [] };
   for (let i = 0; i < tokens.length; i++) {
-    const tk = tokens[i];
-    if (braceDepth === 0 && ((tk.type === 'kw' && tk.val === 'function') || (tk.type === 'op' && tk.val === '=>'))) {
-      const fn = cogMatchFunctionAt(tokens, i);
-      if (fn) {
-        const { score, maxNest } = cogScoreTokenRange(tokens, fn.bodyStart, fn.bodyEnd);
-        topFunctions.push({ name: fn.name, startLine: tokens[fn.headIdx].line, endLine: tokens[fn.bodyEnd].line, cognitiveComplexity: score, maxNesting: maxNest });
-      }
+    scanSt.i = i;
+    const activeClass = scanSt.classStack[scanSt.classStack.length - 1];
+    const fn = cogMatchTopOrMethodFn(tokens, i, scanSt.braceDepth, activeClass);
+    if (fn) {
+      const { score, maxNest } = cogScoreTokenRange(tokens, fn.bodyStart, fn.bodyEnd);
+      topFunctions.push({ name: fn.name, startLine: tokens[fn.headIdx].line, endLine: tokens[fn.bodyEnd].line, cognitiveComplexity: score, maxNesting: maxNest });
     }
-    if (tk.val === '{' || tk.val === '${') braceDepth++;
-    else if (tk.val === '}' && braceDepth > 0) braceDepth--;
+    cogStepClassBrace(tokens[i], scanSt);
   }
   const golfingIssues = cogDetectGolfing(text, tokens);
   const maxCognitive = topFunctions.reduce((mx, f) => Math.max(mx, f.cognitiveComplexity), 0);
@@ -311,9 +428,9 @@ const AUDIT_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.venv', 'venv', '
 const AUDIT_JS_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx']);
 
 function cogDiscoverAuditDirs(projectRoot) {
-  const selfDirs = ['runner', 'skill'].filter((d) => existsSync(join(projectRoot, d)));
-  if (selfDirs.length > 0) return { dirs: selfDirs, isDoneGateSelf: true };
-  const stdDirs = ['src', 'lib', 'app', 'packages'].filter((d) => existsSync(join(projectRoot, d)));
+  const isSelf = existsSync(join(projectRoot, 'runner', 'donegate.mjs')) && existsSync(join(projectRoot, 'skill', 'check-commit-hygiene.mjs'));
+  if (isSelf) return { dirs: ['runner', 'skill'], isDoneGateSelf: true };
+  const stdDirs = ['src', 'lib', 'app', 'packages', 'runner', 'skill'].filter((d) => existsSync(join(projectRoot, d)));
   return { dirs: stdDirs.length > 0 ? stdDirs : ['.'], isDoneGateSelf: false };
 }
 

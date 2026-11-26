@@ -14,7 +14,7 @@ import {
 } from '../runner/core/contract.mjs';
 import { computeThreeColorEdges } from '../runner/core/graph-edges.mjs';
 import { cmdInit } from '../runner/core/cmd-lifecycle.mjs';
-import { wfcCompileWorkflow, wfcProbeEnvCoeffects } from '../runner/dsh/workflow-compiler.mjs';
+import { wfcCompileWorkflow, wfcProbeEnvCoeffects } from '../runner/dsh/autopilot/workflow-compiler.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 

@@ -29,7 +29,7 @@
         { "key": "maxCommitCodeLines", "label": "单次提交净增代码硬上限", "type": "number", "min": 150, "max": 1200, "default": 450 },
         { "key": "blockEmptyCatch", "label": "拦截吞异常的空 catch", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-commit-hygiene.mjs", "args": ["--audit-repo"], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-commit-hygiene.mjs", "args": ["--audit-repo"] }
     },
     {
       "id": "pc-module-integrity",
@@ -107,7 +107,7 @@
       "configSchema": [
         { "key": "strictGate", "label": "禁止新增重复函数", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-symbols.mjs", "args": ["--gate"], "passRoot": false, "requireFile": "skill/symbols.baseline.json" }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-symbols.mjs", "args": ["--gate"], "requireFile": "skill/symbols-baseline.json" }
     },
     {
       "id": "pc-py-complexipy",

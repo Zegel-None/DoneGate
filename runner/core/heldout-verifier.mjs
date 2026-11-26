@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { frozenHashOf, sha256Short } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
 
-const HV_PROTECTED_GATE_RE = /^(?:\.githooks\/|skill\/check-[^/]+\.mjs$)/;
+const HV_PROTECTED_GATE_RE = /^(?:\.githooks\/|skill\/check-[^/]+\.mjs$|skill\/(?:hash|schema-lite)\.mjs$|runner\/core\/[^/]+\.mjs$)/;
 const HV_VALID_RISKS = new Set(['low', 'medium', 'high']);
 
 export function hvReadGitObjectAtRef(projectRoot, ref, relPath) {
@@ -16,6 +16,22 @@ export function hvReadGitObjectAtRef(projectRoot, ref, relPath) {
   });
   if (r.error || r.status !== 0) return { ok: false, content: null };
   return { ok: true, content: r.stdout || '' };
+}
+
+export function hvResolveHeldOutBaselineRef(projectRoot, id, baseRev, headRev) {
+  const hasFrozenAt = (rev) => {
+    const obj = hvReadGitObjectAtRef(projectRoot, rev, `contracts/${id}/contract.json`);
+    if (!obj.ok) return false;
+    try { return (JSON.parse(obj.content).obligations || []).some((o) => o && o.frozenHash && o.signedBy); } catch { return false; }
+  };
+  if (hasFrozenAt(baseRev)) return baseRev;
+  const logR = spawnSync('git', ['-C', projectRoot, 'log', '--reverse', '--format=%H', `${baseRev}..${headRev}`, '--', `contracts/${id}/contract.json`], { encoding: 'utf8', windowsHide: true });
+  if (logR.status === 0 && (logR.stdout || '').trim()) {
+    for (const rev of logR.stdout.trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
+      if (hasFrozenAt(rev)) return rev;
+    }
+  }
+  return baseRev;
 }
 
 export function hvLoadHeldOutContract(projectRoot, contractId, opts = {}) {
@@ -73,6 +89,25 @@ function hvCompareFrozenObligation(baseOb, curOb, fails) {
   }
 }
 
+function hvCompareContractMetadata(baseContract, curContract, fails) {
+  const baseTrack = baseContract.track || 'delivery';
+  const curTrack = curContract?.track || 'delivery';
+  if (baseTrack !== 'explore' && curTrack === 'explore') {
+    fails.push('HELDOUT_CONTRACT_TAMPERED: 严禁将已交付基线契约降级为 track=explore');
+  }
+  const baseScopes = Array.isArray(baseContract.scope) ? baseContract.scope : [];
+  const curScopeSet = new Set(Array.isArray(curContract?.scope) ? curContract.scope : []);
+  const droppedScopes = baseScopes.filter((s) => !curScopeSet.has(s));
+  if (droppedScopes.length > 0) {
+    fails.push(`HELDOUT_CONTRACT_TAMPERED: 基线契约 scope 被缩小，删除了：${droppedScopes.join(', ')}`);
+  }
+  const basePlug = typeof baseContract.execution?.preFlightPlug === 'string' ? baseContract.execution.preFlightPlug.trim() : '';
+  const curPlug = typeof curContract?.execution?.preFlightPlug === 'string' ? curContract.execution.preFlightPlug.trim() : '';
+  if (basePlug && curPlug !== basePlug) {
+    fails.push('HELDOUT_CONTRACT_TAMPERED: 基线契约的 execution.preFlightPlug 被私自修改或移除');
+  }
+}
+
 export function verifyHeldOutContract(projectRoot, contract, opts = {}) {
   const cid = contract?.id || opts.contractId || '';
   if (!cid) return { ok: true, checked: false, reason: 'missing-id', fails: [] };
@@ -85,9 +120,14 @@ export function verifyHeldOutContract(projectRoot, contract, opts = {}) {
   if (held.corrupt || !held.contract) {
     return { ok: false, checked: true, exitCode: 2, code: 'HELDOUT_CONTRACT_TAMPERED', fails: [`HELDOUT_CONTRACT_TAMPERED: 基线判据镜像损坏 (${held.source})`] };
   }
+  if (held.contract.track === 'explore') {
+    return { ok: true, checked: true, exitCode: 0, baseSource: held.source, fails: [] };
+  }
   const baseObs = Array.isArray(held.contract.obligations) ? held.contract.obligations : [];
   const curById = new Map((Array.isArray(contract?.obligations) ? contract.obligations : []).map((o) => [o.id, o]));
   const fails = [];
+  const hasAnyFrozenInBase = baseObs.some((b) => b && b.signedBy && String(b.signedBy).trim() && b.frozenHash);
+  if (hasAnyFrozenInBase) hvCompareContractMetadata(held.contract, contract, fails);
   for (const b of baseObs) {
     if (!b || !b.id) continue;
     const isFrozenInBase = Boolean(b.signedBy && String(b.signedBy).trim() && b.frozenHash);

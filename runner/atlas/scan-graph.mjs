@@ -89,26 +89,24 @@ function pickDirRepresentativeFile(dirPrefix, sourceFiles) {
   return cands.find((f) => /(?:^|\/)(?:donegate|index|main|app|contract)\.[a-z0-9]+$/i.test(f)) || cands[0];
 }
 
-function scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fileSet, addEdge) {
-  const pathTokenRe = /(?:^|['"`\s=(%~0\\/-])((?:\.\/)?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.(?:mjs|cjs|js|ts|tsx|jsx|py))\b/g;
-  for (const rel of sourceFiles) {
-    const src = fileSourceMap.get(rel) || '';
-    for (const m of src.matchAll(pathTokenRe)) {
-      const clean = m[1].replace(/\\/g, '/').replace(/^\.\//, '');
-      if (fileSet.has(clean) && clean !== rel) {
-        addEdge(rel, clean, !rel.includes('/') ? 'entry-ref' : 'script-ref', clean);
-      }
-    }
-    if (!rel.includes('/')) {
-      for (const dm of src.matchAll(/['"`]\^?([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)\/(?:\.\*)?['"`]/g)) {
-        const rep = pickDirRepresentativeFile(dm[1], sourceFiles);
-        if (rep && rep !== rel) addEdge(rel, rep, 'config-ref', `${dm[1]}/`);
-      }
+const SG_PATH_TOKEN_RE = /(?:^|['"`\s=(%~0\\/-])((?:\.\/)?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.(?:mjs|cjs|js|ts|tsx|jsx|py))\b/g;
+
+function sgScanSingleFileScriptRefs(rel, src, sourceFiles, fileSet, addEdge) {
+  const refKind = !rel.includes('/') ? 'entry-ref' : 'script-ref';
+  for (const m of src.matchAll(SG_PATH_TOKEN_RE)) {
+    const clean = m[1].replace(/\\/g, '/').replace(/^\.\//, '');
+    if (fileSet.has(clean) && clean !== rel) {
+      addEdge(rel, clean, refKind, clean);
     }
   }
+  if (rel.includes('/')) return;
+  for (const dm of src.matchAll(/['"`]\^?([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)\/(?:\.\*)?['"`]/g)) {
+    const rep = pickDirRepresentativeFile(dm[1], sourceFiles);
+    if (rep && rep !== rel) addEdge(rel, rep, 'config-ref', `${dm[1]}/`);
+  }
+}
 
-  const rootAnchor = sourceFiles.find((f) => !f.includes('/'));
-  if (!rootAnchor) return;
+function sgReadRootEntryTexts(projectRoot) {
   const rootTexts = [];
   for (const name of ['package.json', 'adapters.registry.json']) {
     const raw = readMaybe(join(projectRoot, name));
@@ -116,29 +114,41 @@ function scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fil
   }
   try {
     for (const ent of readdirSync(projectRoot, { withFileTypes: true })) {
-      if (ent.isFile() && /\.(?:cmd|sh)$/i.test(ent.name)) {
-        const raw = readMaybe(join(projectRoot, ent.name));
-        if (raw) rootTexts.push([ent.name, raw]);
-      }
+      if (!ent.isFile() || !/\.(?:cmd|sh)$/i.test(ent.name)) continue;
+      const raw = readMaybe(join(projectRoot, ent.name));
+      if (raw) rootTexts.push([ent.name, raw]);
     }
   } catch (err) {
     void err;
   }
+  return rootTexts;
+}
+
+function sgScanRootTextsRefs(rootAnchor, rootTexts, fileSet, addEdge) {
   for (const [label, txt] of rootTexts) {
-    for (const m of txt.matchAll(pathTokenRe)) {
+    for (const m of txt.matchAll(SG_PATH_TOKEN_RE)) {
       const clean = m[1].replace(/\\/g, '/').replace(/^\.\//, '');
-      if (fileSet.has(clean) && clean !== rootAnchor) addEdge(rootAnchor, clean, 'entry-ref', `${label} -> ${clean}`);
+      if (fileSet.has(clean) && clean !== rootAnchor) {
+        addEdge(rootAnchor, clean, 'entry-ref', `${label} -> ${clean}`);
+      }
     }
   }
 }
 
-export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap, entrypoints }) {
-  const fileSet = new Set(sourceFiles);
-  const aliases = loadTsPathAliases(projectRoot);
+function scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fileSet, addEdge) {
+  for (const rel of sourceFiles) {
+    const src = fileSourceMap.get(rel) || '';
+    sgScanSingleFileScriptRefs(rel, src, sourceFiles, fileSet, addEdge);
+  }
+  const rootAnchor = sourceFiles.find((f) => !f.includes('/'));
+  if (!rootAnchor) return;
+  const rootTexts = sgReadRootEntryTexts(projectRoot);
+  sgScanRootTextsRefs(rootAnchor, rootTexts, fileSet, addEdge);
+}
+
+function sgCreateEdgeCollector() {
   const edges = [];
   const edgeDedup = new Set();
-  const exportsByFile = new Map();
-
   const addEdge = (from, to, kind, detail = '') => {
     if (!from || !to || from === to) return;
     const key = `${from}->${to}:${kind}`;
@@ -146,6 +156,89 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
     edgeDedup.add(key);
     edges.push({ from, to, kind, detail });
   };
+  return { edges, addEdge };
+}
+
+function sgResolvePythonFromImport(rel, modName, dots, rawSyms, fileSet, addEdge) {
+  const hit = resolvePythonImport(rel, modName, dots, fileSet);
+  if (hit) {
+    addEdge(rel, hit, 'py-import', `import ${modName || rawSyms.trim()}`);
+    return;
+  }
+  for (const subSym of rawSyms.split(',').map((s) => s.trim().split(/\s+/)[0]).filter(Boolean)) {
+    const subSpec = modName ? `${modName}.${subSym}` : subSym;
+    const subHit = resolvePythonImport(rel, subSpec, dots, fileSet);
+    if (subHit) addEdge(rel, subHit, 'py-import', `import ${subSym}`);
+  }
+}
+
+function sgScanPythonFileImports(rel, src, fileSet, addEdge) {
+  const stripped = src.replace(/#.*$/gm, '');
+  for (const m of stripped.matchAll(/^\s*from\s+(\.*)([A-Za-z0-9_.]*)\s+import\s+([^\r\n#]+)/gm)) {
+    const dots = (m[1] || '').length;
+    const modName = m[2] || '';
+    sgResolvePythonFromImport(rel, modName, dots, m[3], fileSet, addEdge);
+  }
+  for (const m of stripped.matchAll(/^\s*import\s+([A-Za-z0-9_.,\s]+)/gm)) {
+    for (const part of m[1].split(',')) {
+      const modName = part.trim().split(/\s+/)[0];
+      const hit = resolvePythonImport(rel, modName, 0, fileSet);
+      if (hit) addEdge(rel, hit, 'py-import', `import ${modName}`);
+    }
+  }
+}
+
+function sgResolveJsImportSpec(rel, spec, aliases, fileSet) {
+  if (spec.startsWith('.')) {
+    const raw = normalize(join(dirname(rel), spec));
+    return resolveModuleCandidate(raw, fileSet);
+  }
+  for (const al of aliases) {
+    if (!spec.startsWith(al.prefix)) continue;
+    const hit = resolveModuleCandidate(al.targetPrefix + spec.slice(al.prefix.length), fileSet);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function sgScanJsFileImports(rel, src, aliases, fileSet, addEdge) {
+  const importRe = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+[^\n;]*?\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
+  for (const m of src.matchAll(importRe)) {
+    const spec = m[1].split(/[?#]/)[0].trim();
+    if (!spec) continue;
+    const hit = sgResolveJsImportSpec(rel, spec, aliases, fileSet);
+    if (hit) addEdge(rel, hit, 'js-import', spec);
+  }
+}
+
+function sgScanHttpBridgeCalls(rel, src, backendRoutes, addEdge) {
+  if (backendRoutes.length === 0) return;
+  const httpCallRe = /\b(?:fetch|axios(?:\.(?:get|post|put|delete|patch))?|request|apiClient|http(?:\.(?:get|post|put|delete|patch))?)\s*\(\s*(['"`])(\/[^'"`\s)]+)\1/g;
+  for (const hm of src.matchAll(httpCallRe)) {
+    const rawUrl = hm[2].split('?')[0].replace(/\$\{[^}]+\}/g, ':param');
+    for (const br of backendRoutes) {
+      if (br.modulePath !== rel && br.re.test(rawUrl)) {
+        addEdge(rel, br.modulePath, 'http-bridge', `${br.method} ${br.routePath}`);
+      }
+    }
+  }
+}
+
+function sgReadCodegraphCycleCount(projectRoot) {
+  const cgObsPath = join(projectRoot, '.donegate', 'adapters', 'codegraph', 'observation.json');
+  if (!existsSync(cgObsPath)) return 0;
+  const cgRes = readJsonStrict(cgObsPath);
+  if (cgRes.ok && typeof cgRes.value?.cycleCount === 'number') {
+    return cgRes.value.cycleCount;
+  }
+  return 0;
+}
+
+export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap, entrypoints }) {
+  const fileSet = new Set(sourceFiles);
+  const aliases = loadTsPathAliases(projectRoot);
+  const { edges, addEdge } = sgCreateEdgeCollector();
+  const exportsByFile = new Map();
 
   const backendRoutes = entrypoints
     .filter((e) => ['fastapi-route', 'flask-route', 'node-api'].includes(e.kind) && e.routePath)
@@ -154,71 +247,15 @@ export function scanCrossLanguageGraph(projectRoot, { sourceFiles, fileSourceMap
   for (const rel of sourceFiles) {
     const src = fileSourceMap.get(rel) || '';
     exportsByFile.set(rel, extractExportsOfFile(rel, src));
-    const ext = extname(rel).toLowerCase();
-
-    if (ext === '.py') {
-      const stripped = src.replace(/#.*$/gm, '');
-      for (const m of stripped.matchAll(/^\s*from\s+(\.*)([A-Za-z0-9_.]*)\s+import\s+([^\r\n#]+)/gm)) {
-        const dots = (m[1] || '').length;
-        const modName = m[2] || '';
-        const hit = resolvePythonImport(rel, modName, dots, fileSet);
-        if (hit) addEdge(rel, hit, 'py-import', `import ${modName || m[3].trim()}`);
-        else {
-          for (const subSym of m[3].split(',').map((s) => s.trim().split(/\s+/)[0]).filter(Boolean)) {
-            const subHit = resolvePythonImport(rel, modName ? `${modName}.${subSym}` : subSym, dots, fileSet);
-            if (subHit) addEdge(rel, subHit, 'py-import', `import ${subSym}`);
-          }
-        }
-      }
-      for (const m of stripped.matchAll(/^\s*import\s+([A-Za-z0-9_.,\s]+)/gm)) {
-        for (const part of m[1].split(',')) {
-          const modName = part.trim().split(/\s+/)[0];
-          const hit = resolvePythonImport(rel, modName, 0, fileSet);
-          if (hit) addEdge(rel, hit, 'py-import', `import ${modName}`);
-        }
-      }
+    if (extname(rel).toLowerCase() === '.py') {
+      sgScanPythonFileImports(rel, src, fileSet, addEdge);
       continue;
     }
-
-    for (const m of src.matchAll(/(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+[^\n;]*?\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g)) {
-      const spec = m[1].split(/[?#]/)[0].trim();
-      if (!spec) continue;
-      let hit = null;
-      if (spec.startsWith('.')) {
-        const raw = normalize(join(dirname(rel), spec));
-        hit = resolveModuleCandidate(raw, fileSet);
-      } else {
-        for (const al of aliases) {
-          if (spec.startsWith(al.prefix)) {
-            hit = resolveModuleCandidate(al.targetPrefix + spec.slice(al.prefix.length), fileSet);
-            if (hit) break;
-          }
-        }
-      }
-      if (hit) addEdge(rel, hit, 'js-import', spec);
-    }
-
-    if (backendRoutes.length > 0) {
-      const httpCallRe = /\b(?:fetch|axios(?:\.(?:get|post|put|delete|patch))?|request|apiClient|http(?:\.(?:get|post|put|delete|patch))?)\s*\(\s*(['"`])(\/[^'"`\s)]+)\1/g;
-      for (const hm of src.matchAll(httpCallRe)) {
-        const rawUrl = hm[2].split('?')[0].replace(/\$\{[^}]+\}/g, ':param');
-        for (const br of backendRoutes) {
-          if (br.modulePath !== rel && br.re.test(rawUrl)) {
-            addEdge(rel, br.modulePath, 'http-bridge', `${br.method} ${br.routePath}`);
-          }
-        }
-      }
-    }
+    sgScanJsFileImports(rel, src, aliases, fileSet, addEdge);
+    sgScanHttpBridgeCalls(rel, src, backendRoutes, addEdge);
   }
 
   scanScriptAndRootEntryRefs(projectRoot, sourceFiles, fileSourceMap, fileSet, addEdge);
-
-  let cycleCount = 0;
-  const cgObsPath = join(projectRoot, '.donegate', 'adapters', 'codegraph', 'observation.json');
-  if (existsSync(cgObsPath)) {
-    const cgRes = readJsonStrict(cgObsPath);
-    if (cgRes.ok && typeof cgRes.value?.cycleCount === 'number') cycleCount = cgRes.value.cycleCount;
-  }
-
+  const cycleCount = sgReadCodegraphCycleCount(projectRoot);
   return { edges, exportsByFile, cycleCount };
 }

@@ -5,14 +5,14 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { aosBuildSandboxPolicy, wrapCommandWithOsSandbox } from '../runner/dsh/autopilot-os-sandbox.mjs';
-import { runAutopilotGcAudit } from '../runner/dsh/autopilot-gc.mjs';
-import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from '../runner/dsh/autopilot-worktree.mjs';
+import { aosBuildSandboxPolicy, wrapCommandWithOsSandbox } from '../runner/dsh/autopilot/autopilot-os-sandbox.mjs';
+import { runAutopilotGcAudit } from '../runner/dsh/autopilot/autopilot-gc.mjs';
+import { cleanGitEnv, finalizeAutopilotWorktree, prepareAutopilotWorktree } from '../runner/dsh/autopilot/autopilot-worktree.mjs';
 import {
   AUTOPILOT_REVERSIBILITY_TIERS,
   buildMorningBriefMarkdown,
   classifyHumanGateReversibility
-} from '../runner/dsh/autopilot-state.mjs';
+} from '../runner/dsh/autopilot/autopilot-state.mjs';
 import { verifyHeldOutContract } from '../runner/core/heldout-verifier.mjs';
 import { frozenHashOf } from '../skill/hash.mjs';
 

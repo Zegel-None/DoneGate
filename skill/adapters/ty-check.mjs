@@ -11,7 +11,11 @@ runAdapter({
     if (rawText === null) {
       const r = ctx.runBin(['check', '--output-format', 'gitlab', targetDir]);
       if (r.error || (r.status !== 0 && r.status !== 1)) ctx.fail(3, 'ty check 执行失败：' + (r.stderr || r.error?.message));
-      rawText = r.stdout || '[]';
+      const outTrim = (r.stdout || '').trim();
+      if (!outTrim && r.status === 1) {
+        ctx.fail(3, 'ty check 异常退出 1 且未输出诊断 JSON（拒绝静默报 0 错误）：' + (r.stderr || '').slice(0, 300));
+      }
+      rawText = outTrim || '[]';
     }
     const parsed = ctx.parseJsonOrFail(rawText, 'ty');
     const diags = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.diagnostics) ? parsed.diagnostics : null);

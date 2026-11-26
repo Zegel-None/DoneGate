@@ -9,8 +9,12 @@ import { extractPythonImportTargets } from './python-imports.mjs';
 const GE3_STATIC_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
 const GE3_DYNAMIC_IMPORT_RE = /\b(?:import|require)\s*\(\s*[^'")\s]/g;
 
+const GE3_ROOT_TOOLING_CONFIG_RE = /^(?:\.dependency-cruiser\.cjs|stryker\.config\.mjs|vitest\.config\.mjs)$/i;
+
 export function collectCodeFilesForCoverage(projectRoot) {
-  const { files } = walk(projectRoot, { skipDirs: ['node_modules', '.git', '.donegate', '.deps', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'] });
+  const { files } = walk(projectRoot, {
+    skipDirs: ['node_modules', '.git', '.donegate', '.deps', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports', '参考', '归档', '设计', '证据']
+  });
   const codeExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
   const codeFiles = [];
   const testFiles = [];
@@ -20,13 +24,14 @@ export function collectCodeFilesForCoverage(projectRoot) {
     const dot = rel.lastIndexOf('.');
     const ext = dot >= 0 ? rel.slice(dot).toLowerCase() : '';
     if (!codeExts.has(ext)) continue;
-    if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z]+$/i.test(rel)) {
+    if (GE3_ROOT_TOOLING_CONFIG_RE.test(rel)) continue;
+    if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|(?:^|\/)fixtures-[^/]+\.mjs$|-fixtures\.mjs$/i.test(rel)) {
       testFiles.push(rel);
       continue;
     }
     let len = 0;
     try { len = readFileSync(f, 'utf8').length; } catch { continue; }
-    if (Math.ceil(len / 4) > 5000) {
+    if (len > 262144) {
       oversizedFiles.push(rel);
       continue;
     }
@@ -35,9 +40,21 @@ export function collectCodeFilesForCoverage(projectRoot) {
   return { codeFiles, testFiles, oversizedFiles };
 }
 
+function ge3CompanionDirForFileScope(ns) {
+  if (!ns || ns.endsWith('/')) return null;
+  const m = ns.match(/^(.+)\.(?:mjs|cjs|js|ts|tsx|jsx|py|go)$/i);
+  if (!m) return null;
+  const base = m[1].split('/').pop();
+  if (!base || base === 'index') return null;
+  return `${m[1]}/`;
+}
+
 function ge3FileMatchesScope(relFile, scopeItem) {
   const ns = scopeItem.replace(/\\/g, '/').replace(/^\.\//, '');
-  return ns.endsWith('/') ? relFile.startsWith(ns) : (relFile === ns || relFile.startsWith(ns + '/'));
+  if (ns.endsWith('/')) return relFile.startsWith(ns);
+  if (relFile === ns || relFile.startsWith(ns + '/')) return true;
+  const compDir = ge3CompanionDirForFileScope(ns);
+  return Boolean(compDir && relFile.startsWith(compDir));
 }
 
 function ge3OwnersOfFile(activeContracts, relFile) {
@@ -47,8 +64,20 @@ function ge3OwnersOfFile(activeContracts, relFile) {
 function ge3ResolveRelativeTarget(cf, spec, codeSet) {
   if (!spec.startsWith('.')) return null;
   const rawTarget = normalize(join(dirname(cf), spec)).replace(/\\/g, '/');
-  const candidates = [rawTarget, rawTarget + '.mjs', rawTarget + '.js', rawTarget + '.ts', rawTarget + '/index.mjs', rawTarget + '/index.js'];
+  const candidates = [
+    rawTarget,
+    rawTarget + '.mjs', rawTarget + '.js', rawTarget + '.cjs',
+    rawTarget + '.ts', rawTarget + '.tsx', rawTarget + '.jsx',
+    rawTarget + '/index.mjs', rawTarget + '/index.js', rawTarget + '/index.cjs',
+    rawTarget + '/index.ts', rawTarget + '/index.tsx', rawTarget + '/index.jsx'
+  ];
   return candidates.find((cand) => codeSet.has(cand)) || null;
+}
+
+function ge3StripJsComments(src) {
+  return String(src || '')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
 }
 
 function ge3AddOwnerPairs(srcOwners, dstOwners, actualPairs) {
@@ -68,12 +97,13 @@ function ge3ScanFileImports(projectRoot, cf, srcOwners, activeContracts, codeSet
     }
     return /\bimportlib\.import_module\s*\(/.test(body) ? 1 : 0;
   }
-  for (const m of body.matchAll(GE3_STATIC_IMPORT_RE)) {
+  const stripped = ge3StripJsComments(body);
+  for (const m of stripped.matchAll(GE3_STATIC_IMPORT_RE)) {
     const hit = ge3ResolveRelativeTarget(cf, m[1].split(/[?#]/)[0], codeSet);
     if (hit) ge3AddOwnerPairs(srcOwners, ge3OwnersOfFile(activeContracts, hit), actualPairs);
   }
   let invisible = 0;
-  for (const dm of body.matchAll(GE3_DYNAMIC_IMPORT_RE)) {
+  for (const dm of stripped.matchAll(GE3_DYNAMIC_IMPORT_RE)) {
     if (dm) invisible++;
   }
   return invisible;
@@ -109,11 +139,54 @@ export function computeThreeColorEdges(projectRoot, activeContracts, codeFiles) 
   return { solid, dashed, red, invisible };
 }
 
+function ge3ComputeLayerGroups(active, solidEdges) {
+  const depsById = new Map(active.map((c) => [c.id, []]));
+  for (const e of solidEdges) {
+    if (depsById.has(e.from) && depsById.has(e.to)) depsById.get(e.from).push(e.to);
+  }
+  const memo = new Map();
+  const visiting = new Set();
+  let hasCycle = false;
+  const depthOf = (id) => {
+    if (memo.has(id)) return memo.get(id);
+    if (visiting.has(id)) { hasCycle = true; return 0; }
+    visiting.add(id);
+    const deps = depsById.get(id) || [];
+    const d = deps.length === 0 ? 0 : 1 + Math.max(...deps.map(depthOf));
+    visiting.delete(id);
+    memo.set(id, d);
+    return d;
+  };
+  for (const c of active) depthOf(c.id);
+  if (hasCycle || memo.size === 0) return null;
+  const groups = new Map();
+  for (const c of active) {
+    const lv = memo.get(c.id) || 0;
+    if (!groups.has(lv)) groups.set(lv, []);
+    groups.get(lv).push(c.id);
+  }
+  return [...groups.entries()].sort((a, b) => b[0] - a[0]);
+}
+
+function ge3AppendMermaidNodes(lines, active, solidEdges) {
+  const layers = ge3ComputeLayerGroups(active, solidEdges);
+  if (!layers || layers.length <= 1) {
+    for (const c of active) lines.push(`  ${c.id}["${c.id}"]`);
+    return;
+  }
+  for (const [lv, ids] of layers) {
+    const label = lv === 0 ? 'L0 · 纯叶底座' : `L${lv}`;
+    lines.push(`  subgraph L${lv}["${label}"]`);
+    for (const id of ids.sort()) lines.push(`    ${id}["${id}"]`);
+    lines.push('  end');
+  }
+}
+
 export function cmdGraph(projectRoot) {
   const thresholds = loadThresholds(projectRoot);
   const { contracts, errors } = loadContracts(projectRoot);
   if (errors.length > 0) return { exitCode: 3, stderr: '契约读取错误，无法出图' };
-  const active = contracts.filter((c) => !c.retired);
+  const active = contracts.filter((c) => !c.retired && c.track !== 'explore');
   const { codeFiles, testFiles, oversizedFiles } = collectCodeFilesForCoverage(projectRoot);
 
   const claimed = [];
@@ -161,9 +234,9 @@ export function cmdGraph(projectRoot) {
     return { exitCode: 0, stdout: lines.join('\n'), coveragePct: pct, tier: 2, orphans, edges };
   }
 
-  lines.push('一档图（≥60%：完整图 + 三色依赖连线）');
+  lines.push('一档图（≥60%：完整分层金字塔图 + 三色依赖连线）');
   lines.push('```mermaid\nflowchart TD');
-  for (const c of active) lines.push(`  ${c.id}["${c.id}"]`);
+  ge3AppendMermaidNodes(lines, active, edges.solid);
   renderEdges(lines);
   lines.push('```');
   return { exitCode: 0, stdout: lines.join('\n'), coveragePct: pct, tier: 1, orphans, edges };

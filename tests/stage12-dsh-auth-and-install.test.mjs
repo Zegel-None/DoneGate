@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { renderDshHostIndexJs } from '../runner/dsh/bundle-templates.mjs';
-import { createDoneGateWebRouteHandler } from '../runner/dsh/host-routes.mjs';
+import { renderDshHostIndexJs } from '../runner/dsh/host/bundle-templates.mjs';
+import { createDoneGateWebRouteHandler } from '../runner/dsh/host/host-routes.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -75,14 +75,14 @@ describe('Stage 12: DSH 插件鉴权与合规安装 P0 加固', () => {
       writeFileSync(join(fakeProfile, 'package.json'), origPkg, 'utf8');
       const outDir = join(tmp, 'out-bundle');
 
-      const dry = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/install-dsh-web.mjs'), '--dry-run', '--out', outDir], {
+      const dry = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/host/install-dsh-web.mjs'), '--dry-run', '--out', outDir], {
         encoding: 'utf8',
         env: { ...process.env, DSH_HOME: fakeDshHome }
       });
       expect(dry.status).toBe(0);
       expect(existsSync(outDir)).toBe(false);
 
-      const run = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/install-dsh-web.mjs'), '--out', outDir], {
+      const run = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/host/install-dsh-web.mjs'), '--out', outDir], {
         encoding: 'utf8',
         env: { ...process.env, DSH_HOME: fakeDshHome }
       });

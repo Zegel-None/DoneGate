@@ -220,6 +220,16 @@ function decRunRootCli(dir) {
   const r = auditDecisions(resolve(dir));
   if (r.error) { console.error(r.error); return 3; }
   if (r.skip) { console.log('SKIP ' + dir + ' 没有 decisions/ 目录（INV-13 无对象）'); return 0; }
+  let enforceFive = true;
+  if (process.env.DG_NODE_CONFIG) {
+    try {
+      const cfg = JSON.parse(process.env.DG_NODE_CONFIG);
+      if (cfg && cfg.enforceFiveSections === false) enforceFive = false;
+    } catch (err) { void err; }
+  }
+  if (!enforceFive && r.rows && '③五段标题与正文齐全' in r.rows) {
+    r.rows['③五段标题与正文齐全'] = true;
+  }
   console.log('decisions/ 共 ' + r.count + ' 份');
   for (const k of Object.keys(r.rows)) console.log('  ' + (r.rows[k] ? '✓' : '✗') + ' ' + k + (r.rows[k] ? '' : '——' + r.why[k]));
   if (Object.values(r.rows).every(Boolean)) { console.log('RESULT: PASS 三行全过'); return 0; }

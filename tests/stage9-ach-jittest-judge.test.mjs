@@ -42,7 +42,9 @@ function setupContractGitRepo(tmp) {
       required: true,
       claim: 'add(2,3) 返回 5',
       observable: 'stdout 含 CALC_OK 且退出 0',
-      scope: 'src/calc.mjs'
+      scope: 'src/calc.mjs',
+      inputClasses: ['正常'],
+      servesSuccessCriterion: 's'
     }
   ];
   writeFileSync(cPath, JSON.stringify(doc, null, 2) + '\n', 'utf8');
@@ -125,7 +127,7 @@ describe('stage9: ACH semantic mutants, JiT catching tests & multi-model judge c
       gitIn(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'impl update']);
       expect(gitIn(tmp, ['status', '--porcelain']).stdout.trim()).toBe('');
 
-      const chkRes = dispatchCommand(['check', 'calc', '--skip-gates'], tmp);
+      const chkRes = dispatchCommand(['check', 'calc'], tmp);
       expect(chkRes.exitCode, chkRes.stderr || chkRes.stdout).toBe(0);
       const packRes = cmdVerifyPack(tmp, { id: 'calc', base: baseSha, escapesRegression: true });
       expect(packRes.exitCode).toBe(0);

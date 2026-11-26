@@ -142,11 +142,29 @@ function evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresho
   return { fails, stubDiff, crossScopeAllowed, crossScopeFiles };
 }
 
-function executeNodeObligations(projectRoot, id, cmdObs, thresholds, fails) {
+function nmgRunPreFlightPlug(projectRoot, contract, sanitizedEnv, fails) {
+  const plugCmd = typeof contract?.execution?.preFlightPlug === 'string' ? contract.execution.preFlightPlug.trim() : '';
+  if (!plugCmd) return { ok: true };
+  const pBans = checkCommandBans(plugCmd);
+  if (pBans.length > 0) {
+    fails.push(`preFlightPlug 触发禁令：${pBans.join('；')}`);
+    return { ok: false, unknown: 0 };
+  }
+  const pr = spawnSync(plugCmd, { cwd: projectRoot, shell: true, env: sanitizedEnv, encoding: 'utf8', timeout: 60000, windowsHide: true });
+  if (pr.error || pr.status !== 0) {
+    fails.push(`前置护栏 preFlightPlug 未通过：${plugCmd}`);
+    return { ok: false, unknown: 1 };
+  }
+  return { ok: true };
+}
+
+function executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, fails) {
   const sanitizedEnv = buildSanitizedEnv(process.env, {
     DONEGATE_MICRO_GATE: '1',
     DONEGATE_MICRO_NODE: id
-  }, { cwd: projectRoot });
+  }, { cwd: projectRoot, envPassthrough: contract?.execution?.envPassthrough });
+  const plugRes = nmgRunPreFlightPlug(projectRoot, contract, sanitizedEnv, fails);
+  if (!plugRes.ok) return { passed: 0, unknown: plugRes.unknown, passedObligations: [] };
   let passed = 0, unknown = 0;
   const passedObligations = [];
   for (const o of cmdObs) {
@@ -202,56 +220,84 @@ function persistMicroGateReceipt(projectRoot, id, currentStub, receipt) {
   }
 }
 
-export function cmdCheckNode(projectRoot, opts = {}) {
-  const t0 = Date.now();
-  const id = opts.id;
-  const abortWith = (exitCode, reason) => {
-    if (!opts.receipt) return { exitCode, stderr: reason };
-    const receipt = { schema: 'donegate-node-receipt/v1', nodeId: id || null, verdict: exitCode === 2 ? 'ERROR' : 'UNKNOWN', exitCode, fails: [reason], durationMs: Date.now() - t0 };
-    if (id && (existsSync(join(projectRoot, '.donegate')) || existsSync(join(projectRoot, 'contracts')))) {
-      const capDir = join(projectRoot, '.donegate', 'capsules');
-      mkdirSync(capDir, { recursive: true });
-      writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
-    }
-    return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
+function nmgBuildAbortResult(projectRoot, id, opts, t0, exitCode, reason) {
+  if (!opts.receipt) return { exitCode, stderr: reason };
+  const receipt = {
+    schema: 'donegate-node-receipt/v1',
+    nodeId: id || null,
+    verdict: exitCode === 2 ? 'ERROR' : 'UNKNOWN',
+    exitCode,
+    fails: [reason],
+    durationMs: Date.now() - t0
   };
+  if (id && (existsSync(join(projectRoot, '.donegate')) || existsSync(join(projectRoot, 'contracts')))) {
+    const capDir = join(projectRoot, '.donegate', 'capsules');
+    mkdirSync(capDir, { recursive: true });
+    writeFileSync(join(capDir, `${id}.receipt.json`), JSON.stringify(receipt, null, 2), 'utf8');
+  }
+  return { exitCode, receipt, stdout: `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`, stderr: '' };
+}
 
-  if (!id) return abortWith(3, '缺少目标节点标识（用法：donegate check-node <nodeId>）');
+function nmgPreflightNodeCheck(projectRoot, opts, t0) {
+  const id = opts.id;
+  const abort = (code, reason) => ({ ok: false, res: nmgBuildAbortResult(projectRoot, id, opts, t0, code, reason) });
+  if (!id) return abort(3, '缺少目标节点标识（用法：donegate check-node <nodeId>）');
   const cPath = join(projectRoot, 'contracts', id, 'contract.json');
   const cRes = readJsonStrict(cPath);
-  if (!cRes.ok) return abortWith(cRes.error === 'parse' ? 2 : 3, `读取节点契约失败：${cPath}`);
+  if (!cRes.ok) return abort(cRes.error === 'parse' ? 2 : 3, `读取节点契约失败：${cPath}`);
   const contract = cRes.value;
-
   const allObs = Array.isArray(contract.obligations) ? contract.obligations : [];
-  const cmdObs = (opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs).filter((o) => o.kind === 'command');
+  const filtered = opts.criterion ? allObs.filter((o) => o.id === opts.criterion) : allObs;
+  const cmdObs = filtered.filter((o) => o.kind === 'command');
   for (const o of cmdObs) {
     const banHits = checkCommandBans(o.command);
-    if (banHits.length > 0) return abortWith(2, `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}`);
+    if (banHits.length > 0) return abort(2, `判据 ${o.id} 触发 §四 禁令（退 2）：${banHits.join('；')}`);
   }
-
   const gitState = collectGitNodeChanges(projectRoot, opts.base);
   if (gitState.isGit && !opts.allowDirty && gitState.rawDirtyFiles.length > 0) {
-    return abortWith(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
+    return abort(3, '工作区存在未提交改动（局部调试请加 --allow-dirty，正式签收请先提交干净树）');
   }
-
   const heldOut = verifyHeldOutContract(projectRoot, contract, {
     baseRef: opts.base || gitState.baseRef,
     heldOutDir: opts.heldOutDir,
     touchedFiles: gitState.touchedFiles
   });
-  if (!heldOut.ok) return abortWith(2, heldOut.fails.join('；'));
+  if (!heldOut.ok) return abort(2, heldOut.fails.join('；'));
+  return { ok: true, id, contract, cmdObs, gitState };
+}
+
+function nmgFormatCheckNodeOutput(id, receipt, deltaFields, cmdTotal, fails, opts) {
+  if (opts.receipt) {
+    const outText = receipt.exitCode === 0 ? buildCompactPassReceiptJson(receipt) : `${JSON.stringify(receipt)}\n[exit code: ${receipt.exitCode}]`;
+    return { ...deltaFields, stdout: outText, stderr: '' };
+  }
+  const errField = fails.length > 0 ? { stderr: fails.join('；') } : {};
+  if (opts.json) return { ...deltaFields, stdout: JSON.stringify(receipt), ...errField };
+  const summaryLines = [
+    `[check-node:${id}] verdict=${receipt.verdict} passed=${receipt.passed}/${cmdTotal} exports=${receipt.exportedSymbolCount} stubHash=${receipt.stubHash} lines=${receipt.effectiveLines} (${receipt.durationMs}ms)`,
+    ...(fails.map((f) => `  ✗ ${f}`)),
+    `RECEIPT: ${JSON.stringify(receipt)}`
+  ];
+  return { ...deltaFields, stdout: summaryLines.join('\n'), ...errField };
+}
+
+export function cmdCheckNode(projectRoot, opts = {}) {
+  const t0 = Date.now();
+  const pre = nmgPreflightNodeCheck(projectRoot, opts, t0);
+  if (!pre.ok) return pre.res;
+  const { id, contract, cmdObs, gitState } = pre;
 
   const thresholds = loadThresholds(projectRoot);
   const budget = resolveSubagentBudgetProfile(thresholds, opts);
   const currentStub = buildNodeInterfaceStub(projectRoot, contract);
   const { fails, stubDiff, crossScopeAllowed, crossScopeFiles } = evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts);
-  const { passed, unknown, passedObligations } = executeNodeObligations(projectRoot, id, cmdObs, thresholds, fails);
-  const exitCode = fails.length > 0 ? (unknown > 0 && fails.length === unknown ? 3 : 1) : 0;
+  const { passed, unknown, passedObligations } = executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, fails);
+  const exitCode = fails.length === 0 ? 0 : (unknown > 0 && fails.length === unknown ? 3 : 1);
+  const verdict = exitCode === 0 ? 'PASS' : (exitCode === 1 ? 'FAIL' : 'UNKNOWN');
   const confession = hvBuildConfessionReport(opts.confession, `${id}|${currentStub.stubHash}|${exitCode}`);
 
   const receipt = {
-    schema: 'donegate-node-receipt/v1', nodeId: id, title: contract.title || id,
-    verdict: exitCode === 0 ? 'PASS' : (exitCode === 1 ? 'FAIL' : 'UNKNOWN'),
+    schema: 'donegate-node-receipt/v1', nodeId: id, title: contract.title || id, verdict,
     exitCode, passed, total: cmdObs.length, passedObligations,
     facadeMode: currentStub.facadeMode, exportedSymbolCount: currentStub.exportedSymbols.length,
     stubHash: currentStub.stubHash, stubChanged: Boolean(stubDiff.stubChanged), addedExports: stubDiff.addedExports || [],
@@ -264,15 +310,9 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   };
   persistMicroGateReceipt(projectRoot, id, currentStub, receipt);
 
-  const deltaFields = { exitCode, receipt, baseRef: gitState.baseRef, touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles };
-  if (opts.receipt) {
-    const outText = exitCode === 0 ? buildCompactPassReceiptJson(receipt) : `${JSON.stringify(receipt)}\n[exit code: ${exitCode}]`;
-    return { ...deltaFields, stdout: outText, stderr: '' };
-  }
-  if (opts.json) return { ...deltaFields, stdout: JSON.stringify(receipt), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
-  const summaryLines = [
-    `[check-node:${id}] verdict=${receipt.verdict} passed=${passed}/${cmdObs.length} exports=${receipt.exportedSymbolCount} stubHash=${receipt.stubHash} lines=${receipt.effectiveLines} (${receipt.durationMs}ms)`,
-    ...(fails.map((f) => `  ✗ ${f}`)), `RECEIPT: ${JSON.stringify(receipt)}`
-  ];
-  return { ...deltaFields, stdout: summaryLines.join('\n'), ...(fails.length > 0 ? { stderr: fails.join('；') } : {}) };
+  const deltaFields = {
+    exitCode, receipt, baseRef: gitState.baseRef,
+    touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles
+  };
+  return nmgFormatCheckNodeOutput(id, receipt, deltaFields, cmdObs.length, fails, opts);
 }

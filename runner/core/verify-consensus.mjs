@@ -17,7 +17,7 @@ export function vcValidateSemiFormalProof(itemKey, entry) {
   }
   const hasPremise = typeof p.premise === 'string' && p.premise.trim().length > 0;
   const hasTrace = (typeof p.executionTrace === 'string' && p.executionTrace.trim().length > 0) ||
-    (Array.isArray(p.executionTrace) && p.executionTrace.length > 0);
+    (Array.isArray(p.executionTrace) && p.executionTrace.some((x) => typeof x === 'string' && x.trim().length > 0));
   const hasConclusion = typeof p.conclusion === 'string' && p.conclusion.trim().length > 0;
   if (!hasPremise || !hasTrace || !hasConclusion) {
     return { ok: false, reason: `${itemKey}.proof 缺少必填半形式化字段（premise / executionTrace / conclusion）` };
@@ -27,8 +27,11 @@ export function vcValidateSemiFormalProof(itemKey, entry) {
 
 function vcInspectSingleVerdict(v, idx) {
   const label = `vote#${idx + 1}`;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) {
+    return { ok: false, exitCode: 2, stderr: `${label} 判定书顶层必须是 JSON 对象（退 2）` };
+  }
   const vals = {};
-  let isContradiction = false;
+  const contradictionItems = new Set();
   for (const k of VC_ITEMS) {
     const entry = v[k];
     const val = typeof entry === 'string' ? entry : entry?.verdict;
@@ -42,11 +45,33 @@ function vcInspectSingleVerdict(v, idx) {
       if (!String(reason).trim() || !/(缺失|缺|矛盾|不一致|对不上|不可读|材料)/.test(String(reason))) {
         return { ok: false, exitCode: 3, stderr: `${label} invalid-abstain：${k}=unknown 未指明缺失或矛盾材料（退 3）` };
       }
-      if (/(矛盾|不一致|对不上)/.test(String(reason))) isContradiction = true;
+      if (/(矛盾|不一致|对不上)/.test(String(reason))) contradictionItems.add(k);
     }
     vals[k] = { val, reason: String(reason || '') };
   }
-  return { ok: true, judge: String(v.judge || `judge-${idx + 1}`), contractId: v.contractId || '', vals, isContradiction };
+  return { ok: true, judge: String(v.judge || `judge-${idx + 1}`), contractId: String(v.contractId || '').trim(), vals, contradictionItems };
+}
+
+function vcAggregateSingleItem(k, parsed) {
+  const counts = { pass: 0, fail: 0, unknown: 0 };
+  const reasonsByVal = { pass: [], fail: [], unknown: [] };
+  let itemContradiction = false;
+  for (const p of parsed) {
+    const val = p.vals[k].val;
+    counts[val]++;
+    if (p.vals[k].reason) reasonsByVal[val].push(p.vals[k].reason);
+    if (p.contradictionItems.has(k)) itemContradiction = true;
+  }
+  if (itemContradiction && counts.unknown > 0) {
+    return { verdict: 'unknown', reason: reasonsByVal.unknown.find((r) => /(矛盾|不一致|对不上)/.test(r)) || '多模型发现材料自相矛盾' };
+  }
+  if (counts.pass > parsed.length / 2) {
+    return { verdict: 'pass', reason: `多数共识通过 (${counts.pass}/${parsed.length})` };
+  }
+  if (counts.fail > 0 && counts.fail >= counts.unknown) {
+    return { verdict: 'fail', reason: reasonsByVal.fail[0] || `多模型驳回 (${counts.fail}/${parsed.length})` };
+  }
+  return { verdict: 'unknown', reason: reasonsByVal.unknown[0] || '多模型未能对缺失材料达成多数共识' };
 }
 
 export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_ROUNDS) {
@@ -59,8 +84,14 @@ export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_
   }
 
   const parsed = [];
+  const seenFiles = new Set();
   for (let i = 0; i < list.length; i++) {
     const abs = resolve(projectRoot, list[i]);
+    const normAbs = process.platform === 'win32' ? abs.toLowerCase() : abs;
+    if (seenFiles.has(normAbs)) {
+      return { ok: false, exitCode: 2, stderr: `禁止重复提交同一份投票文件（退 2）：${list[i]}` };
+    }
+    seenFiles.add(normAbs);
     if (!existsSync(abs)) return { ok: false, exitCode: 3, stderr: `投票判定书不存在：${list[i]}` };
     const r = readJsonStrict(abs);
     if (!r.ok || !r.value) return { ok: false, exitCode: r.error === 'parse' ? 2 : 3, stderr: `投票判定书解析失败：${list[i]}` };
@@ -68,34 +99,26 @@ export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_
     if (!checked.ok) return checked;
     parsed.push(checked);
   }
+  const distinctContractIds = [...new Set(parsed.map((p) => p.contractId).filter(Boolean))];
+  if (distinctContractIds.length > 1) {
+    return { ok: false, exitCode: 2, stderr: `投票判定书 contractId 不一致（${distinctContractIds.join(' vs ')}），禁止跨契约混投（退 2）` };
+  }
 
   const merged = {
-    contractId: parsed.find((p) => p.contractId)?.contractId || '',
+    contractId: distinctContractIds[0] || '',
     judge: parsed.map((p) => p.judge).join(' + '),
     consensus: { totalVotes: parsed.length, judges: parsed.map((p) => p.judge), roundsCap: maxRounds }
   };
-  const anyContradiction = parsed.some((p) => p.isContradiction);
   for (const k of VC_ITEMS) {
-    const counts = { pass: 0, fail: 0, unknown: 0 };
-    const reasons = [];
-    for (const p of parsed) {
-      counts[p.vals[k].val]++;
-      if (p.vals[k].reason) reasons.push(p.vals[k].reason);
-    }
-    if (anyContradiction && counts.unknown > 0) {
-      merged[k] = { verdict: 'unknown', reason: reasons.find((r) => /(矛盾|不一致|对不上)/.test(r)) || '多模型发现材料自相矛盾' };
-    } else if (counts.pass > parsed.length / 2) {
-      merged[k] = { verdict: 'pass', reason: `多数共识通过 (${counts.pass}/${parsed.length})` };
-    } else if (counts.fail > 0 && counts.fail >= counts.unknown) {
-      merged[k] = { verdict: 'fail', reason: reasons[0] || `多模型驳回 (${counts.fail}/${parsed.length})` };
-    } else {
-      merged[k] = { verdict: 'unknown', reason: reasons[0] || '多模型未能对缺失材料达成多数共识' };
-    }
+    merged[k] = vcAggregateSingleItem(k, parsed);
   }
   return { ok: true, merged, judges: parsed.map((p) => p.judge) };
 }
 
 export function vcEvaluateVerdictMatrix(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) {
+    return { ok: false, exitCode: 2, stderr: '判定书顶层必须是 JSON 对象（退 2）' };
+  }
   let hasFail = false;
   let hasUnknown = false;
   let isContradiction = false;

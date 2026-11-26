@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { buildSanitizedEnv } from '../runner/core/contract.mjs';
 import { cmdCheck, cmdContractFreeze, cmdContractNew, cmdInit } from '../runner/core/commands-a.mjs';
 import { validateContractSchema } from '../skill/schema-lite.mjs';
-import { planCampaignExecutionStrategy } from '../runner/dsh/campaign-routing.mjs';
-import { approveAndResumeCampaignAutopilot, executeProjectCampaignAutopilot } from '../runner/dsh/campaign-autopilot.mjs';
+import { planCampaignExecutionStrategy } from '../runner/dsh/autopilot/campaign-routing.mjs';
+import { approveAndResumeCampaignAutopilot, executeProjectCampaignAutopilot } from '../runner/dsh/autopilot/campaign-autopilot.mjs';
 
 function makeTempProject() {
   const dir = mkdtempSync(join(tmpdir(), 'dg-s15-exec-'));

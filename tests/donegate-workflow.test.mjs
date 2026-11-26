@@ -5,15 +5,15 @@ import { tmpdir } from 'node:os';
 import { join, posix, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { buildBrowserOpenCommand } from '../runner/core/dashboard.mjs';
+import { buildBrowserOpenCommand } from '../runner/shared/browser-open.mjs';
 import { buildSanitizedEnv } from '../runner/core/isolation.mjs';
-import { resolveSafeWorkspaceFolders, startAtlasHttpServer } from '../runner/atlas/serve-atlas.mjs';
-import { checkWriteScopeMandate, collectGitDiffStats, getRunEventHub } from '../runner/dsh/workflow-runner.mjs';
+import { resolveSafeWorkspaceFolders, startAtlasHttpServer } from '../runner/dsh/host/serve-atlas.mjs';
+import { checkWriteScopeMandate, collectGitDiffStats, getRunEventHub } from '../runner/dsh/autopilot/workflow-runner.mjs';
 import { buildWinBatchSpawn } from '../skill/adapters/_shared.mjs';
 import { computeProjectStatus } from '../runner/core/state-calc.mjs';
 import { countEffectiveCodeLines } from '../skill/check-commit-hygiene.mjs';
 import { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS } from '../runner/dsh/contract.mjs';
-import { auditHtmlAntiAiSlop, recommendAestheticProposals } from '../runner/dsh/ui-aesthetics.mjs';
+import { auditHtmlAntiAiSlop, recommendAestheticProposals } from '../runner/dsh/uiboard/ui-aesthetics.mjs';
 import { buildPreCommitScript, resolveSkillPrefix } from '../skill/install-hooks.mjs';
 
 describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与跨盘符钩子', () => {
@@ -230,11 +230,18 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       const cPath = join(dir, "contracts/auth-flow/contract.json");
       const cDoc = JSON.parse(readFileSync(cPath, "utf8"));
+      cDoc.why = "确保认证闭环可用";
       cDoc.obligations = [{
         id: "ob-pass",
         kind: "command",
         command: "node -e \"process.exit(0)\"",
         expect: { exitCode: 0 },
+        required: true,
+        claim: "认证流程返回成功",
+        observable: "退出码为 0",
+        scope: "src/",
+        inputClasses: ["正常"],
+        servesSuccessCriterion: "s",
         scopeAck: { by: "业主", at: "2026-11-21T00:00:00Z" }
       }];
       writeFileSync(cPath, JSON.stringify(cDoc, null, 2));
@@ -254,7 +261,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(cs.lifecycleState).toBe("FROZEN");
       expect(cs.nextCommand).toContain("check auth-flow");
 
-      const chk = dispatchCommand(["check", "auth-flow", "--skip-gates"], dir);
+      const chk = dispatchCommand(["check", "auth-flow"], dir);
       expect(chk.exitCode).toBe(0);
       st = computeProjectStatus(dir);
       cs = st.contractSummaries.find((x) => x.id === "auth-flow");
@@ -312,12 +319,14 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
     const folders = resolveSafeWorkspaceFolders(winWorkApp, [
       winSys32,
       win32.join('..', '..', 'Secret'),
-      win32.join('..', 'SharedLib')
+      win32.join('..', 'SharedLib'),
+      win32.join('src', 'core')
     ], win32);
     expect(folders[0].blocked).toBe(true);
     expect(folders[0].absPath).toBeNull();
     expect(folders[1].blocked).toBe(true);
-    expect(folders[2].blocked).toBe(false);
+    expect(folders[2].blocked).toBe(true);
+    expect(folders[3].blocked).toBe(false);
 
     const urlCmd = buildBrowserOpenCommand('http://127.0.0.1:43180/', 'win32', win32);
     expect(urlCmd.cmd).toBe('cmd.exe');
@@ -411,9 +420,10 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
         modules: [{ name: "核心运算模块", role: "逻辑", path: "src/core/calc.mjs" }]
       };
 
+      const authHdr = { "X-DoneGate-Session-Token": srv.sessionToken };
       const rWorker = await fetch(`${srv.url}donegate/api/jit/mutate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "worker" },
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "worker", ...authHdr },
         body: JSON.stringify({ nodeId: calcNode.id, node: calcNode, removeTplIds: ["tpl-anti-slop"] })
       });
       expect(rWorker.status).toBe(403);
@@ -422,7 +432,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       const rAssign = await fetch(`${srv.url}donegate/api/jit/assign`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent", ...authHdr },
         body: JSON.stringify({ nodeId: calcNode.id, node: calcNode })
       });
       expect(rAssign.status).toBe(200);
@@ -431,7 +441,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       const rMut = await fetch(`${srv.url}donegate/api/jit/mutate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent", ...authHdr },
         body: JSON.stringify({
           nodeId: calcNode.id,
           node: calcNode,
@@ -447,7 +457,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       const rFloor = await fetch(`${srv.url}donegate/api/jit/mutate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent" },
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "super-agent", ...authHdr },
         body: JSON.stringify({ nodeId: calcNode.id, node: calcNode, removeTplIds: ["tpl-anti-slop"] })
       });
       expect(rFloor.status).toBe(409);
@@ -458,7 +468,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       // 4) 一键另存为预置工作流 -> 写入 workflows/*.workflow.json
       const rPromo = await fetch(`${srv.url}donegate/api/jit/promote-macro`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "human" },
+        headers: { "Content-Type": "application/json", "X-DoneGate-Role": "human", ...authHdr },
         body: JSON.stringify({ nodeId: calcNode.id, macroId: "calc-fx-ui-macro", name: "计算器公式汇率全栈工作流" })
       });
       expect(rPromo.status).toBe(200);
@@ -495,23 +505,24 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
     const srv = await startAtlasHttpServer(workDir, { port: 0, idleExitSec: 15 });
     try {
+      const authHdr = { 'X-DoneGate-Session-Token': srv.sessionToken };
       const rPing = await fetch(`${srv.url}donegate/api/ping`);
       const jPing = await rPing.json();
       expect(jPing.ok).toBe(true);
       expect(jPing.mode).toBe('dsh-web');
 
-      const rInit = await fetch(`${srv.url}donegate/api/project/init`, { method: 'POST', body: '{}' });
+      const rInit = await fetch(`${srv.url}donegate/api/project/init`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr }, body: '{}' });
       const jInit = await rInit.json();
       expect(jInit.ok).toBe(true);
       expect(existsSync(join(workDir, 'INTENT.md'))).toBe(true);
 
-      const rRef = await fetch(`${srv.url}donegate/api/atlas/refresh`, { method: 'POST', body: '{}' });
+      const rRef = await fetch(`${srv.url}donegate/api/atlas/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr }, body: '{}' });
       const jRef = await rRef.json();
       expect(jRef.ok).toBe(true);
       expect(existsSync(join(workDir, '.donegate/dashboard.html'))).toBe(true);
 
       const rImp = await fetch(`${srv.url}donegate/api/project/import`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr },
         body: JSON.stringify({ targetDir: extDir })
       });
       const jImp = await rImp.json();
@@ -522,7 +533,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       process.env.GITHUB_TOKEN = 'tok-401';
       const r401 = await fetch(`${srv.url}donegate/api/github/star`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr },
         body: JSON.stringify({ repoSlug: 'biomejs/biome', star: true })
       });
       const j401 = await r401.json();
@@ -531,7 +542,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
 
       process.env.GITHUB_TOKEN = 'tok-204';
       const r204 = await fetch(`${srv.url}donegate/api/github/star`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr },
         body: JSON.stringify({ repoSlug: 'lovstudio/lovinsp', star: true })
       });
       const j204 = await r204.json();
@@ -539,7 +550,7 @@ describe('DoneGate 0.4.0 复核包、全流程进度卡、完结门工作台与�
       expect(j204.via).toBe('github-rest');
 
       const rOnly = await fetch(`${srv.url}donegate/api/workflow-deps/provision`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr },
         body: JSON.stringify({
           onlyNodeId: 'n-target', spawnSubagent: true,
           pack: {

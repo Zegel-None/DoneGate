@@ -24,11 +24,11 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain('主控全局根视口（Zoom-0');
     expect(res.stdout).toContain('[01] 沟通需求与定好验收标准');
-    expect(res.stdout).toContain('[02] 界面实时预览与分派助手');
-    expect(res.stdout).toContain('物理目录：`runner/dsh/`');
+    expect(res.stdout).toContain('可视化项目看板与过夜挂机');
+    expect(res.stdout).toContain('界面实时预览与分派助手');
+    expect(res.stdout).toContain('runner/dsh/');
     expect(res.stdout).toContain('01.00 先把想法聊透、列好验收清单(1项) → 01.01 项目基础设置与测试开关');
     expect(res.stdout).not.toContain('01.00 先把想法聊透、列好验收清单(1项) → 01.02');
-    expect(res.stdout).toContain('[03] 可视化项目看板与过夜挂机');
     expect(res.stdout).toContain('四维门禁实时阈值');
 
     const jsonRes = dispatchCommand(['brief', '--json'], REPO_ROOT);
@@ -44,10 +44,10 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
   });
 
   it('donegate zoom Zoom-1 准确输出完整中文标题、实时真源字典 (rules)、测试清单与契约适配 ADR 视图', () => {
-    const dom04 = dispatchCommand(['zoom', '04'], REPO_ROOT);
-    expect(dom04.exitCode).toBe(0);
-    expect(dom04.stdout).toContain('接收指令并启动各项检查');
-    expect(dom04.stdout).not.toContain('检等环节');
+    const dom03 = dispatchCommand(['zoom', '03'], REPO_ROOT);
+    expect(dom03.exitCode).toBe(0);
+    expect(dom03.stdout).toContain('接收指令并启动各项检查');
+    expect(dom03.stdout).not.toContain('检等环节');
 
     const rulesRes = dispatchCommand(['zoom', 'rules'], REPO_ROOT);
     expect(rulesRes.exitCode).toBe(0);
@@ -59,7 +59,7 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     expect(rules.sharedPoolLayout.binDir).toBe('workflows/.deps/_shared/.bin/');
     expect(rules.declarativeWorkflows.length).toBeGreaterThanOrEqual(8);
 
-    const decRes = dispatchCommand(['zoom', '02', '--decisions'], REPO_ROOT);
+    const decRes = dispatchCommand(['zoom', '04', '--decisions'], REPO_ROOT);
     expect(decRes.exitCode).toBe(0);
     if (existsSync(join(REPO_ROOT, 'decisions'))) {
       expect(decRes.stdout).toContain('2026-11-24-04');
@@ -75,9 +75,9 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     expect(allRes.stdout).toContain('[01]');
     expect(allRes.stdout).toContain('[05]');
 
-    const wfDepsZoom = dispatchCommand(['zoom', 'runner/dsh/workflow-deps.mjs'], REPO_ROOT);
+    const wfDepsZoom = dispatchCommand(['zoom', 'runner/dsh/deps/workflow-deps.mjs'], REPO_ROOT);
     expect(wfDepsZoom.exitCode).toBe(0);
-    expect(wfDepsZoom.stdout).toContain('=== [Zoom-2 单文件图谱视图] runner/dsh/workflow-deps.mjs');
+    expect(wfDepsZoom.stdout).toContain('=== [Zoom-2 单文件图谱视图] runner/dsh/deps/workflow-deps.mjs');
     expect(wfDepsZoom.stdout).toContain('末步直读源码句柄:');
     if (resolveCbmBinary(REPO_ROOT)) {
       expect(wfDepsZoom.stdout).toContain('provisionWorkflowDeps(projectRoot, pack, opts = {})');
@@ -98,7 +98,9 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     if (existsSync(join(REPO_ROOT, 'contracts'))) {
       const brief = dispatchCommand(['brief', '--json'], REPO_ROOT);
       const contracts = JSON.parse(brief.stdout).contracts;
-      expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('atlas-workbench'));
+      expect(contracts.indexOf('shared-primitives')).toBeLessThan(contracts.indexOf('verdict-core'));
+      expect(contracts.indexOf('verdict-core')).toBeLessThan(contracts.indexOf('atlas-workbench'));
+      expect(contracts.indexOf('atlas-workbench')).toBeLessThan(contracts.indexOf('donegate-cli'));
       expect(contracts.indexOf('gate-tooling')).toBeLessThan(contracts.indexOf('publish-tooling'));
       expect(contracts[contracts.length - 1]).toBe('publish-tooling');
     }
@@ -113,7 +115,7 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     const routeImpact = dispatchCommand(['impact', '/donegate/api/uiboard/inline-edit', '--json'], REPO_ROOT);
     expect(routeImpact.exitCode).toBe(0);
     const routeData = JSON.parse(routeImpact.stdout);
-    expect(routeData.affectedProdFiles.some((p) => p.file === 'runner/dsh/ui-board-routes.mjs')).toBe(true);
+    expect(routeData.affectedProdFiles.some((p) => p.file === 'runner/dsh/host/ui-board-routes.mjs')).toBe(true);
     expect(routeData.transitiveTests.some((t) => t.file === 'tests/round3-dsh-uiboard.test.mjs')).toBe(true);
 
     // 传入目录路径不抛 EISDIR，而是展开目录下源码与配置联合分析波及面
@@ -166,13 +168,13 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
     expect(partialBatch.stdout).toContain('=== [Zoom-2 单文件图谱视图] install-dsh-web.cmd');
     expect(partialBatch.stdout).toContain('部分目标未命中告警');
 
-    const wbEvents = dispatchCommand(['zoom', 'runner/atlas/wb-events-actions.mjs', 'runner/dsh/ui-aesthetics.mjs'], REPO_ROOT);
+    const wbEvents = dispatchCommand(['zoom', 'runner/atlas/wb-events-actions.mjs', 'runner/dsh/uiboard/ui-aesthetics.mjs'], REPO_ROOT);
     expect(wbEvents.exitCode).toBe(0);
     expect(wbEvents.stdout.length).toBeLessThan(8000);
 
-    const sliceByRange = dispatchCommand(['zoom', 'runner/dsh/workflow-jit.mjs:108-120', '--source'], REPO_ROOT);
+    const sliceByRange = dispatchCommand(['zoom', 'runner/dsh/autopilot/workflow-jit.mjs:108-120', '--source'], REPO_ROOT);
     expect(sliceByRange.exitCode).toBe(0);
-    expect(sliceByRange.stdout).toContain('=== [末步源码真源直读] runner/dsh/workflow-jit.mjs:L108-L120 ===');
+    expect(sliceByRange.stdout).toContain('=== [末步源码真源直读] runner/dsh/autopilot/workflow-jit.mjs:L108-L120 ===');
     expect(sliceByRange.stdout).toContain('assertPlannerAuthority');
     if (existsSync(join(REPO_ROOT, 'decisions'))) {
       expect(sliceByRange.stdout).toContain('2026-11-24-04');
@@ -182,7 +184,7 @@ describe('DoneGate 主控聚焦驾驶舱 (CBM 单底座 + 极薄契约/ADR + 末
       const symTrace = dispatchCommand(['zoom', 'mutateComponentWorkflowJit'], REPO_ROOT);
       expect(symTrace.exitCode).toBe(0);
       expect(symTrace.stdout).toContain('CBM 开源图谱符号定位与双向 2-Hop 调用链');
-      expect(symTrace.stdout).toContain('runner/dsh/workflow-jit.mjs');
+      expect(symTrace.stdout).toContain('runner/dsh/autopilot/workflow-jit.mjs');
       expect(symTrace.stdout).toContain('handleWorkflowJitSubRoute');
       expect(symTrace.stdout).toContain('assertPlannerAuthority');
 

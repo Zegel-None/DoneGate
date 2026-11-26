@@ -7,7 +7,8 @@ import { frozenHashOf, sha256 } from '../../skill/hash.mjs';
 import { validateContractSchema } from '../../skill/schema-lite.mjs';
 import { evalStageGate } from '../../skill/check-stage.mjs';
 import { verifyHeldOutContract } from './heldout-verifier.mjs';
-import { isSelfWriterIdentity, loadContracts, loadThresholds } from './project-loader.mjs';
+import { readAndVerifyChain } from './chain.mjs';
+import { isDeliveryContract, isSelfWriterIdentity, loadContracts, loadThresholds } from './project-loader.mjs';
 
 function gc0CheckIntentHeadings(intent, fails) {
   const headings = intent ? intent.split(/\r?\n/).filter((l) => /^##\s/.test(l)).map((l) => l.trim()) : [];
@@ -107,6 +108,125 @@ export function evaluateGate1(projectRoot) {
   return { ok: true, exitCode: 0, command: cmd };
 }
 
+function gc2CheckSingleObligationFreeze(o, latestFreeze, fails) {
+  const computed = frozenHashOf(o);
+  const chainHash = latestFreeze?.criteriaHashes?.[o.id];
+  const chainMismatch = Boolean(latestFreeze && chainHash && o.frozenHash !== chainHash);
+  const notFrozen = !o.signedBy || !o.signedBy.trim() || !o.frozenHash || o.frozenHash !== computed || chainMismatch;
+  if (notFrozen) {
+    const bpHint = o.breakPatch ? '（提示：若在冻结后才补加或修改了 breakPatch，也会导致 frozenHash 变化，请重新执行 contract freeze）' : '';
+    const chainNote = chainMismatch ? '与链上冻结记录' : '';
+    fails.push(`2.2 判据 ${o.id} 未冻结或 frozenHash ${chainNote}不一致${bpHint}`);
+  } else if (isSelfWriterIdentity(o.signedBy)) {
+    fails.push(`2.2 / G-10 判据 ${o.id} 的 signedBy 不许填写方自己或 AI 代签`);
+  }
+  if (o.scopeAck && isSelfWriterIdentity(o.scopeAck.by)) {
+    fails.push(`2.2 / G-10 判据 ${o.id} 的 scopeAck.by 不许是本轮写方自己或 AI 代签`);
+  }
+}
+
+function gc2CheckFrozenObligations(projectRoot, contract, obs, fails) {
+  if (obs.length === 0) fails.push('2.1 至少有 1 条判据');
+  const chainChk = readAndVerifyChain(projectRoot);
+  const latestFreeze = chainChk.ok
+    ? chainChk.entries.filter((e) => e.kind === 'freeze' && e.contractId === contract.id).pop()
+    : null;
+  for (const o of obs) gc2CheckSingleObligationFreeze(o, latestFreeze, fails);
+  if (!obs.some((o) => o.kind === 'command')) fails.push('2.3 至少有 1 条 kind: command 判据');
+}
+
+function gc2CheckT1bRequirements(projectRoot, obs, fails) {
+  const classes = new Set(obs.flatMap((o) => (Array.isArray(o.inputClasses) ? o.inputClasses : [])));
+  for (const reqCls of ['正常', '边界', '异常']) {
+    if (!classes.has(reqCls)) fails.push(`2.4 契约层面缺少「${reqCls}」输入类别判据`);
+  }
+  const alPath = join(projectRoot, 'alignment.json');
+  if (!existsSync(alPath)) return;
+  const al = readJsonStrict(alPath);
+  if (!al.ok || !Array.isArray(al.value?.items) || al.value.items.some((x) => !x.judgment)) {
+    fails.push('2.9 alignment.json 存在未勾选项 (judgment=null)');
+  }
+}
+
+function gc2CheckTeethFreshness(obs, thresholds, fails) {
+  for (const o of obs) {
+    if (o.kind !== 'command') continue;
+    const tVal = o.teeth && (o.teeth.result || o.teeth.status);
+    if (tVal === 'ignored') continue;
+    if (!o.teeth || !o.teeth.at) {
+      fails.push(`2.5 判据 ${o.id} 缺少 teeth 实验记录`);
+      continue;
+    }
+    const age = (Date.now() - Date.parse(o.teeth.at)) / 86400000;
+    if (age > thresholds.criterionValidDays) fails.push(`2.5 判据 ${o.id} teeth 已过期`);
+  }
+}
+
+function gc2HasValidCrossSpan(o, knownIds) {
+  if (!Array.isArray(o.spansContracts) || o.spansContracts.length < 2) return false;
+  return new Set(o.spansContracts).size >= 2 && o.spansContracts.every((cid) => knownIds.has(cid));
+}
+
+function gc2CheckCrossContractSpans(projectRoot, fails) {
+  const { contracts } = loadContracts(projectRoot);
+  const activeContracts = contracts.filter(isDeliveryContract);
+  if (activeContracts.length < 2) return;
+  const knownIds = new Set(contracts.map((c) => c.id));
+  const hasProjectCross = activeContracts.some((c) => (c.obligations || []).some((o) => gc2HasValidCrossSpan(o, knownIds)));
+  if (!hasProjectCross) {
+    fails.push('2.6 项目已有 ≥2 契约但缺少指向有效契约的 spansContracts 跨契约判据');
+  }
+}
+
+function gc2CheckDiffLinesBudget(projectRoot, thresholds, fails) {
+  // 2.8 本契约的代码加行数不超过 maxDiffLines（默认 400，只数 .ts/.tsx/.js/.mjs/.cjs/.jsx）
+  const numstat = spawnSync('git', ['-C', projectRoot, 'diff', '--numstat', 'HEAD~1..HEAD'], { encoding: 'utf8' });
+  if (numstat.status !== 0 || !numstat.stdout.trim()) return;
+  let codeAdded = 0;
+  for (const line of numstat.stdout.split(/\r?\n/)) {
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const added = Number(parts[0]);
+    const filePath = parts[2].trim();
+    if (Number.isFinite(added) && /\.(ts|tsx|js|mjs|cjs|jsx|py|go|rs)$/i.test(filePath)) {
+      codeAdded += added;
+    }
+  }
+  const limit = thresholds.maxDiffLines || 400;
+  if (codeAdded > limit) {
+    fails.push(`2.8 代码加行数 ${codeAdded} 超过上限 ${limit}（文档不计）`);
+  }
+}
+
+function gc2CheckT1FullSuccessCriteria(projectRoot, obs, fails) {
+  const intent = readMaybe(join(projectRoot, 'INTENT.md')) || '';
+  for (const o of obs) {
+    if (!o.servesSuccessCriterion || !intent.includes(o.servesSuccessCriterion)) {
+      fails.push(`2.7 判据 ${o.id} 的 servesSuccessCriterion 未在 INTENT.md 原文命中`);
+    }
+  }
+}
+
+function gc2CheckIntentReviewAge(projectRoot, fails) {
+  // 失效链 G：意图复核期限（60 天）
+  const maxDays = loadThresholds(projectRoot).intentReviewDays || 60;
+  const intentBody = readMaybe(join(projectRoot, 'INTENT.md')) || '';
+  const revMatch = intentBody.match(/<!--\s*reviewed:\s*(\d{4}-\d{2}-\d{2})/i);
+  if (revMatch) {
+    const ageDays = (Date.now() - Date.parse(revMatch[1])) / 86400000;
+    if (Number.isFinite(ageDays) && ageDays > maxDays) {
+      fails.push(`链 G 意图已超过 ${maxDays} 天未复核（上次 ${revMatch[1]}）`);
+    }
+    return;
+  }
+  const gitInt = spawnSync('git', ['-C', projectRoot, 'log', '-1', '--format=%ct', '--', 'INTENT.md'], { encoding: 'utf8' });
+  if (gitInt.status !== 0 || !gitInt.stdout.trim()) return;
+  const ageDays = (Date.now() - Number(gitInt.stdout.trim()) * 1000) / 86400000;
+  if (Number.isFinite(ageDays) && ageDays > maxDays) {
+    fails.push(`链 G INTENT.md 已超过 ${maxDays} 天未复核`);
+  }
+}
+
 export function evaluateGate2(projectRoot, contract, opts = {}) {
   const errs = validateContractSchema(contract, { full: true });
   if (errs.length > 0) return { ok: false, exitCode: 2, fails: errs };
@@ -120,102 +240,19 @@ export function evaluateGate2(projectRoot, contract, opts = {}) {
 
   const obs = contract.obligations || [];
   const fails = [];
-  if (obs.length === 0) fails.push('2.1 至少有 1 条判据');
-  for (const o of obs) {
-    if (!o.signedBy || !o.signedBy.trim() || o.frozenHash !== frozenHashOf(o)) {
-      const bpHint = o.breakPatch ? '（提示：若在冻结后才补加或修改了 breakPatch，也会导致 frozenHash 变化，请重新执行 contract freeze）' : '';
-      fails.push(`2.2 判据 ${o.id} 未冻结或 frozenHash 不一致${bpHint}`);
-    } else if (isSelfWriterIdentity(o.signedBy)) {
-      fails.push(`2.2 / G-10 判据 ${o.id} 的 signedBy 不许填写方自己或 AI 代签`);
-    }
-    if (o.scopeAck && isSelfWriterIdentity(o.scopeAck.by)) {
-      fails.push(`2.2 / G-10 判据 ${o.id} 的 scopeAck.by 不许是本轮写方自己或 AI 代签`);
-    }
-  }
-  if (!obs.some((o) => o.kind === 'command')) fails.push('2.3 至少有 1 条 kind: command 判据');
-
+  gc2CheckFrozenObligations(projectRoot, contract, obs, fails);
   if (['T1b', 'T1c', 'T1完整'].includes(stage)) {
-    const classes = new Set(obs.flatMap((o) => Array.isArray(o.inputClasses) ? o.inputClasses : []));
-    for (const reqCls of ['正常', '边界', '异常']) {
-      if (!classes.has(reqCls)) fails.push(`2.4 契约层面缺少「${reqCls}」输入类别判据`);
-    }
-    const alPath = join(projectRoot, 'alignment.json');
-    if (existsSync(alPath)) {
-      const al = readJsonStrict(alPath);
-      if (!al.ok || !Array.isArray(al.value?.items) || al.value.items.some((x) => !x.judgment)) {
-        fails.push('2.9 alignment.json 存在未勾选项 (judgment=null)');
-      }
-    }
+    gc2CheckT1bRequirements(projectRoot, obs, fails);
   }
   if (['T1c', 'T1完整'].includes(stage)) {
     const thresholds = loadThresholds(projectRoot);
-    for (const o of obs) {
-      if (o.kind !== 'command') continue;
-      const tVal = o.teeth && (o.teeth.result || o.teeth.status);
-      if (tVal === 'ignored') continue;
-      if (!o.teeth || !o.teeth.at) fails.push(`2.5 判据 ${o.id} 缺少 teeth 实验记录`);
-      else {
-        const age = (Date.now() - Date.parse(o.teeth.at)) / 86400000;
-        if (age > thresholds.criterionValidDays) fails.push(`2.5 判据 ${o.id} teeth 已过期`);
-      }
-    }
-    const { contracts } = loadContracts(projectRoot);
-    const activeContracts = contracts.filter((c) => !c.retired);
-    const knownIds = new Set(contracts.map((c) => c.id));
-    if (activeContracts.length >= 2) {
-      const hasProjectCross = activeContracts.some((c) =>
-        (c.obligations || []).some((o) =>
-          Array.isArray(o.spansContracts) && o.spansContracts.length >= 2 &&
-          new Set(o.spansContracts).size >= 2 && o.spansContracts.every((cid) => knownIds.has(cid))
-        )
-      );
-      if (!hasProjectCross) {
-        fails.push('2.6 项目已有 ≥2 契约但缺少指向有效契约的 spansContracts 跨契约判据');
-      }
-    }
-    // 2.8 本契约的代码加行数不超过 maxDiffLines（默认 400，只数 .ts/.tsx/.js/.mjs/.cjs/.jsx）
-    const numstat = spawnSync('git', ['-C', projectRoot, 'diff', '--numstat', 'HEAD~1..HEAD'], { encoding: 'utf8' });
-    if (numstat.status === 0 && numstat.stdout.trim()) {
-      let codeAdded = 0;
-      for (const line of numstat.stdout.split(/\r?\n/)) {
-        const parts = line.split('\t');
-        if (parts.length < 3) continue;
-        const added = Number(parts[0]);
-        const filePath = parts[2].trim();
-        if (Number.isFinite(added) && /\.(ts|tsx|js|mjs|cjs|jsx|py|go|rs)$/i.test(filePath)) {
-          codeAdded += added;
-        }
-      }
-      if (codeAdded > (thresholds.maxDiffLines || 400)) {
-        fails.push(`2.8 代码加行数 ${codeAdded} 超过上限 ${thresholds.maxDiffLines || 400}（文档不计）`);
-      }
-    }
+    gc2CheckTeethFreshness(obs, thresholds, fails);
+    gc2CheckCrossContractSpans(projectRoot, fails);
+    gc2CheckDiffLinesBudget(projectRoot, thresholds, fails);
   }
   if (stage === 'T1完整') {
-    const intent = readMaybe(join(projectRoot, 'INTENT.md')) || '';
-    for (const o of obs) {
-      if (!o.servesSuccessCriterion || !intent.includes(o.servesSuccessCriterion)) {
-        fails.push(`2.7 判据 ${o.id} 的 servesSuccessCriterion 未在 INTENT.md 原文命中`);
-      }
-    }
+    gc2CheckT1FullSuccessCriteria(projectRoot, obs, fails);
   }
-  // 失效链 G：意图复核期限（60 天）
-  const thresholdsAll = loadThresholds(projectRoot);
-  const intentBody = readMaybe(join(projectRoot, 'INTENT.md')) || '';
-  const revMatch = intentBody.match(/<!--\s*reviewed:\s*(\d{4}-\d{2}-\d{2})/i);
-  if (revMatch) {
-    const ageDays = (Date.now() - Date.parse(revMatch[1])) / 86400000;
-    if (Number.isFinite(ageDays) && ageDays > (thresholdsAll.intentReviewDays || 60)) {
-      fails.push(`链 G 意图已超过 ${thresholdsAll.intentReviewDays || 60} 天未复核（上次 ${revMatch[1]}）`);
-    }
-  } else {
-    const gitInt = spawnSync('git', ['-C', projectRoot, 'log', '-1', '--format=%ct', '--', 'INTENT.md'], { encoding: 'utf8' });
-    if (gitInt.status === 0 && gitInt.stdout.trim()) {
-      const ageDays = (Date.now() - Number(gitInt.stdout.trim()) * 1000) / 86400000;
-      if (Number.isFinite(ageDays) && ageDays > (thresholdsAll.intentReviewDays || 60)) {
-        fails.push(`链 G INTENT.md 已超过 ${thresholdsAll.intentReviewDays || 60} 天未复核`);
-      }
-    }
-  }
+  gc2CheckIntentReviewAge(projectRoot, fails);
   return { ok: fails.length === 0, exitCode: fails.length ? 1 : 0, stage, fails };
 }

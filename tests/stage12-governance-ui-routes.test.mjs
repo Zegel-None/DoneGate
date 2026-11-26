@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { createDoneGateWebRouteHandler } from '../runner/dsh/host-routes.mjs';
-import { CONTROL_PLANE_TOKEN_HEADER } from '../runner/dsh/host-auth-guard.mjs';
+import { createDoneGateWebRouteHandler } from '../runner/dsh/host/host-routes.mjs';
+import { CONTROL_PLANE_TOKEN_HEADER } from '../runner/dsh/host/host-auth-guard.mjs';
 import { buildWbGovernancePanelScript } from '../runner/atlas/wb-governance-panel.mjs';
 import { renderAtlasWorkbenchHtml } from '../runner/atlas/render-html.mjs';
-import { buildDashboardPayload } from '../runner/core/dashboard.mjs';
+import { buildDashboardPayload } from '../runner/atlas/dashboard.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 

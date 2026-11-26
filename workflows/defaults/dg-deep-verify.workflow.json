@@ -24,7 +24,7 @@
         { "key": "tier", "label": "变异档位", "type": "enum", "options": ["A", "B", "ACH"], "default": "ACH" },
         { "key": "requireShaRestore", "label": "变异后强制校验 SHA-256 原样还原", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+      "exec": { "kind": "donegate_cmd", "args": ["status", "--json"], "requireFile": "contracts" }
     },
     {
       "id": "dv-jit-catch",
@@ -41,7 +41,7 @@
       "configSchema": [
         { "key": "enableRubFakeFilter", "label": "开启 RubFake 假阳性过滤", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-escapes.mjs", "args": [], "passRoot": false, "requireFile": "escapes.jsonl" }
     },
     {
       "id": "dv-ui-live",
@@ -61,7 +61,7 @@
         { "key": "minRubricScore", "label": "四维美学最低及格分", "type": "number", "min": 50, "max": 100, "default": 75 },
         { "key": "maxButtons", "label": "自动探针最多点击按钮数", "type": "number", "min": 2, "max": 30, "default": 8 }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+      "exec": { "kind": "donegate_cmd", "args": ["status", "--json"], "requireFile": "contracts" }
     },
     {
       "id": "dv-judge-consensus",

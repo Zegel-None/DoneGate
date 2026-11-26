@@ -2,7 +2,7 @@
 // DoneGate V4 · 十二条命令统一零依赖入口（四值退出码规范）及主控三级变焦驾驶舱、开源图谱追踪、密封契约切片与微门禁快捷入口
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
-// 快捷入口转发映射：brief & zoom -> runner/core/cockpit-commands.mjs | impact -> runner/core/impact-radar.mjs | slice & check-node -> runner/core/commands-b.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
+// 快捷入口转发映射：brief & zoom -> runner/cockpit/cockpit-commands.mjs | impact -> runner/core/impact-radar.mjs | slice & check-node -> runner/core/commands-b.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
 import Module from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -10,9 +10,11 @@ import { fileURLToPath } from 'node:url';
 
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 
-import { cmdInit, cmdContractNew, cmdContractFreeze, cmdContractPromote, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
-import { cmdCatch } from './core/teeth-ach.mjs';
-import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact, cmdBrief, cmdZoom } from './core/commands-b.mjs';
+import './atlas/dashboard.mjs';
+import { cmdInit, cmdContractNew, cmdContractFreeze, cmdContractPromote, cmdCheck, cmdTeeth, cmdRetire } from './core/index.mjs';
+import { cmdCatch } from './core/index.mjs';
+import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact } from './core/index.mjs';
+import { cmdBrief, cmdZoom } from './cockpit/cockpit-commands.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
@@ -244,7 +246,7 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   const root = resolve(typeof flags.root === 'string' ? flags.root : defaultRoot);
   const cmd = pos[0];
   if (cmd === 'flow') {
-    const cliAbs = join(dirname(fileURLToPath(import.meta.url)), 'dsh', 'governance-flow-cli.mjs');
+    const cliAbs = join(dirname(fileURLToPath(import.meta.url)), 'dsh', 'autopilot', 'governance-flow-cli.mjs');
     const r = spawnSync(process.execPath, [cliAbs, ...argv.slice(1), '--root', root], { encoding: 'utf8', windowsHide: true });
     return {
       exitCode: typeof r.status === 'number' ? r.status : 3,

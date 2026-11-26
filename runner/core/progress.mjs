@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 import { computeProjectStatus } from './gates.mjs';
 import { checkCommandBans } from './isolation.mjs';
-import { exportDashboardHtml } from './dashboard.mjs';
+import { invokeDashboardExporter } from './dashboard-hook.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readMaybe } from '../../skill/io.mjs';
 import { gdCollectDisabledIntegrityRules, gdFormatIntegrityBannerText } from './governance-disclosure.mjs';
@@ -13,6 +13,7 @@ const PRG_NOTE_TAGS = { good: '补充·已验真', alert: '告警', worry: '报�
 const PRG_OB_ICONS = { 通过: '✅', 未通过: '❌', 过期: '⚠️', 无法判断: '⚠️' };
 const NOTE_PLACEHOLDERS = new Set(['todo', 'tbd', 'ok', 'done', 'pass', 'none', 'na', 'n/a', '无', '暂无', '没问题', '待补充']);
 const prgStepIcon = (done, partial) => (done ? '✅' : (partial ? '🔄' : '⏳'));
+const prgBoolIcon = (ok) => (ok ? '✅' : '⏳');
 
 function makeBar(pct) {
   const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
@@ -22,7 +23,6 @@ function summarizeObligationLabel(o) {
   const raw = (o.claim || o.id || '').trim().replace(/\s+/g, ' ');
   return raw.length > 36 ? raw.slice(0, 35) + '…' : raw;
 }
-
 export function checkNoteTextAntiLie(title, detail = '') {
   const t = String(title || '').trim(), d = String(detail || '').trim(), combined = `${t}\n${d}`;
   if (!t || t.length < 4) return { ok: false, exitCode: 1, reason: 'title 至少 4 个字符，不许写空话' };
@@ -190,7 +190,9 @@ function prgSummarizeContractProgress(c, rawMap, chainEntries) {
   const passedClean = obs.filter((o) => o.state === '通过').length;
   const cmdObs = obs.filter((o) => o.kind === 'command' && o.teeth !== 'ignored');
   const teethDone = cmdObs.filter((o) => o.teeth === 'killed').length;
-  const verifiedPass = chainEntries.some((e) => e.kind === 'verify-result' && e.contractId === c.id && e.result === 'pass');
+  const latestFreeze = chainEntries.filter((e) => e.kind === 'freeze' && e.contractId === c.id).pop();
+  const minSeq = latestFreeze?.seq || 0;
+  const verifiedPass = chainEntries.some((e) => e.kind === 'verify-result' && e.contractId === c.id && e.result === 'pass' && (e.seq || 0) > minSeq);
   const ratio = totalObs === 0 ? 0 : (frozen ? 0.2 : 0) + 0.8 * (passedClean / totalObs);
   return { id: c.id, title: c.title || c.id, state: c.state, frozen, passedClean, totalObs, cmdCount: cmdObs.length, teethDone, verifiedPass, cleared: c.cleared, obligations: obs, ratio };
 }
@@ -219,8 +221,8 @@ export function computeProgressSnapshot(projectRoot, precomputedSt = null) {
   const hasInit = existsSync(join(projectRoot, 'INTENT.md')) && existsSync(join(projectRoot, 'CONSTRAINTS.md')) && existsSync(join(projectRoot, '.donegate', 'chain.jsonl'));
   const intentText = readMaybe(join(projectRoot, 'INTENT.md')) || '';
   const st = precomputedSt || (hasInit ? computeProjectStatus(projectRoot) : null);
-  const activeContracts = st ? st.contractSummaries.filter((c) => !c.retired) : [];
-  const rawMap = new Map((st ? st.contracts.filter((c) => !c.retired) : []).map((c) => [c.id, c]));
+  const activeContracts = st ? st.contractSummaries.filter((c) => !c.retired && c.track !== 'explore') : [];
+  const rawMap = new Map((st ? st.contracts.filter((c) => !c.retired && c.track !== 'explore') : []).map((c) => [c.id, c]));
   const chainEntries = st && st.chainRes?.ok ? st.chainRes.entries : [];
   const s1Item1 = hasInit, s1Item2 = activeContracts.length > 0 || (hasInit && !intentText.includes('（请填写一句话说明为什么做）'));
   const contractProgress = activeContracts.map((c) => prgSummarizeContractProgress(c, rawMap, chainEntries));
@@ -283,14 +285,14 @@ function prgAppendStage2Lines(lines, snap, cTotal, cDoneCount, customNotes, hasS
 }
 function prgAppendTwoItemStage(lines, cfg, customNotes, hasStageNotes, activeStage) {
   const quiet = !hasStageNotes(cfg.no) && activeStage !== cfg.no;
-  if (cfg.done === 2 && quiet) return void lines.push(`阶段 ${cfg.no}：${cfg.title}（✅ 2/2 完成）`);
+  if (cfg.done === 2 && cfg.canCollapse !== false && quiet) return void lines.push(`阶段 ${cfg.no}：${cfg.title}（✅ 2/2 完成）`);
   if (cfg.idle && quiet) return void lines.push(`阶段 ${cfg.no}：${cfg.title}（⏳ 待开始 0/2）`);
   lines.push(`阶段 ${cfg.no}：${cfg.title}（${cfg.headIcon} ${cfg.done}/2）`, cfg.line1, cfg.line2);
   appendStageNotes(lines, cfg.no, customNotes);
 }
 function prgAppendDashboardHint(lines, projectRoot, statusData, totalPct, focusContractId, desc) {
   if (!existsSync(join(projectRoot, '.donegate'))) return;
-  const dr = exportDashboardHtml(projectRoot, join(projectRoot, '.donegate', 'dashboard.html'), { statusData, totalPct });
+  const dr = invokeDashboardExporter(projectRoot, join(projectRoot, '.donegate', 'dashboard.html'), { statusData, totalPct });
   if (dr.ok) lines.push(`全景看板：.donegate/dashboard.html${focusContractId ? `#focus=${focusContractId}` : ''}（${desc}）`);
 }
 export function renderProgressBlock(projectRoot, opts = {}) {
@@ -301,30 +303,29 @@ export function renderProgressBlock(projectRoot, opts = {}) {
   const govBanner = gdFormatIntegrityBannerText(gdCollectDisabledIntegrityRules(projectRoot));
   if (govBanner) lines.push(govBanner);
   if (opts.headline) lines.push(opts.headline.replaceAll('{{PCT}}', `${snap.totalPct}% ${snap.bar}`));
-  const s1Done = (snap.s1Item1 ? 1 : 0) + (snap.s1Item2 ? 1 : 0), cTotal = snap.contractProgress.length;
-  if (s1Done === 2 && cTotal > 0 && !hasStageNotes(1) && opts.activeStage !== 1) {
-    lines.push('阶段 1：立项与规划（✅ 2/2 完成）');
-  } else {
-    lines.push(`阶段 1：立项与规划（${s1Done === 2 ? '✅' : '🔄'} ${s1Done}/2）`);
-    lines.push(`  1-1 ${snap.s1Item1 ? '✅' : '⏳'} 目标与禁区文件已初始化（INTENT / CONSTRAINTS / escapes）`);
-    lines.push(`  1-2 ${snap.s1Item2 ? '✅' : '⏳'} 拆出验收模块（当前 ${cTotal} 个）`);
-    appendStageNotes(lines, 1, customNotes);
-  }
+  const s1Done = Number(snap.s1Item1) + Number(snap.s1Item2);
+  const cTotal = snap.contractProgress.length;
+  prgAppendTwoItemStage(lines, {
+    no: 1, title: '立项与规划', headIcon: prgStepIcon(s1Done === 2, true), done: s1Done, canCollapse: cTotal > 0, idle: false,
+    line1: `  1-1 ${prgBoolIcon(snap.s1Item1)} 目标与禁区文件已初始化（INTENT / CONSTRAINTS / escapes）`,
+    line2: `  1-2 ${prgBoolIcon(snap.s1Item2)} 拆出验收模块（当前 ${cTotal} 个）`
+  }, customNotes, hasStageNotes, opts.activeStage);
   const cDoneCount = snap.contractProgress.filter(prgIsContractDone).length;
   prgAppendStage2Lines(lines, snap, cTotal, cDoneCount, customNotes, hasStageNotes, opts);
   const teethDone = snap.totalCmds > 0 && snap.totalTeeth === snap.totalCmds;
-  const s3Done = (teethDone ? 1 : 0) + (snap.adapterCount > 0 ? 1 : 0);
+  const s3Done = Number(teethDone) + Number(snap.adapterCount > 0);
   prgAppendTwoItemStage(lines, {
     no: 3, title: '防假绿与体检', headIcon: '🔄', done: s3Done,
     idle: cTotal === 0 || (cDoneCount === 0 && snap.totalTeeth === 0 && snap.adapterCount === 0),
     line1: `  3-1 ${prgStepIcon(teethDone, snap.totalTeeth > 0)} 变异验证防假绿（${snap.totalTeeth}/${snap.totalCmds} 项已检出改坏代码）`,
-    line2: `  3-2 ${snap.adapterCount > 0 ? '✅' : '⏳'} 影响面与外部工具体检（已入账 ${snap.adapterCount} 项）`
+    line2: `  3-2 ${prgBoolIcon(snap.adapterCount > 0)} 影响面与外部工具体检（已入账 ${snap.adapterCount} 项）`
   }, customNotes, hasStageNotes, opts.activeStage);
-  const allVerified = cTotal > 0 && snap.verifiedCount === cTotal, s4Done = (allVerified ? 1 : 0) + (snap.hasHandover ? 1 : 0);
+  const allVerified = cTotal > 0 && snap.verifiedCount === cTotal;
+  const s4Done = Number(allVerified) + Number(snap.hasHandover);
   prgAppendTwoItemStage(lines, {
-    no: 4, title: '独立复核与收尾', headIcon: s4Done === 2 ? '✅' : '🔄', done: s4Done, idle: s4Done === 0 && cDoneCount === 0,
+    no: 4, title: '独立复核与收尾', headIcon: prgStepIcon(s4Done === 2, true), done: s4Done, idle: s4Done === 0 && cDoneCount === 0,
     line1: `  4-1 ${prgStepIcon(allVerified, snap.verifiedCount > 0)} 独立 AI 盲审通过（${snap.verifiedCount}/${cTotal} 模块）`,
-    line2: `  4-2 ${snap.hasHandover ? '✅' : '⏳'} 交接包生成与收尾归档`
+    line2: `  4-2 ${prgBoolIcon(snap.hasHandover)} 交接包生成与收尾归档`
   }, customNotes, hasStageNotes, opts.activeStage);
   prgAppendDashboardHint(lines, projectRoot, snap.statusData, snap.totalPct, opts.focusContractId, '双击用浏览器打开：大白话查看全部功能、前后配合与支线进度');
   return lines.join('\n');

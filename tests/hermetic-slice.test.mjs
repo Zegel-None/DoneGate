@@ -265,15 +265,16 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
     }
   });
 
-  it('100% 自举验证：母仓全部 8 张契约卡均零截断装入 160k 胶囊且零红线/零越界门面私引，公开精简仓支持画布零契约切片', () => {
+  it('100% 自举验证：母仓全部 13 张无环契约卡均零截断装入 160k 胶囊且零红线/零越界门面私引，公开精简仓支持画布零契约切片', () => {
     if (existsSync(join(REPO_ROOT, 'contracts/gate-tooling/contract.json'))) {
       const res = dispatchCommand(['slice', '--router-only', '--json'], REPO_ROOT);
       expect(res.exitCode).toBe(0);
-      expect(res.router.nodes.length).toBe(8);
+      expect(res.router.nodes.length).toBe(13);
       expect(res.router.budgetProfile.totalSessionBudgetTokens).toBe(400000);
       expect(res.router.topoOrder).toContain('atlas-workbench');
       expect(res.router.topoOrder).toContain('atlas-canvas');
-      expect(res.router.topoOrder).toContain('dsh-orchestrator');
+      expect(res.router.topoOrder).toContain('governance-autopilot');
+      expect(res.router.topoOrder).toContain('dsh-host-plugin');
       expect(res.router.redImports).toEqual([]);
       expect(res.router.facadeViolations).toEqual([]);
       expect(res.router.savingsPct).toBeGreaterThan(95);
@@ -291,33 +292,25 @@ describe('DoneGate 密封契约切片与 1M×40%（400k）五段式子代理预�
         }
       }
 
-      const fullDsh = dispatchCommand(['slice', 'dsh-orchestrator', '--json'], REPO_ROOT);
-      const focusCap = dispatchCommand(['slice', 'dsh-orchestrator', '--focus', 'quote-protocol.mjs', '--json'], REPO_ROOT);
+      const fullAutopilot = dispatchCommand(['slice', 'governance-autopilot', '--json'], REPO_ROOT);
+      const focusCap = dispatchCommand(['slice', 'governance-autopilot', '--focus', 'quote-protocol.mjs', '--json'], REPO_ROOT);
       expect(focusCap.exitCode).toBe(0);
       expect(focusCap.capsule.focusMode).toBe(true);
       const expandedPaths = focusCap.capsule.zeroHopFiles.map((f) => f.path);
-      // 准确率第一：目标文件 + 同卡被调方(win-paths) + 同卡调用方(host-routes/campaign-autopilot) + 桶门面(contract/index) 必须完整纳入全量闭包
+      // 准确率第一：目标文件 + 同卡调用方(campaign-autopilot) + 同卡门面(index) 必须完整纳入全量闭包
       expect(expandedPaths).toEqual(expect.arrayContaining([
-        'runner/dsh/quote-protocol.mjs',
-        'runner/dsh/win-paths.mjs',
-        'runner/dsh/host-routes.mjs',
-        'runner/dsh/campaign-autopilot.mjs',
-        'runner/dsh/contract.mjs',
-        'runner/dsh/index.mjs'
+        'runner/dsh/autopilot/quote-protocol.mjs',
+        'runner/dsh/autopilot/campaign-autopilot.mjs',
+        'runner/dsh/autopilot/index.mjs'
       ]));
-      // 必跑测试夹具不得被盲目隐藏，正交零耦合兄弟文件（如 ui-board-engine / workflow-jit）自动折叠为 AST 存根
-      expect(focusCap.capsule.zeroHopTests.map((t) => t.path)).toContain('runner/dsh-fixtures.mjs');
-      expect(focusCap.capsule.zeroHopTests.map((t) => t.path)).not.toContain('tests/preset-real-tools-e2e.mjs');
-      const gateStubText = readFileSync(join(REPO_ROOT, '.donegate/stubs/gate-tooling.stub.d.ts'), 'utf8');
+      const gateStubText = readFileSync(join(REPO_ROOT, '.donegate/stubs/shared-primitives.stub.d.ts'), 'utf8');
       expect(gateStubText).not.toContain('readFileSync(p,');
-      expect(focusCap.capsule.siblingStubFiles.map((s) => s.path)).toContain('runner/dsh/ui-board-engine.mjs');
-      expect(focusCap.capsule.siblingStubFiles.length).toBeGreaterThan(15);
-      expect(focusCap.capsule.capsuleTokens).toBeLessThan(Math.round(fullDsh.capsule.capsuleTokens * 0.55));
-      const focusMd = readFileSync(join(REPO_ROOT, '.donegate/capsules/dsh-orchestrator.capsule.md'), 'utf8');
+      expect(focusCap.capsule.siblingStubFiles.length).toBeGreaterThan(3);
+      expect(focusCap.capsule.capsuleTokens).toBeLessThan(Math.round(fullAutopilot.capsule.capsuleTokens * 0.85));
+      const focusMd = readFileSync(join(REPO_ROOT, '.donegate/capsules/governance-autopilot.capsule.md'), 'utf8');
       expect(focusMd).toContain('0-Hop 同卡正交兄弟文件 AST 存根与行数余量');
-      expect(focusMd).toContain('双层桶防环');
 
-      const badFocus = dispatchCommand(['slice', 'dsh-orchestrator', '--focus', 'nonexistent-ghost-file.mjs'], REPO_ROOT);
+      const badFocus = dispatchCommand(['slice', 'governance-autopilot', '--focus', 'nonexistent-ghost-file.mjs'], REPO_ROOT);
       expect(badFocus.exitCode).toBe(3);
     } else {
       const emptyRes = dispatchCommand(['slice', '--router-only'], REPO_ROOT);

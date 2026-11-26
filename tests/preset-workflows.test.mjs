@@ -5,10 +5,10 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildProjectAtlas } from '../runner/atlas/assemble-atlas.mjs';
-import { inspectWorkflowDeps, provisionWorkflowDeps } from '../runner/dsh/workflow-deps.mjs';
-import { executeBrickGateNode } from '../runner/dsh/brick-exec.mjs';
-import { executeDeterministicWorkflowRun, preflightWorkflowPack } from '../runner/dsh/workflow-runner.mjs';
-import { approveAutopilotHumanGate, AUTOPILOT_STATES } from '../runner/dsh/autopilot-state.mjs';
+import { inspectWorkflowDeps, provisionWorkflowDeps } from '../runner/dsh/deps/workflow-deps.mjs';
+import { executeBrickGateNode } from '../runner/dsh/autopilot/brick-exec.mjs';
+import { executeDeterministicWorkflowRun, preflightWorkflowPack } from '../runner/dsh/autopilot/workflow-runner.mjs';
+import { approveAutopilotHumanGate, AUTOPILOT_STATES } from '../runner/dsh/autopilot/autopilot-state.mjs';
 import { verifyClaimInMemory } from '../skill/check-declarations.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -239,8 +239,8 @@ describe('DoneGate 预置十阶段工作流、懒加载依赖门禁与适配器�
   });
 
   it('过夜挂机状态机支持 POST /donegate/api/autopilot/stop 落盘停止、导出三重熔断枚举与 --resume 恢复', async () => {
-    const { AUTOPILOT_BREAKER_CODES, createInitialCheckpoint, resumeAutopilotBreaker, tripAutopilotBreaker } = await import('../runner/dsh/autopilot-state.mjs');
-    const { createDoneGateWebRouteHandler } = await import('../runner/dsh/host-routes.mjs');
+    const { AUTOPILOT_BREAKER_CODES, createInitialCheckpoint, resumeAutopilotBreaker, tripAutopilotBreaker } = await import('../runner/dsh/autopilot/autopilot-state.mjs');
+    const { createDoneGateWebRouteHandler } = await import('../runner/dsh/host/host-routes.mjs');
     const tmp = mkdtempSync(join(tmpdir(), 'dg-ap-stop-'));
     try {
       expect(AUTOPILOT_BREAKER_CODES.MAX_LOOPS_EXCEEDED).toBe('MAX_LOOPS_EXCEEDED');
@@ -259,7 +259,7 @@ describe('DoneGate 预置十阶段工作流、懒加载依赖门禁与适配器�
       expect(parsed.autopilot.state).toBe(AUTOPILOT_STATES.STOPPED);
 
       tripAutopilotBreaker(tmp, cp, { code: AUTOPILOT_BREAKER_CODES.ENV_OR_PROTOCOL_FAULT, nodeId: 'n1', reason: 'env fault' });
-      const cliRes = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/autopilot-state.mjs'), '--resume', '--run-id', 'run-stop-1', '--root', tmp], { encoding: 'utf8' });
+      const cliRes = spawnSync(process.execPath, [join(REPO_ROOT, 'runner/dsh/autopilot/autopilot-state.mjs'), '--resume', '--run-id', 'run-stop-1', '--root', tmp], { encoding: 'utf8' });
       expect(cliRes.status).toBe(0);
       const resumed = resumeAutopilotBreaker(tmp, { runId: 'run-stop-1' });
       expect(resumed.ok).toBe(true);

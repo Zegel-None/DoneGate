@@ -93,24 +93,41 @@ function leCheckSyntax(abs, rel, raw, fails) {
   }
 }
 
-function leCheckScaleAndComplexity(rel, raw, isTestOrFixture, budgets, warnings, fails) {
-  const lineMetrics = countEffectiveCodeLines(raw);
+function leLoadHeadComplexityMap(root, rel) {
+  const r = spawnSync('git', ['-C', root, 'show', `HEAD:${rel}`], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, windowsHide: true });
+  if (r.status !== 0 || !r.stdout) return null;
+  const prev = analyzeCodeComplexityAndGolfing(r.stdout);
+  const map = new Map();
+  for (const fn of prev.functions) map.set(fn.name, Math.max(map.get(fn.name) || 0, fn.cognitiveComplexity));
+  return map;
+}
+
+function leCheckScaleAndComplexity(root, rel, raw, isTestOrFixture, budgets, warnings, fails, opts = {}) {
+  const lineMetrics = countEffectiveCodeLines(raw, { filePath: rel });
   const rawLineCount = raw.split(/\r?\n/).length;
-  if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && rawLineCount > 350) {
-    fails.push(`M6 核心子模块超行数硬顶 (${rel})：物理行数 ${rawLineCount} > 350 行上限（请拆分子模块）`);
+  const maxCoreLines = Number(budgets.maxCoreFileLines) || 350;
+  if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && rawLineCount > maxCoreLines) {
+    fails.push(`M6 核心子模块超行数硬顶 (${rel})：物理行数 ${rawLineCount} > ${maxCoreLines} 行上限（请拆分子模块）`);
   }
   if (!isTestOrFixture && (lineMetrics.effectiveLines > budgets.maxEffectiveFileLines || lineMetrics.rawLines > budgets.maxFileLines)) {
     fails.push(`C1 单文件规模超限 (${rel})：有效代码 ${lineMetrics.effectiveLines} 行（总 ${lineMetrics.rawLines} 行）> 上限 ${budgets.maxEffectiveFileLines} / ${budgets.maxFileLines}`);
   }
   if (isTestOrFixture || !JS_LIKE_RE.test(rel)) return lineMetrics;
   const cx = analyzeCodeComplexityAndGolfing(raw);
+  const hasOverMax = cx.functions.some((fn) => fn.cognitiveComplexity > budgets.maxCognitiveComplexity);
+  const headCxMap = (opts.ratchetComplexity && hasOverMax) ? leLoadHeadComplexityMap(root, rel) : null;
   for (const g of cx.golfingIssues) {
     const desc = g.kind === 'dense-statements' ? `单行挤压 ${g.count} 条语句` : `单行嵌套 ${g.count} 重三元`;
     fails.push(`C4g 反压行拦截 (${rel}:L${g.line})：${desc} → ${g.preview}`);
   }
   for (const fn of cx.functions) {
     if (fn.cognitiveComplexity > budgets.maxCognitiveComplexity) {
-      fails.push(`C1d 认知复杂度超限 (${rel} · ${fn.name} L${fn.startLine}-L${fn.endLine})：${fn.cognitiveComplexity} > ${budgets.maxCognitiveComplexity}`);
+      const prevScore = headCxMap ? headCxMap.get(fn.name) : undefined;
+      if (prevScore !== undefined && prevScore > budgets.maxCognitiveComplexity) {
+        warnings.push(`C1d 存量高复杂度函数 (${rel} · ${fn.name} L${fn.startLine})：${fn.cognitiveComplexity}（HEAD 原为 ${prevScore}，建议择机拆分）`);
+      } else {
+        fails.push(`C1d 认知复杂度超限 (${rel} · ${fn.name} L${fn.startLine}-L${fn.endLine})：${fn.cognitiveComplexity} > ${budgets.maxCognitiveComplexity}`);
+      }
     } else if (fn.cognitiveComplexity > budgets.warnCognitiveComplexity) {
       warnings.push(`C1d 认知复杂度接近上限 (${rel} · ${fn.name} L${fn.startLine})：${fn.cognitiveComplexity}（建议 <= ${budgets.warnCognitiveComplexity}）`);
     }
@@ -170,14 +187,28 @@ function leReadBalancedFnChunk(lines, startIdx) {
   return chunk.join('\n');
 }
 
+function leCountUnescapedBackticks(line) {
+  let count = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '\\') { i++; continue; }
+    if (line[i] === '`') count++;
+  }
+  return count;
+}
+
 function leCollectLocalTopFunctions(raw) {
   const localFns = new Map();
   const lines = raw.split(/\r?\n/);
+  let inTpl = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
-    if (m && !m[1].startsWith('buildWb')) {
-      localFns.set(m[1], { line: i + 1, body: leReadBalancedFnChunk(lines, i) });
+    const line = lines[i];
+    if (!inTpl) {
+      const m = line.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
+      if (m && !m[1].startsWith('buildWb')) {
+        localFns.set(m[1], { line: i + 1, body: leReadBalancedFnChunk(lines, i) });
+      }
     }
+    if (leCountUnescapedBackticks(line) % 2 === 1) inTpl = !inTpl;
   }
   return localFns;
 }
@@ -203,7 +234,7 @@ function leCheckInlineScriptRegistry(rel, raw, fails) {
   }
 }
 
-export function lintEditedFiles(projectRoot, targetFiles = []) {
+export function lintEditedFiles(projectRoot, targetFiles = [], opts = {}) {
   const t0 = Date.now();
   const root = resolve(projectRoot);
   if (!existsSync(root) || targetFiles.length === 0) {
@@ -228,7 +259,7 @@ export function lintEditedFiles(projectRoot, targetFiles = []) {
       if (dv.missing.length > 0) fails.push(`C4d 决策记录缺少 §2.5 必填章节 (${rel})：缺 [${dv.missing.join('、')}]`);
       if (dv.empty.length > 0) fails.push(`C4d 决策记录存在空壳章节 (${rel})：空 [${dv.empty.join('、')}]`);
     }
-    const lm = leCheckScaleAndComplexity(rel, raw, isTestOrFixture, budgets, warnings, fails);
+    const lm = leCheckScaleAndComplexity(root, rel, raw, isTestOrFixture, budgets, warnings, fails, opts);
     if (JS_LIKE_RE.test(rel)) {
       leCheckLineRules(rel, raw, isTestOrFixture, fails);
       leCheckInlineScriptRegistry(rel, raw, fails);
@@ -264,7 +295,7 @@ export function lintEditedFiles(projectRoot, targetFiles = []) {
 
 export function cmdLintEdit(projectRoot, opts = {}) {
   const targets = Array.isArray(opts.files) ? opts.files : [];
-  const res = lintEditedFiles(projectRoot, targets);
+  const res = lintEditedFiles(projectRoot, targets, { ratchetComplexity: Boolean(opts.ratchetComplexity) });
   if (res.exitCode === 3) return { exitCode: 3, stderr: res.fails.join('\n') };
   if (opts.json) return { exitCode: res.exitCode, report: res, stdout: JSON.stringify(res, null, 2) };
   const lines = res.files.map(
@@ -337,19 +368,44 @@ function runRedSelfTest() {
   return bad === 0 ? 0 : 1;
 }
 
+function leCollectChangedFiles(root) {
+  const st = spawnSync('git', ['-C', root, '-c', 'core.quotepath=false', 'status', '--porcelain'], { encoding: 'utf8', windowsHide: true });
+  if (st.status !== 0) return [];
+  const out = [];
+  for (const line of String(st.stdout || '').split(/\r?\n/)) {
+    if (!line || line.length < 4) continue;
+    const status = line.slice(0, 2);
+    if (status.includes('D')) continue;
+    const rel = line.slice(3).split(' -> ').pop().trim().replace(/^"|"$/g, '');
+    if (!rel || /^(?:归档|证据|参考|设计)\//.test(rel) || !existsSync(join(root, rel))) continue;
+    if (/\.(?:mjs|cjs|js|ts|tsx|jsx|json|jsonl|py)$/i.test(rel) || /^decisions\/[^/]+\.md$/.test(rel)) out.push(rel);
+  }
+  return out;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv.includes('--red-self-test')) process.exit(runRedSelfTest());
   const rIdx = argv.indexOf('--root');
   const root = resolve(rIdx >= 0 && argv[rIdx + 1] ? argv[rIdx + 1] : process.cwd());
   const asJson = argv.includes('--json');
+  const changedOnly = argv.includes('--changed');
   const files = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--root') { i++; continue; }
     if (argv[i].startsWith('--')) continue;
     files.push(argv[i]);
   }
-  const res = cmdLintEdit(root, { files, json: asJson });
+  if (changedOnly && files.length === 0) {
+    const changed = leCollectChangedFiles(root);
+    if (changed.length === 0) {
+      const msg = 'RESULT: PASS lint-edit (0 个待检变更文件)';
+      console.log(asJson ? JSON.stringify({ exitCode: 0, files: [], fails: [], warnings: [] }) : msg);
+      process.exit(0);
+    }
+    files.push(...changed);
+  }
+  const res = cmdLintEdit(root, { files, json: asJson, ratchetComplexity: changedOnly });
   if (res.stdout) console.log(res.stdout);
   if (res.stderr && !res.stdout) console.error(res.stderr);
   process.exit(res.exitCode);

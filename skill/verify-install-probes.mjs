@@ -7,16 +7,28 @@ import http from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+function quoteWinCmdArg(raw) {
+  const s = String(raw ?? '');
+  if (!s) return '""';
+  return /[\s"&|<>^()=;,^%]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 export function defaultRunCmd(bin, args = [], opts = {}) {
   const isWinCmd = (opts.platform || process.platform) === 'win32' && /\.(?:cmd|bat)$/i.test(bin);
-  const res = spawnSync(bin, args, {
+  const baseOpts = {
     cwd: opts.cwd || process.cwd(),
     env: opts.env || process.env,
     encoding: 'utf8',
     timeout: opts.timeout || 25000,
-    windowsHide: true,
-    shell: isWinCmd
-  });
+    windowsHide: true
+  };
+  let res;
+  if (isWinCmd) {
+    const inner = [quoteWinCmdArg(bin), ...args.map(quoteWinCmdArg)].join(' ');
+    res = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${inner}"`], { ...baseOpts, windowsVerbatimArguments: true });
+  } else {
+    res = spawnSync(bin, args, baseOpts);
+  }
   return {
     status: typeof res.status === 'number' ? res.status : 1,
     stdout: String(res.stdout || '').trim(),

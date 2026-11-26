@@ -244,6 +244,13 @@ if (UPDATE) {
 }
 
 if (GATE) {
+  let strictGate = true;
+  if (process.env.DG_NODE_CONFIG) {
+    try {
+      const cfg = JSON.parse(process.env.DG_NODE_CONFIG);
+      if (cfg && cfg.strictGate === false) strictGate = false;
+    } catch (err) { void err; }
+  }
   const rawBase = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')).keys : [];
   const base = new Set(rawBase.map(normalizeRatchetKey));
   const now = [...new Set(findings.map(findingKey))].sort();
@@ -253,7 +260,7 @@ if (GATE) {
   if (fixed.length) console.log('\n比基线少了 ' + fixed.length + ' 条（好事，可按需 --update-baseline 固化）：\n   ' + fixed.join('\n   '));
   if (added.length) {
     console.log('\nRESULT: 新增 ' + added.length + ' 条（棘轮只降不升）——\n   ' + added.join('\n   '));
-    process.exit(1);
+    process.exit(strictGate ? 1 : 0);
   }
   console.log('\nRESULT: 无新增（当前 ' + now.length + ' 条，基线 ' + base.size + '）');
   process.exit(0);

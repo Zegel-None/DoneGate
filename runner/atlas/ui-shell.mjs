@@ -286,7 +286,8 @@ async function triggerJudgePackForCard(nodeId) {
     if (out && out.ok && out.relPackDir) {
       if (typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
         const summary = { label: '[复核包] ' + cid, title: out.relPackDir, detail: 'SHA-256: ' + String(out.packageHash || '').slice(0, 12), body: out.judgePrompt };
-        window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:insert-quote', text: out.judgePrompt, summary }, '*');
+        const targetOrigin = (location && location.origin && location.origin !== 'null') ? location.origin : (location && location.protocol === 'http:' ? 'http://127.0.0.1' : '');
+        if (targetOrigin) window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:insert-quote', text: out.judgePrompt, summary }, targetOrigin);
       }
       const msgHtml = '⚖️ 契约「<b>' + esc(cid) + '</b>」门 5 复核包已落盘：<code>' + esc(out.relPackDir) + '</code><br><code>' + esc(out.judgePrompt) + '</code>';
       state.chatMessages.push({ role: 'agent', html: msgHtml });
@@ -391,7 +392,7 @@ function uiShIsAutopilotServerActive(rec) {
 }
 
 function uiShIsAutopilotServerHalted(rec) {
-  return Boolean(rec && typeof rec === 'object' && ['TRIPPED_CIRCUIT_BREAKER', 'IDLE', 'STOPPED', 'ABORTED'].includes(rec.state));
+  return Boolean(rec && typeof rec === 'object' && ['TRIPPED_CIRCUIT_BREAKER', 'ABORTED_BREAKER', 'IDLE', 'STOPPED', 'ABORTED'].includes(rec.state));
 }
 
 async function syncAutopilotMorningBrief() {
@@ -644,7 +645,8 @@ async function triggerProvisionWorkflowDeps(packId, opts = {}) {
             startWorkflowDepsPoll(pk.id, onlyNodeId); return;
           }
           if (rep.fallbackAutoSubmit && typeof IS_DSH_EMBED !== 'undefined' && IS_DSH_EMBED && window.parent && window.parent !== window) {
-            window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:dispatch-subagent', prompt: rep.agentPrompt }, '*');
+            const targetOrigin = (location && location.origin && location.origin !== 'null') ? location.origin : (location && location.protocol === 'http:' ? 'http://127.0.0.1' : '');
+            if (targetOrigin) window.parent.postMessage({ source: 'donegate-canvas', sessionId: DSH_SESSION_ID, type: 'dg:dispatch-subagent', prompt: rep.agentPrompt }, targetOrigin);
             renderAll(); showToast('🚀 已自动触发主对话拉起编队子代理后台安装依赖');
             startWorkflowDepsPoll(pk.id, onlyNodeId); return;
           }

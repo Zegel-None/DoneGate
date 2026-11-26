@@ -4,9 +4,9 @@ import vm from 'node:vm';
 import {
   SUBAGENT_HUMAN_ISOLATION_MSG,
   installSubagentHumanIsolationGuard
-} from '../runner/dsh/subagent-isolation.mjs';
-import { renderDshBundlePackageJson, renderDshHostIndexJs } from '../runner/dsh/bundle-templates.mjs';
-import { renderDshClientBundleJs } from '../runner/dsh/client-bundle-gen.mjs';
+} from '../runner/dsh/host/subagent-isolation.mjs';
+import { renderDshBundlePackageJson, renderDshHostIndexJs } from '../runner/dsh/host/bundle-templates.mjs';
+import { renderDshClientBundleJs } from '../runner/dsh/host/client-bundle-gen.mjs';
 
 test('Host 隔离守卫拦截浏览器人类直发 prompt，同时 100% 放行主控 sendMessage 与中断', async () => {
   const calls = [];

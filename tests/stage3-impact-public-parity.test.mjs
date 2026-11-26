@@ -71,7 +71,7 @@ describe('Stage 3 · 跨文件 UI 锚点/导出符号影响面雷达 (impact) �
     const statusImpact = JSON.parse(rStatusRoute.stdout);
     const statusHitTokens = statusImpact.affectedTests.flatMap((t) => t.hits.map((h) => h.token));
     expect(statusHitTokens).not.toContain('status');
-    expect(statusImpact.affectedProdFiles.some((p) => p.file === 'runner/dsh/autopilot-routes.mjs')).toBe(true);
+    expect(statusImpact.affectedProdFiles.some((p) => p.file === 'runner/dsh/host/autopilot-routes.mjs')).toBe(true);
     expect(statusImpact.affectedProdFiles.some((p) => p.file === 'runner/atlas/ui-shell.mjs')).toBe(true);
   });
 });

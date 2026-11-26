@@ -6,14 +6,13 @@ import { extractFileInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs
 import { extractPythonImportTargets } from './python-imports.mjs';
 import { inspectCrossCardFocusPatterns, writeProjectRouter } from './context-router.mjs';
 import { buildDomWiringGraph, computeFileLineMetrics, formatDomWiringStubComment, resolveSubpackFocusPatterns } from './dom-wiring-graph.mjs';
-import { adviseCapsuleModularitySplit, formatShardAdviceLines } from './capsule-shard-advisor.mjs';
+import { adviseCapsuleModularitySplit } from './capsule-shard-advisor.mjs';
+import { assembleDynamicBodyWithToc, hcapBuildCapsulePayload, hcapBuildStaticPrefixLines } from './capsule-markdown.mjs';
 
 const HCAP_GENERIC_STEMS = new Set(['index', 'contract', 'main', 'types', 'utils', '_shared']);
 const HCAP_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
 
-export function frozenStubPathOf(projectRoot, nodeId) {
-  return join(projectRoot, '.donegate', 'stubs', `${nodeId}.frozen.json`);
-}
+export function frozenStubPathOf(projectRoot, nodeId) { return join(projectRoot, '.donegate', 'stubs', `${nodeId}.frozen.json`); }
 
 export function freezeNodeStubBaseline(projectRoot, nodeId, stubInfo) {
   const p = frozenStubPathOf(projectRoot, nodeId);
@@ -91,26 +90,48 @@ function matchesFocusPattern(relPath, patterns) {
   });
 }
 
+function hcapResolveIntraJsImport(src, spec, scopeSet) {
+  if (!spec.startsWith('.')) return null;
+  const base = normalize(join(dirname(src), spec)).replace(/\\/g, '/');
+  const cands = [base, `${base}.mjs`, `${base}.js`, `${base}.ts`, `${base}.tsx`, `${base}/index.mjs`, `${base}/index.js`];
+  return cands.find((c) => scopeSet.has(c)) || null;
+}
+
+function hcapAddIntraFileImports(src, body, scopeSet, seedSet, closure) {
+  if (src.endsWith('.py')) {
+    for (const dst of extractPythonImportTargets(src, body, scopeSet)) {
+      if (seedSet.has(src) || seedSet.has(dst)) {
+        closure.add(src);
+        closure.add(dst);
+      }
+    }
+    return;
+  }
+  const masked = maskCommentsAndStrings(body, extname(src).toLowerCase());
+  for (const m of body.matchAll(HCAP_IMPORT_RE)) {
+    if (masked[m.index] === ' ') continue;
+    const dst = hcapResolveIntraJsImport(src, m[1].split(/[?#]/)[0], scopeSet);
+    if (dst && dst !== src && (seedSet.has(src) || seedSet.has(dst))) {
+      closure.add(src);
+      closure.add(dst);
+    }
+  }
+}
+
 function computeIntraHopFocusClosure(scopeSet, rawByFile, seedSet, facadeFiles, domGraph) {
   const closure = new Set([...seedSet]);
   if (seedSet.size === 0) return closure;
-  for (const f of facadeFiles || []) if (scopeSet.has(f)) closure.add(f);
+  for (const f of facadeFiles || []) {
+    if (scopeSet.has(f)) closure.add(f);
+  }
   for (const [src, body] of rawByFile.entries()) {
-    if (src.endsWith('.py')) {
-      for (const dst of extractPythonImportTargets(src, body, scopeSet)) if (seedSet.has(src) || seedSet.has(dst)) { closure.add(src); closure.add(dst); }
-      continue;
-    }
-    const masked = maskCommentsAndStrings(body, extname(src).toLowerCase());
-    for (const m of body.matchAll(HCAP_IMPORT_RE)) {
-      if (masked[m.index] === ' ') continue;
-      const spec = m[1].split(/[?#]/)[0];
-      if (!spec.startsWith('.')) continue;
-      const base = normalize(join(dirname(src), spec)).replace(/\\/g, '/');
-      const dst = [base, `${base}.mjs`, `${base}.js`, `${base}.ts`, `${base}.tsx`, `${base}/index.mjs`, `${base}/index.js`].find((c) => scopeSet.has(c));
-      if (dst && dst !== src && (seedSet.has(src) || seedSet.has(dst))) { closure.add(src); closure.add(dst); }
+    hcapAddIntraFileImports(src, body, scopeSet, seedSet, closure);
+  }
+  for (const seed of seedSet) {
+    for (const linked of domGraph.edges.get(seed) || []) {
+      if (scopeSet.has(linked)) closure.add(linked);
     }
   }
-  for (const seed of seedSet) for (const linked of domGraph.edges.get(seed) || []) if (scopeSet.has(linked)) closure.add(linked);
   return closure;
 }
 
@@ -209,52 +230,6 @@ function partitionZeroHopAssets(projectRoot, target, graph, budget, focusPattern
   return { maxEff, focusMode, lexicalMode, lexicalMatches: [...lexicalSources].sort(), cardMaxProcFn, emptyFocusMatch: false, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles, shardAdvice };
 }
 
-function renderSiblingStubLines(siblingStubs, maxEff) {
-  const out = [];
-  for (const sb of siblingStubs) {
-    out.push(`// [sibling: ${sb.path}] effectiveLines=${sb.effectiveLines}/${maxEff} physicalLines=${sb.physicalLines} maxProceduralFnLines=${sb.maxProceduralFnLines} headroom=${sb.headroom}`);
-    if (sb.wiringComment) out.push(sb.wiringComment);
-    if (sb.exports.length === 0) { out.push('// (内部实现或脚本入口，无具名导出)'); continue; }
-    for (const ex of sb.exports) {
-      if (ex.doc) out.push(...ex.doc.split(/\r?\n/));
-      out.push(ex.signature);
-    }
-  }
-  return out;
-}
-
-function assembleDynamicBodyWithToc(staticPrefixLines, assets, target, budget) {
-  const { maxEff, zeroHopFiles, siblingStubs, zeroHopTests, truncatedFiles, shardAdvice } = assets;
-  const blocks = [];
-  for (const f of zeroHopFiles) {
-    blocks.push({ category: '0-Hop 源码', path: f.path, effText: `${f.effectiveLines} / ${maxEff}`, physText: `${f.physicalLines}`, procText: `${f.maxProceduralFnLines}`, headroomText: `${f.headroom} 行`, effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines, modeText: f.role, lines: [`### \`${f.path}\``, '```js', ...f.content.trimEnd().split(/\r?\n/), '```'] });
-  }
-  if (siblingStubs.length > 0) {
-    blocks.push({ category: '0-Hop 正交存根', path: `同卡零直连正交兄弟 (${siblingStubs.length} 个)`, effText: '见存根头', physText: '见存根头', procText: '见存根头', headroomText: '见存根头', effectiveLines: null, physicalLines: null, maxProceduralFnLines: null, modeText: 'AST 存根', lines: ['### 0-Hop 同卡正交兄弟文件 AST 存根与行数余量（与目标文件无直接调用耦合）', '```ts', ...renderSiblingStubLines(siblingStubs, maxEff), '```'] });
-  }
-  blocks.push({ isDivider: true, lines: ['', '## 5. 0-Hop 关联单测与验收夹具（动态断言区）', ...(zeroHopTests.length === 0 ? ['（暂无关联单测或验收夹具）'] : [])] });
-  for (const tf of zeroHopTests) {
-    blocks.push({ category: '0-Hop 单测', path: tf.path, effText: `${tf.effectiveLines} / ${maxEff}`, physText: `${tf.physicalLines}`, procText: `${tf.maxProceduralFnLines}`, headroomText: `${tf.headroom} 行`, effectiveLines: tf.effectiveLines, physicalLines: tf.physicalLines, maxProceduralFnLines: tf.maxProceduralFnLines, modeText: '全量展开', lines: [`### \`${tf.path}\``, '```js', ...tf.content.trimEnd().split(/\r?\n/), '```'] });
-  }
-  if (truncatedFiles.length > 0) {
-    blocks.push({ isDivider: true, lines: ['', `> ⚠ 预算溢出提示：当前节点超出了 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t 源码上限（剩余 ${truncatedFiles.length} 个文件仅附存根）。`, '### 未全量展开文件的 AST 存根', '```ts', ...target.stub.stubText.trimEnd().split(/\r?\n/), '```'] });
-  }
-  if (shardAdvice) blocks.push({ isDivider: true, lines: formatShardAdviceLines(shardAdvice) });
-  const tocHeader = ['', '## 4. 0-Hop 本卡全量源码（动态读写施工区）', `> 动态范围统计：0-Hop 展开源码 ${zeroHopFiles.length} 个${siblingStubs.length > 0 ? `（含目标与同卡调用闭包）+ 正交兄弟存根 ${siblingStubs.length} 个` : ''}（全卡有效代码 ${target.stub.effectiveLines} 行 / 非空物理行 ${target.stub.physicalLines} 行） | 关联单测 ${zeroHopTests.length} 个`, '', '### 0-Hop 胶囊精确行号导航目录与单文件行数余量（TOC）', '| 类别 | 路径 | 胶囊行号范围 | 有效代码 / 硬顶 | 非空物理行 | 最大过程函数行 | 剩余行数余量 | 形态 |', '|---|---|---|---|---|---|---|---|'];
-  let cursor = staticPrefixLines.length + tocHeader.length + Math.max(1, blocks.filter((b) => !b.isDivider).length) + 2;
-  const tocEntries = [], tocRows = [], bodyLines = [''];
-  for (const b of blocks) {
-    if (b.isDivider) { bodyLines.push(...b.lines); cursor += b.lines.length; continue; }
-    const startLine = cursor, endLine = cursor + b.lines.length - 1;
-    cursor += b.lines.length;
-    bodyLines.push(...b.lines);
-    tocEntries.push({ category: b.category, path: b.path, startLine, endLine, effectiveLines: b.effectiveLines, physicalLines: b.physicalLines, maxProceduralFnLines: b.maxProceduralFnLines, mode: b.modeText });
-    tocRows.push(`| ${b.category} | \`${b.path}\` | \`L${startLine}-L${endLine}\` | \`${b.effText}\` | \`${b.physText}\` | \`${b.procText}\` | \`${b.headroomText}\` | ${b.modeText} |`);
-  }
-  if (tocRows.length === 0) tocRows.push('| — | （无 0-Hop 文件） | — | — | — | — | — | — |');
-  return { fullLines: [...staticPrefixLines, ...tocHeader, ...tocRows, ...bodyLines], tocEntries };
-}
-
 function hcapWriteOptionalOut(projectRoot, outRel, asJson, payload, markdown) {
   if (!outRel) return;
   const outAbs = resolve(projectRoot, outRel);
@@ -294,50 +269,33 @@ export function cmdSlice(projectRoot, opts = {}) {
   }
   const target = graph.nodes.find((n) => n.id === opts.id);
   if (!target) return { exitCode: 3, stderr: `找不到目标节点「${opts.id}」（可选节点：${graph.nodes.map((n) => n.id).join(', ') || '无'}）` };
-  if (opts.freezeStub || (target.isFrozenContract && !existsSync(frozenStubPathOf(projectRoot, target.id)))) freezeNodeStubBaseline(projectRoot, target.id, target.stub);
+  if (opts.freezeStub || (target.isFrozenContract && !existsSync(frozenStubPathOf(projectRoot, target.id)))) {
+    freezeNodeStubBaseline(projectRoot, target.id, target.stub);
+  }
 
-  const rawFocusPatterns = parseFocusPatterns(opts.focus), { warnings, crossCardRoutes } = inspectCrossCardFocusPatterns(target, rawFocusPatterns, graph);
-  const focusPatterns = resolveSubpackFocusPatterns(projectRoot, target, rawFocusPatterns), lexicalTerms = parseLexicalTerms(opts.lexical);
+  const rawFocusPatterns = parseFocusPatterns(opts.focus);
+  const { warnings, crossCardRoutes } = inspectCrossCardFocusPatterns(target, rawFocusPatterns, graph);
+  const focusPatterns = resolveSubpackFocusPatterns(projectRoot, target, rawFocusPatterns);
+  const lexicalTerms = parseLexicalTerms(opts.lexical);
   const { neighborIds, neighbors } = hcapBuildOneHopNeighbors(projectRoot, target, graph, budget);
   const visibleSet = new Set([target.id, ...neighborIds]);
   const hiddenNodeIds = graph.nodes.filter((n) => !visibleSet.has(n.id)).map((n) => n.id).sort();
-  const utilPct = Math.round(budget.targetUtilization * 100), microGateCommand = `node runner/donegate.mjs check-node ${target.id} --allow-dirty --receipt`;
-  const hasTwoTierBarrel = target.stub.facadeMode === 'barrel' && target.stub.facadeFiles.some((f) => f.endsWith('/contract.mjs')) && target.stub.facadeFiles.some((f) => f.endsWith('/index.mjs'));
-  const barrelNote = hasTwoTierBarrel ? '（双层桶防环：`contract.mjs` 仅放零跨卡环路纯叶导出，跨卡编排导出放 `index.mjs`）' : '';
-  const warnBanner = warnings.length > 0 ? ['> ⚠️ 跨卡焦点路由提示', ...warnings.map((w) => `> - ${w}`), ''] : [];
-  const rawPrefix = [
-    `# DoneGate 密封施工胶囊：${target.id}（${target.title}）`, '', ...warnBanner, '## 1. 静态路由规则与阅后即焚收口指令',
-    `- **五段配额**：子代理总预算 **${budget.contextWindowTokens.toLocaleString()} × ${utilPct}% = ${budget.totalSessionBudgetTokens.toLocaleString()} Tokens**（L0 路由 ${budget.routerBudgetTokens.toLocaleString()}t | 0-Hop 上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | 1-Hop 存根上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t | 按需展开预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | 多轮思考与微门禁迭代预留 ${budget.multiTurnReserveTokens.toLocaleString()}t）`,
-    `- **门面与隔离约束**：只准修改本节点 \`scope\`（含显式文件同名伴生子模块目录）与关联单测；跨节点调用必须经由 1-Hop 门面存根（直连邻居 ${neighbors.length} 个节点），2-Hop+ 节点物理屏蔽（共屏蔽 ${hiddenNodeIds.length} 个节点）。`,
-    `- **阅后即焚收口指令**：局部快检执行 \`${microGateCommand}\`；退出码为 0 后仅将结构化回执（上限 ${budget.receiptBudgetTokens} Tokens）交回总控，随即销毁当前子会话上下文。`, '',
-    '## 2. 本卡契约声明（0-Hop Mandate）', `- **节点 ID**：\`${target.id}\``, `- **业务职责**：${target.why || target.title}`,
-    `- **允许写入路径 (scope)**：${(target.scope || []).map((s) => `\`${s}\``).join(', ') || '（未声明）'}`,
-    `- **门面模式**：\`${target.stub.facadeMode}\`（当前 \`stubHash=${target.stub.stubHash}\`）${barrelNote}`,
-    ...(target.obligations.length > 0 ? ['- **本卡验收判据**：', ...target.obligations.map((o) => `  - \`${o.id}\` (${o.kind})：${o.claim || ''} → \`${o.command || o.expect?.standard || ''}\``)] : ['- **本卡验收判据**：（待补充）']), '',
-    '## 3. 1-Hop 邻域冻结接口存根（只读契约签名 · 物理隐藏邻居内部实现）'
-  ];
-  if (neighbors.length === 0) rawPrefix.push('（无 1-Hop 上下游直连节点，本卡为独立自治节点）');
-  for (const nb of neighbors) {
-    rawPrefix.push(`### [${nb.relation}] \`${nb.nodeId}\` — ${nb.title}${nb.why ? `（${nb.why}）` : ''}（存根：\`.donegate/stubs/${nb.nodeId}.stub.d.ts\`）`);
-    if (nb.sharedBoundaryClaims.length > 0) rawPrefix.push(...nb.sharedBoundaryClaims.map((c) => `- 联调判据：${c}`));
-    rawPrefix.push('```ts', nb.stubText.trimEnd(), '```');
-  }
-  const assets = partitionZeroHopAssets(projectRoot, target, graph, budget, focusPatterns, lexicalTerms, warnings.length > 0);
-  if (assets.emptyFocusMatch) return { exitCode: 3, warnings, stderr: `--focus 未匹配到节点「${target.id}」内的任何 0-Hop 源码或测试文件：${focusPatterns.join(', ')}` };
+  const microGateCommand = `node runner/donegate.mjs check-node ${target.id} --allow-dirty --receipt`;
 
-  const { fullLines, tocEntries } = assembleDynamicBodyWithToc(rawPrefix.join('\n').split(/\r?\n/), assets, target, budget);
-  const capsuleMarkdown = fullLines.join('\n') + '\n', capsuleBytes = Buffer.byteLength(capsuleMarkdown, 'utf8'), capsuleTokens = Math.ceil(capsuleMarkdown.length / 4);
-  const capsulePayload = {
-    schema: 'donegate-hermetic-capsule/v1', nodeId: target.id, title: target.title, scope: target.scope, facadeMode: target.stub.facadeMode, stubHash: target.stub.stubHash,
-    effectiveLines: target.stub.effectiveLines, physicalLines: target.stub.physicalLines, maxProceduralFnLines: assets.cardMaxProcFn, budgetProfile: budget,
-    focusMode: assets.focusMode, focusPatterns, lexicalMode: assets.lexicalMode, lexicalTerms, lexicalMatches: assets.lexicalMatches, warnings, crossCardFocus: crossCardRoutes,
-    capsuleBytes, capsuleTokens, remainingSessionHeadroomTokens: Math.max(0, budget.totalSessionBudgetTokens - capsuleTokens), repoTotalSourceTokens: routerPayload.totalSourceTokens,
-    omittedTwoHopNodes: hiddenNodeIds, oneHopStubs: neighbors, toc: tocEntries, truncatedFiles: assets.truncatedFiles, shardAdvice: assets.shardAdvice || null, microGateCommand,
-    zeroHopFiles: assets.zeroHopFiles.map((f) => ({ path: f.path, role: f.role, tokens: Math.ceil(f.content.length / 4), effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines, headroom: f.headroom })),
-    siblingStubFiles: assets.siblingStubs.map((s) => ({ path: s.path, effectiveLines: s.effectiveLines, physicalLines: s.physicalLines, maxProceduralFnLines: s.maxProceduralFnLines, headroom: s.headroom, exportCount: s.exports.length })),
-    zeroHopTests: assets.zeroHopTests.map((f) => ({ path: f.path, tokens: Math.ceil(f.content.length / 4), effectiveLines: f.effectiveLines, physicalLines: f.physicalLines, maxProceduralFnLines: f.maxProceduralFnLines }))
-  };
-  const capDir = join(projectRoot, '.donegate', 'capsules'), defaultMdPath = join(capDir, `${target.id}.capsule.md`);
+  const assets = partitionZeroHopAssets(projectRoot, target, graph, budget, focusPatterns, lexicalTerms, warnings.length > 0);
+  if (assets.emptyFocusMatch) {
+    return { exitCode: 3, warnings, stderr: `--focus 未匹配到节点「${target.id}」内的任何 0-Hop 源码或测试文件：${focusPatterns.join(', ')}` };
+  }
+  const prefixLines = hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNodeIds, warnings, microGateCommand);
+  const { fullLines, tocEntries } = assembleDynamicBodyWithToc(prefixLines, assets, target, budget);
+  const capsuleMarkdown = fullLines.join('\n') + '\n';
+  const capsulePayload = hcapBuildCapsulePayload({
+    target, budget, routerPayload, hiddenNodeIds, neighbors, assets, tocEntries,
+    focusPatterns, lexicalTerms, warnings, crossCardRoutes, microGateCommand, capsuleMarkdown
+  });
+
+  const capDir = join(projectRoot, '.donegate', 'capsules');
+  const defaultMdPath = join(capDir, `${target.id}.capsule.md`);
   mkdirSync(capDir, { recursive: true });
   writeFileSync(defaultMdPath, capsuleMarkdown, 'utf8');
   writeFileSync(join(capDir, `${target.id}.capsule.json`), JSON.stringify(capsulePayload, null, 2), 'utf8');

@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { dispatchCommand } from '../runner/donegate.mjs';
 import { renderProgressBlock } from '../runner/core/progress.mjs';
 import { cmdHandover } from '../runner/core/cmd-handover-verify.mjs';
-import { createInitialCheckpoint } from '../runner/dsh/autopilot-state.mjs';
-import { wfcSaveProjectOverlay } from '../runner/dsh/workflow-compiler.mjs';
+import { createInitialCheckpoint } from '../runner/dsh/autopilot/autopilot-state.mjs';
+import { wfcSaveProjectOverlay } from '../runner/dsh/autopilot/workflow-compiler.mjs';
 import { buildPreCommitScript } from '../skill/install-hooks.mjs';
-import { executeDeterministicWorkflowRun } from '../runner/dsh/workflow-runner.mjs';
-import { tlLoadTrustLedger } from '../runner/dsh/trust-ladder.mjs';
+import { executeDeterministicWorkflowRun } from '../runner/dsh/autopilot/workflow-runner.mjs';
+import { tlLoadTrustLedger } from '../runner/dsh/autopilot/trust-ladder.mjs';
 
 describe('stage14: full-stack SSOT disclosure banners, pre-commit hook sync & trust feedback', () => {
   it('propagates prominent red integrity disclosure across progress card, HANDOVER.md, and MORNING-BRIEF.md', () => {

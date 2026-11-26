@@ -462,82 +462,196 @@ function loadDeclaredDeps(rootDir) {
   }
 }
 
+const CMI_CORE_SPLIT_RE = /^runner\/core\/(?:cmd-[a-z-]+|commands-[ab]|gates|project-loader|state-calc|gate-checks|graph-edges)\.mjs$/;
+const CMI_SHA_EXEMPT_RE = /(?:-fixtures\.mjs$|^skill\/pilot-|^skill\/check-module-integrity\.mjs$|^skill\/check-commit-hygiene\.mjs$)/;
+
+function cmiAuditJsonFile(rootDir, jf, fails) {
+  const rel = relative(rootDir, jf).split(sep).join('/');
+  if (JSONC_ALLOW_RE.test(rel)) return;
+  const raw = readFileSync(jf, 'utf8');
+  if (!rel.endsWith('.jsonl')) {
+    try { JSON.parse(raw); } catch (e) {
+      fails.push(`M5 JSON 配置语法损坏 (${rel})：${e.message}`);
+    }
+    return;
+  }
+  const lines = raw.split(/\r?\n/);
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx].trim();
+    if (!line) continue;
+    try { JSON.parse(line); } catch (e) {
+      fails.push(`M5 JSONL 第 ${idx + 1} 行语法损坏 (${rel})：${e.message}`);
+      break;
+    }
+  }
+}
+
+function cmiListDirExact(dirEntriesCache, d) {
+  if (!dirEntriesCache.has(d)) {
+    try { dirEntriesCache.set(d, new Set(readdirSync(d))); }
+    catch { dirEntriesCache.set(d, null); }
+  }
+  return dirEntriesCache.get(d);
+}
+
+function cmiVerifyExactCaseFromRoot(rootDir, dirEntriesCache, targetAbs) {
+  const rel = relative(rootDir, targetAbs);
+  if (rel.startsWith('..')) return { ok: existsSync(targetAbs), mismatch: null };
+  const parts = rel.split(sep).filter(Boolean);
+  let cur = rootDir;
+  for (const part of parts) {
+    const set = cmiListDirExact(dirEntriesCache, cur);
+    if (!set || !set.has(part)) {
+      const ciHit = set ? [...set].find((x) => x.toLowerCase() === part.toLowerCase()) : null;
+      return { ok: false, mismatch: ciHit ? `磁盘实际名为「${ciHit}」而非「${part}」（大小写不一致）` : null };
+    }
+    cur = join(cur, part);
+  }
+  return { ok: statSync(cur).isFile(), mismatch: null };
+}
+
+function cmiResolveRelative(rootDir, dirEntriesCache, fromFile, spec) {
+  const cleanSpec = spec.split(/[?#]/)[0];
+  const baseAbs = resolve(dirname(fromFile), cleanSpec);
+  const cands = [
+    baseAbs, baseAbs + '.mjs', baseAbs + '.js', baseAbs + '.cjs', baseAbs + '.json',
+    join(baseAbs, 'index.mjs'), join(baseAbs, 'index.js'), join(baseAbs, 'index.cjs')
+  ];
+  let caseMismatchMsg = null;
+  for (const cand of cands) {
+    if (!existsSync(cand)) continue;
+    try { if (!statSync(cand).isFile()) continue; } catch { continue; }
+    const chk = cmiVerifyExactCaseFromRoot(rootDir, dirEntriesCache, cand);
+    if (chk.ok) return { resolved: cand, error: null };
+    if (chk.mismatch) caseMismatchMsg = chk.mismatch;
+  }
+  return { resolved: null, error: caseMismatchMsg || '目标文件不存在' };
+}
+
+function cmiGetResolvedExports(ctx, absFile, visiting = new Set()) {
+  if (ctx.exportSetCache.has(absFile)) return ctx.exportSetCache.get(absFile);
+  if (visiting.has(absFile)) return new Set();
+  visiting.add(absFile);
+  const info = ctx.parsedMap.get(absFile);
+  if (!info || extname(absFile).toLowerCase() === '.cjs' || info.hasCjsExport) return null;
+  const out = new Set(info.exports);
+  for (const starSpec of info.reExportsAll) {
+    if (!starSpec.startsWith('.')) continue;
+    const r = cmiResolveRelative(ctx.rootDir, ctx.dirEntriesCache, absFile, starSpec);
+    const sub = r.resolved ? cmiGetResolvedExports(ctx, r.resolved, visiting) : null;
+    if (sub) {
+      for (const s of sub) if (s !== 'default') out.add(s);
+    }
+  }
+  ctx.exportSetCache.set(absFile, out);
+  return out;
+}
+
+function cmiAuditRelativeImport(ctx, f, rel, imp, spec) {
+  const r = cmiResolveRelative(ctx.rootDir, ctx.dirEntriesCache, f, spec);
+  if (!r.resolved) {
+    ctx.fails.push(`M2 相对导入断链或大小写失配 (${rel} -> "${spec}")：${r.error}`);
+    return;
+  }
+  if (imp.named.length === 0 || extname(r.resolved).toLowerCase() === '.json') return;
+  const targetExports = cmiGetResolvedExports(ctx, r.resolved);
+  if (targetExports === null) return;
+  const targetRel = relative(ctx.rootDir, r.resolved).split(sep).join('/');
+  for (const sym of imp.named) {
+    if (!targetExports.has(sym)) {
+      ctx.fails.push(`M3 跨文件具名导出缺失 (${rel})：导入了 {${sym}}，但 ${targetRel} 未导出该符号`);
+    }
+  }
+}
+
+function cmiAuditExternalImport(ctx, rel, spec) {
+  if (spec.startsWith('node:')) {
+    if (!BUILTINS.has(spec)) ctx.fails.push(`M4 编造了不存在的 Node 内置模块 (${rel})："${spec}"`);
+    return;
+  }
+  if (BUILTINS.has(spec)) return;
+  const pkgName = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+  if (ctx.hasPkgJson && !ctx.deps.has(pkgName)) {
+    ctx.fails.push(`M4 未声明或幻觉外部依赖包 (${rel})：导入了 "${spec}"，但 package.json 未声明 "${pkgName}"`);
+  }
+}
+
+function cmiAuditModuleImports(ctx, f, info) {
+  const rel = relative(ctx.rootDir, f).split(sep).join('/');
+  const isPilot = rel.startsWith('skill/pilot-');
+  for (const imp of info.imports) {
+    const spec = imp.spec.trim();
+    if (!spec) continue;
+    if (spec.startsWith('.') || spec.startsWith('/')) {
+      if (!isPilot) cmiAuditRelativeImport(ctx, f, rel, imp, spec);
+    } else {
+      cmiAuditExternalImport(ctx, rel, spec);
+    }
+  }
+}
+
+function cmiAuditConcreteAdapterM6(rel, info, rawSrc, lines, fails) {
+  if (lines > 90) {
+    fails.push(`M6 具体适配器超长疑似手搓样板 (${rel})：当前 ${lines} 行 > 上限 90 行（请委托 ./_shared.mjs 的 runAdapter）`);
+  }
+  if (!info.imports.some((imp) => imp.spec === './_shared.mjs')) {
+    fails.push(`M6 具体适配器未调用公共底座 (${rel})：必须从 ./_shared.mjs 导入 runAdapter`);
+  }
+  for (const imp of info.imports) {
+    if (/^(?:node:)?(?:crypto|child_process)$/.test(imp.spec)) {
+      fails.push(`M6 具体适配器越权直引底层模块 (${rel} -> "${imp.spec}")：请统一通过 ./_shared.mjs 调用`);
+    }
+  }
+  if (/status['"]\s*,\s*['"]--porcelain/.test(rawSrc)) {
+    fails.push(`M6 具体适配器重复手写脏树检查 (${rel})：git status --porcelain 已由 ./_shared.mjs 统一接管`);
+  }
+}
+
+function cmiCountNonCommentLines(rawSrc) {
+  return rawSrc.split(/\r?\n/).filter((l) => {
+    const s = l.trim();
+    return s && !s.startsWith('//') && !s.startsWith('*') && !s.startsWith('/*');
+  }).length;
+}
+
+function cmiAuditFileM6(rootDir, f, info, fails) {
+  const rel = relative(rootDir, f).split(sep).join('/');
+  const rawSrc = readFileSync(f, 'utf8');
+  const lines = rawSrc.split(/\r?\n/).length;
+
+  if (/^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(rel)) {
+    cmiAuditConcreteAdapterM6(rel, info, rawSrc, lines, fails);
+  }
+  const checkSha = /^(?:runner|skill)\/.*\.mjs$/.test(rel) &&
+    rel !== 'skill/hash.mjs' &&
+    rel !== 'skill/adapters/_shared.mjs' &&
+    !CMI_SHA_EXEMPT_RE.test(rel);
+  if (checkSha) {
+    const stripped = rawSrc.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/\bcreateHash\s*\(\s*['"]sha256['"]\s*\)/.test(stripped)) {
+      fails.push(`M6 禁止业务脚本重复手搓 SHA-256 (${rel})：请复用 skill/hash.mjs 的 sha256() 或 _shared.mjs 的 shaBytes()`);
+    }
+  }
+  const effLines = cmiCountNonCommentLines(rawSrc);
+  if (/^runner\/atlas\/wb-(?:logic|style|dom)-[a-z]\.mjs$/.test(rel)) {
+    fails.push(`M6 禁止机械字母切片回潮 (${rel})：请归入 runner/atlas/ 职责语义模块（见 MODULE-INDEX.md）`);
+  } else if (CMI_CORE_SPLIT_RE.test(rel) && effLines > 420) {
+    fails.push(`M6 核心拆分子模块有效行数回潮 (${rel})：当前 ${effLines} 有效行 > 上限 420 有效行`);
+  } else if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && effLines > 600) {
+    fails.push(`M6 核心目录模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 600 有效行`);
+  } else if (/^runner\/(?:atlas|dsh)\/[^/]+\.mjs$/.test(rel) && effLines > 850) {
+    fails.push(`M6 工作台/宿主语义模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 850 有效行（请按业务域拆分，禁止字母切片）`);
+  }
+}
+
 export function auditModuleIntegrity(rootDir, opts = {}) {
   const fails = [];
   const { jsFiles, jsonFiles } = collectProjectFiles(rootDir);
 
   // M5：全仓受控 JSON / JSONL 配置语法核验
-  for (const jf of jsonFiles) {
-    const rel = relative(rootDir, jf).split(sep).join('/');
-    if (JSONC_ALLOW_RE.test(rel)) continue;
-    const raw = readFileSync(jf, 'utf8');
-    if (rel.endsWith('.jsonl')) {
-      const lines = raw.split(/\r?\n/);
-      for (let idx = 0; idx < lines.length; idx++) {
-        const line = lines[idx].trim();
-        if (!line) continue;
-        try { JSON.parse(line); } catch (e) {
-          fails.push(`M5 JSONL 第 ${idx + 1} 行语法损坏 (${rel})：${e.message}`);
-          break;
-        }
-      }
-    } else {
-      try { JSON.parse(raw); } catch (e) {
-        fails.push(`M5 JSON 配置语法损坏 (${rel})：${e.message}`);
-      }
-    }
-  }
+  for (const jf of jsonFiles) cmiAuditJsonFile(rootDir, jf, fails);
 
   const { hasPkgJson, deps } = loadDeclaredDeps(rootDir);
-  const dirEntriesCache = new Map();
-  const listDirExact = (d) => {
-    if (!dirEntriesCache.has(d)) {
-      try { dirEntriesCache.set(d, new Set(readdirSync(d))); }
-      catch { dirEntriesCache.set(d, null); }
-    }
-    return dirEntriesCache.get(d);
-  };
-
-  const verifyExactCaseFromRoot = (targetAbs) => {
-    const rel = relative(rootDir, targetAbs);
-    if (rel.startsWith('..')) return { ok: existsSync(targetAbs), mismatch: null };
-    const parts = rel.split(sep).filter(Boolean);
-    let cur = rootDir;
-    for (const part of parts) {
-      const set = listDirExact(cur);
-      if (!set || !set.has(part)) {
-        const ciHit = set ? [...set].find((x) => x.toLowerCase() === part.toLowerCase()) : null;
-        return { ok: false, mismatch: ciHit ? `磁盘实际名为「${ciHit}」而非「${part}」（大小写不一致）` : null };
-      }
-      cur = join(cur, part);
-    }
-    return { ok: statSync(cur).isFile(), mismatch: null };
-  };
-
-  const resolveRelative = (fromFile, spec) => {
-    const cleanSpec = spec.split(/[?#]/)[0];
-    const baseAbs = resolve(dirname(fromFile), cleanSpec);
-    const cands = [
-      baseAbs,
-      baseAbs + '.mjs',
-      baseAbs + '.js',
-      baseAbs + '.cjs',
-      baseAbs + '.json',
-      join(baseAbs, 'index.mjs'),
-      join(baseAbs, 'index.js'),
-      join(baseAbs, 'index.cjs')
-    ];
-    let caseMismatchMsg = null;
-    for (const cand of cands) {
-      if (!existsSync(cand)) continue;
-      try { if (!statSync(cand).isFile()) continue; } catch { continue; }
-      const chk = verifyExactCaseFromRoot(cand);
-      if (chk.ok) return { resolved: cand, error: null };
-      if (chk.mismatch) caseMismatchMsg = chk.mismatch;
-    }
-    return { resolved: null, error: caseMismatchMsg || '目标文件不存在' };
-  };
-
   const syntaxErrs = opts.checkSyntax !== false ? batchCheckJsSyntax(jsFiles) : new Map();
   const parsedMap = new Map();
   for (const f of jsFiles) {
@@ -549,117 +663,11 @@ export function auditModuleIntegrity(rootDir, opts = {}) {
     parsedMap.set(f, parseModuleInterface(readFileSync(f, 'utf8')));
   }
 
-  const exportSetCache = new Map();
-  const getResolvedExports = (absFile, visiting = new Set()) => {
-    if (exportSetCache.has(absFile)) return exportSetCache.get(absFile);
-    if (visiting.has(absFile)) return new Set();
-    visiting.add(absFile);
-    const info = parsedMap.get(absFile);
-    if (!info) return null;
-    if (extname(absFile).toLowerCase() === '.cjs' || info.hasCjsExport) return null;
-    const out = new Set(info.exports);
-    for (const starSpec of info.reExportsAll) {
-      if (!starSpec.startsWith('.')) continue;
-      const r = resolveRelative(absFile, starSpec);
-      if (r.resolved) {
-        const sub = getResolvedExports(r.resolved, visiting);
-        if (sub) for (const s of sub) if (s !== 'default') out.add(s);
-      }
-    }
-    exportSetCache.set(absFile, out);
-    return out;
-  };
-
-  for (const [f, info] of parsedMap.entries()) {
-    const rel = relative(rootDir, f).split(sep).join('/');
-    const isPilot = rel.startsWith('skill/pilot-');
-    for (const imp of info.imports) {
-      const spec = imp.spec.trim();
-      if (!spec) continue;
-      if (spec.startsWith('.') || spec.startsWith('/')) {
-        if (isPilot) continue;
-        const r = resolveRelative(f, spec);
-        if (!r.resolved) {
-          fails.push(`M2 相对导入断链或大小写失配 (${rel} -> "${spec}")：${r.error}`);
-          continue;
-        }
-        if (imp.named.length > 0 && extname(r.resolved).toLowerCase() !== '.json') {
-          const targetExports = getResolvedExports(r.resolved);
-          if (targetExports !== null) {
-            for (const sym of imp.named) {
-              if (!targetExports.has(sym)) {
-                const targetRel = relative(rootDir, r.resolved).split(sep).join('/');
-                fails.push(`M3 跨文件具名导出缺失 (${rel})：导入了 {${sym}}，但 ${targetRel} 未导出该符号`);
-              }
-            }
-          }
-        }
-      } else {
-        if (spec.startsWith('node:')) {
-          if (!BUILTINS.has(spec)) {
-            fails.push(`M4 编造了不存在的 Node 内置模块 (${rel})："${spec}"`);
-          }
-          continue;
-        }
-        if (BUILTINS.has(spec)) continue;
-        const pkgName = spec.startsWith('@')
-          ? spec.split('/').slice(0, 2).join('/')
-          : spec.split('/')[0];
-        if (hasPkgJson && !deps.has(pkgName)) {
-          fails.push(`M4 未声明或幻觉外部依赖包 (${rel})：导入了 "${spec}"，但 package.json 未声明 "${pkgName}"`);
-        }
-      }
-    }
-  }
+  const ctx = { rootDir, hasPkgJson, deps, parsedMap, dirEntriesCache: new Map(), exportSetCache: new Map(), fails };
+  for (const [f, info] of parsedMap.entries()) cmiAuditModuleImports(ctx, f, info);
 
   // M6：公共原语反手搓门禁与核心子模块行数棘轮
-  const CORE_SPLIT_RE = /^runner\/core\/(?:cmd-[a-z-]+|commands-[ab]|gates|project-loader|state-calc|gate-checks|graph-edges)\.mjs$/;
-  for (const [f, info] of parsedMap.entries()) {
-    const rel = relative(rootDir, f).split(sep).join('/');
-    const rawSrc = readFileSync(f, 'utf8');
-    const lines = rawSrc.split(/\r?\n/).length;
-
-    if (/^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(rel)) {
-      if (lines > 90) {
-        fails.push(`M6 具体适配器超长疑似手搓样板 (${rel})：当前 ${lines} 行 > 上限 90 行（请委托 ./_shared.mjs 的 runAdapter）`);
-      }
-      if (!info.imports.some((imp) => imp.spec === './_shared.mjs')) {
-        fails.push(`M6 具体适配器未调用公共底座 (${rel})：必须从 ./_shared.mjs 导入 runAdapter`);
-      }
-      for (const imp of info.imports) {
-        if (/^(?:node:)?(?:crypto|child_process)$/.test(imp.spec)) {
-          fails.push(`M6 具体适配器越权直引底层模块 (${rel} -> "${imp.spec}")：请统一通过 ./_shared.mjs 调用`);
-        }
-      }
-      if (/status['"]\s*,\s*['"]--porcelain/.test(rawSrc)) {
-        fails.push(`M6 具体适配器重复手写脏树检查 (${rel})：git status --porcelain 已由 ./_shared.mjs 统一接管`);
-      }
-    }
-
-    if (/^(?:runner|skill)\/.*\.mjs$/.test(rel) &&
-        rel !== 'skill/hash.mjs' &&
-        rel !== 'skill/adapters/_shared.mjs' &&
-        !/(?:-fixtures\.mjs$|^skill\/pilot-|^skill\/check-module-integrity\.mjs$|^skill\/check-commit-hygiene\.mjs$)/.test(rel)) {
-      const stripped = rawSrc.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-      if (/\bcreateHash\s*\(\s*['"]sha256['"]\s*\)/.test(stripped)) {
-        fails.push(`M6 禁止业务脚本重复手搓 SHA-256 (${rel})：请复用 skill/hash.mjs 的 sha256() 或 _shared.mjs 的 shaBytes()`);
-      }
-    }
-
-    const effLines = rawSrc.split(/\r?\n/).filter((l) => {
-      const s = l.trim();
-      return s && !s.startsWith('//') && !s.startsWith('*') && !s.startsWith('/*');
-    }).length;
-    if (/^runner\/atlas\/wb-(?:logic|style|dom)-[a-z]\.mjs$/.test(rel)) {
-      fails.push(`M6 禁止机械字母切片回潮 (${rel})：请归入 runner/atlas/ 职责语义模块（见 MODULE-INDEX.md）`);
-    } else if (CORE_SPLIT_RE.test(rel) && effLines > 420) {
-      fails.push(`M6 核心拆分子模块有效行数回潮 (${rel})：当前 ${effLines} 有效行 > 上限 420 有效行`);
-    } else if (/^runner\/core\/[^/]+\.mjs$/.test(rel) && effLines > 600) {
-      fails.push(`M6 核心目录模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 600 有效行`);
-    } else if (/^runner\/(?:atlas|dsh)\/[^/]+\.mjs$/.test(rel) && effLines > 850) {
-      fails.push(`M6 工作台/宿主语义模块超上限 (${rel})：当前 ${effLines} 有效行 > 上限 850 有效行（请按业务域拆分，禁止字母切片）`);
-    }
-  }
+  for (const [f, info] of parsedMap.entries()) cmiAuditFileM6(rootDir, f, info, fails);
 
   return { exitCode: fails.length > 0 ? 1 : 0, fails, scannedFiles: jsFiles.length, jsonFilesCount: jsonFiles.length };
 }

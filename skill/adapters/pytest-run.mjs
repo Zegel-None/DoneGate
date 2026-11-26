@@ -2,9 +2,16 @@
 import { runAdapter } from './_shared.mjs';
 
 function parsePytestSummaryText(text) {
-  const s = String(text || '');
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  let targetLine = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/\b\d+\s+(?:passed|failed|skipped|errors?|xfailed|xpassed|deselected)\b/i.test(lines[i])) {
+      targetLine = lines[i];
+      break;
+    }
+  }
   const pick = (kw) => {
-    const m = s.match(new RegExp(`(\\d+)\\s+${kw}\\b`, 'i'));
+    const m = targetLine.match(new RegExp(`(\\d+)\\s+${kw}\\b`, 'i'));
     return m ? Number(m[1]) : 0;
   };
   return {
@@ -24,12 +31,14 @@ runAdapter({
     const expr = ctx.arg('--k', '');
     let rawText = ctx.readRawOverride('--raw-report');
     let parsed = null;
+    let binExitStatus = null;
     if (rawText === null) {
       const args = ['-q', '--tb=short', ...(expr ? ['-k', expr] : []), targetDir];
       const r = ctx.runBin(args);
       if (r.error || (r.status !== 0 && r.status !== 1 && r.status !== 5)) {
         ctx.fail(3, 'pytest 执行失败：' + (r.stderr || r.error?.message));
       }
+      binExitStatus = r.status;
       rawText = (r.stdout || '') + '\n' + (r.stderr || '');
     }
     const trimmed = rawText.trim();
@@ -45,6 +54,9 @@ runAdapter({
       };
     } else {
       counts = parsePytestSummaryText(trimmed);
+      if (binExitStatus === 1 && counts.failedCount === 0 && counts.errorCount === 0) {
+        counts.errorCount = 1;
+      }
       parsed = { rawSummary: trimmed.slice(0, 4000), ...counts };
     }
     const totalCount = counts.passedCount + counts.failedCount + counts.skippedCount + counts.errorCount;

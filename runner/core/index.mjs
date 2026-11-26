@@ -1,7 +1,10 @@
-// 判定核完整对外门面出口（汇总 L0 内核契约、进度便签、密封切片、三级变焦驾驶舱、开源图谱桥、影响雷达与全景看板导出接口）
+// 判定核完整对外无头门面出口（汇总 L1 内核契约、十二条命令、进度便签、密封切片、开源图谱桥与影响雷达，零 UI/Atlas 反向依赖）
 export * from './contract.mjs';
+export { cmdCheck, cmdContractFreeze, cmdContractNew, cmdContractPromote, cmdInit, cmdRetire, cmdTeeth } from './commands-a.mjs';
+export { cmdGaps, cmdGraph, cmdHandover, cmdStatus, cmdVerifyApply, cmdVerifyPack, runHealthChecks } from './commands-b.mjs';
+export { collectGapsList } from './cmd-inspect.mjs';
+export { cmdCatch } from './teeth-ach.mjs';
 export { appendProgressNote, clearCustomNotes, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from './progress.mjs';
-export { cmdVerifyApply, cmdVerifyPack } from './cmd-handover-verify.mjs';
 export {
   SHARED_GOVERNANCE_GLOBS, companionDirForFileScope, discoverHermeticGraph, fileBelongsToScopes,
   inspectCrossCardFocusPatterns, isSharedGovernanceFile, resolveSubagentBudgetProfile, writeProjectRouter
@@ -10,8 +13,9 @@ export { adviseCapsuleModularitySplit } from './capsule-shard-advisor.mjs';
 export { cmdSlice, diffAgainstFrozenStub, freezeNodeStubBaseline, parseFocusPatterns, parseLexicalTerms } from './hermetic-capsule.mjs';
 export { cmdCheckNode, collectGitNodeChanges } from './node-micro-gate.mjs';
 export { analyzeImpactRadar, cmdImpact } from './impact-radar.mjs';
-export { getCbmGraphSummary, openCbmGraphHandle, queryCbmFileGraph, queryCbmImpactGraph, queryCbmSymbolTrace, resolveCbmBinary } from './cockpit-cbm.mjs';
-export { formatPathGovernanceLines, matchPathBoundAdrs, renderBoundedSourceSlice, renderCbmSymbolZoom } from './cockpit-source.mjs';
-export { buildCockpitGraphIndex, kneedleElbowCount } from './cockpit-index.mjs';
-export { cmdBrief, cmdZoom } from './cockpit-commands.mjs';
-export { buildBrowserOpenCommand, buildDashboardPayload, exportDashboardHtml, openInSystemBrowser, renderDashboardHtml } from './dashboard.mjs';
+export { CK_SKIP_DIRS, listRootRegularFiles, runWithSingleflightCache } from './cockpit-cache.mjs';
+export {
+  getCbmGraphSummary, kneedleElbowCount, openCbmGraphHandle, queryCbmContractHubs,
+  queryCbmFileGraph, queryCbmImpactGraph, queryCbmSymbolTrace, resolveCbmBinary
+} from './cockpit-cbm.mjs';
+export { invokeDashboardExporter, registerDashboardExporter } from './dashboard-hook.mjs';

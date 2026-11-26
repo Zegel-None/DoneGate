@@ -4,11 +4,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanGitEnv } from './autopilot-worktree.mjs';
+import { cleanGitEnv } from './autopilot/autopilot-worktree.mjs';
 import {
   AUTOPILOT_STATES, approveAutopilotHumanGate, loadAutopilotCheckpoint
-} from './autopilot-state.mjs';
-import { executeDeterministicWorkflowRun } from './workflow-runner.mjs';
+} from './autopilot/autopilot-state.mjs';
+import { executeDeterministicWorkflowRun } from './autopilot/workflow-runner.mjs';
 
 async function verifyAutopilotStateAndBreakers() {
   const tmp = mkdtempSync(join(tmpdir(), 'dg-autopilot-'));

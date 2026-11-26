@@ -9,21 +9,21 @@ import vm from 'node:vm';
 import {
   buildDshFileResourceAddress, resolveDshHome,
   resolveDshProfileDir, toSafeFileUrl
-} from './dsh/win-paths.mjs';
+} from './dsh/deps/win-paths.mjs';
 import {
   buildElementQuotePayload, buildMicroVerdictCard, deriveSliceCmdFromUiOwner,
   formatQuoteCapsule, parseQuoteCapsule, parseQuotedTargetsFromMessage, verifySubagentNodeReceipt
-} from './dsh/quote-protocol.mjs';
+} from './dsh/autopilot/quote-protocol.mjs';
 import {
   executeDeterministicWorkflowRun, preflightWorkflowPack
-} from './dsh/workflow-runner.mjs';
+} from './dsh/autopilot/workflow-runner.mjs';
 import {
   buildWinHardenedGitArgs, buildWorkflowDepEnv, inspectWorkflowDeps, provisionWorkflowDeps,
   readWorkflowDepsStatus, recordSharedPoolDepReady, runNpmPrefixInstall, writeSharedPoolLaunchers
-} from './dsh/workflow-deps.mjs';
+} from './dsh/deps/workflow-deps.mjs';
 import {
   buildDshBundleDirectory, installDshWebBundle, stripCordisPatchText, uninstallDshWebBundle
-} from './dsh/install-dsh-web.mjs';
+} from './dsh/host/install-dsh-web.mjs';
 import { runAutopilotSandboxChecks } from './dsh/fixtures-autopilot-sandbox.mjs';
 import { runJitAndCampaignChecks } from './dsh/fixtures-campaign-jit.mjs';
 
@@ -35,14 +35,14 @@ async function verifyWinPathsAndCmdScript(check) {
     const winEnv = { USERPROFILE: mockHome };
     assert.equal(resolveDshHome(winEnv, 'win32'), win32.join(mockHome, '.dsh'));
     assert.equal(resolveDshProfileDir('web', winEnv, 'win32'), win32.join(mockHome, '.dsh', 'profiles', 'web'));
-    const url = toSafeFileUrl(win32.join('D:', 'Agent-Studio', 'DSH-Work', 'DoneGate V4(完结门)', 'runner', 'dsh', 'host-routes.mjs'));
+    const url = toSafeFileUrl(win32.join('D:', 'Agent-Studio', 'DSH-Work', 'DoneGate V4(完结门)', 'runner', 'dsh', 'host', 'host-routes.mjs'));
     assert.ok(url.startsWith('file:///D:/Agent-Studio/DSH-Work/'));
     assert.ok(url.includes('%20'));
     const mockRoot = win32.join('D:', 'Agent-Studio', 'DoneGate');
-    const resUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join(mockRoot, 'runner', 'dsh', 'workflow-runner.mjs'));
-    assert.equal(resUri, 'dsh-resource://file/session/sess-01/runner/dsh/workflow-runner.mjs');
-    const lowerDriveUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join('d:', 'agent-studio', 'donegate', 'runner', 'dsh', 'workflow-runner.mjs'));
-    assert.equal(lowerDriveUri, 'dsh-resource://file/session/sess-01/runner/dsh/workflow-runner.mjs');
+    const resUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join(mockRoot, 'runner', 'dsh', 'autopilot', 'workflow-runner.mjs'));
+    assert.equal(resUri, 'dsh-resource://file/session/sess-01/runner/dsh/autopilot/workflow-runner.mjs');
+    const lowerDriveUri = buildDshFileResourceAddress('sess-01', mockRoot, win32.join('d:', 'agent-studio', 'donegate', 'runner', 'dsh', 'autopilot', 'workflow-runner.mjs'));
+    assert.equal(lowerDriveUri, 'dsh-resource://file/session/sess-01/runner/dsh/autopilot/workflow-runner.mjs');
     const cmdBytes = readFileSync(join(ROOT, 'install-dsh-web.cmd'), 'utf8');
     assert.ok(cmdBytes.includes('\r\n'), 'install-dsh-web.cmd 必须保持 Windows CRLF 换行');
     assert.ok(cmdBytes.includes('chcp 65001'), 'install-dsh-web.cmd 必须切换 UTF-8 代码页');
@@ -73,13 +73,13 @@ async function verifyQuoteAndReceiptProtocol(check) {
 
     const dshCap = formatQuoteCapsule({
       kind: 'ui', id: 'bridge-el-1', label: '保存按钮',
-      scopes: ['apps/web/Form.tsx'], uiOwner: 'runner/dsh/ui-board-bridge.mjs'
+      scopes: ['apps/web/Form.tsx'], uiOwner: 'runner/dsh/uiboard/ui-board-bridge.mjs'
     });
     const parsedDshCap = parseQuoteCapsule(dshCap);
-    assert.equal(parsedDshCap.uiOwner, 'runner/dsh/ui-board-bridge.mjs');
-    assert.equal(parsedDshCap.sliceCmd, 'node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/ui-board-bridge.mjs');
+    assert.equal(parsedDshCap.uiOwner, 'runner/dsh/uiboard/ui-board-bridge.mjs');
+    assert.equal(parsedDshCap.sliceCmd, 'node runner/donegate.mjs slice uiboard-studio --focus runner/dsh/uiboard/ui-board-bridge.mjs');
     assert.equal(deriveSliceCmdFromUiOwner('runner/atlas/wb-uiboard.mjs'), 'node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-uiboard.mjs');
-    assert.equal(deriveSliceCmdFromUiOwner('runner/dsh/quote-protocol.mjs'), 'node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/quote-protocol.mjs');
+    assert.equal(deriveSliceCmdFromUiOwner('runner/dsh/autopilot/quote-protocol.mjs'), 'node runner/donegate.mjs slice governance-autopilot --focus runner/dsh/autopilot/quote-protocol.mjs');
     assert.equal(deriveSliceCmdFromUiOwner('../evil.mjs'), null);
 
     // 验证旧格式胶囊 100% 向后兼容与无显式 sliceCmd 时自动按 uiOwner 补推
@@ -325,19 +325,24 @@ async function verifyClientSandboxAndRunner(check) {
         }
       }, { projectRoot: workRoot });
 
-      const callHost = async (method, urlPath, bodyObj = null) => {
+      const callHost = async (method, urlPath, bodyObj = null, extraHeaders = {}) => {
         let code = 200;
         let outTxt = '';
         await hostRoute({
-          method, url: urlPath, headers: {},
+          method, url: urlPath, headers: { host: '127.0.0.1:3000', ...extraHeaders },
           on(ev, cb) { if (ev === 'data' && bodyObj) cb(Buffer.from(JSON.stringify(bodyObj))); if (ev === 'end') cb(); },
           destroy() {}
         }, { writeHead(s) { code = s; }, end(c) { outTxt = c || ''; } });
-        return { code, json: outTxt ? JSON.parse(outTxt) : null };
+        let json = null;
+        try { json = outTxt ? JSON.parse(outTxt) : null; } catch (err) { void err; }
+        return { code, raw: outTxt, json };
       };
       const pingRes = await callHost('GET', '/donegate/api/ping');
       assert.equal(pingRes.json.ok, true);
       assert.equal(pingRes.json.mode, 'dsh-web');
+      const canvasRes = await callHost('GET', '/donegate/api/canvas?dsh=1');
+      const tokMatch = String(canvasRes.raw || '').match(/name="donegate-session-token"\s+content="([^"]+)"/);
+      const hostAuth = tokMatch ? { 'x-donegate-session-token': tokMatch[1], 'content-type': 'application/json' } : { 'content-type': 'application/json' };
       const provRes = await callHost('POST', '/donegate/api/workflow-deps/provision', {
         sessionId: 'sess-resume-1', spawnSubagent: true, onlyNodeId: 'node-target',
         pack: {
@@ -348,7 +353,7 @@ async function verifyClientSandboxAndRunner(check) {
             { id: 'node-other', title: '旁路节点', installSpec: { id: 'other-dep', bin: 'never-other-bin', allowHostEnv: false } }
           ]
         }
-      });
+      }, hostAuth);
       assert.equal(provRes.json.ready, false, '未实际装完前严禁把 ready 标为 true');
       assert.deepEqual(provRes.json.items.map((x) => x.id), ['only-dep'], 'onlyNodeId 必须精准过滤为单节点依赖');
       assert.equal(provRes.json.subagentDispatched, true);

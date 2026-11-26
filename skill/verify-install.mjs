@@ -114,7 +114,7 @@ function runNodeScriptGate(root, scriptRel, args = [], extraEnv = {}) {
 }
 
 function runGate3DshMount(root, dshHome, doInstall, env) {
-  const installerRel = 'runner/dsh/install-dsh-web.mjs';
+  const installerRel = 'runner/dsh/host/install-dsh-web.mjs';
   const profiles = discoverDshProfileNames(dshHome);
   if (doInstall) {
     for (const pf of profiles) {
@@ -139,7 +139,7 @@ function runGate4And5Runtime(root, doInstall) {
   const initFlag = doInstall ? 'true' : 'false';
   const probeScript = [
     "import { buildProjectAtlas, renderAtlasWorkbenchHtml } from './runner/atlas/index.mjs';",
-    "import { ensureSharedPoolSkeleton } from './runner/dsh/workflow-deps.mjs';",
+    "import { ensureSharedPoolSkeleton } from './runner/dsh/deps/workflow-deps.mjs';",
     "const root = process.cwd();",
     "const atlas = buildProjectAtlas(root);",
     "const html = renderAtlasWorkbenchHtml(atlas);",

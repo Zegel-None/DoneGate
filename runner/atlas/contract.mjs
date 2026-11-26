@@ -15,7 +15,8 @@ export const ATLAS_SUBPACKS = Object.freeze({
     'runner/atlas/hydrate-workbench.mjs',
     'runner/atlas/modularity-hierarchy.mjs',
     'runner/atlas/humanize.mjs',
-    'runner/atlas/serve-atlas.mjs',
+    'runner/atlas/live-port.mjs',
+    'runner/atlas/dashboard.mjs',
     'runner/atlas/ui-views.mjs'
   ]),
   '@canvas': Object.freeze([

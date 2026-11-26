@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { evaluateUiAestheticsRubric, UI_AESTHETICS_RUBRIC_DIMENSIONS } from '../runner/dsh/ui-aesthetics.mjs';
-import { runUiLiveEvaluation, uleResolvePlaywrightModule, uleValidateLocalTargetUrl } from '../runner/dsh/ui-live-evaluator.mjs';
-import { handleUiBoardSubRoute } from '../runner/dsh/ui-board-routes.mjs';
+import { evaluateUiAestheticsRubric, UI_AESTHETICS_RUBRIC_DIMENSIONS } from '../runner/dsh/uiboard/ui-aesthetics.mjs';
+import { runUiLiveEvaluation, uleResolvePlaywrightModule, uleValidateLocalTargetUrl } from '../runner/dsh/uiboard/ui-live-evaluator.mjs';
+import { handleUiBoardSubRoute } from '../runner/dsh/host/ui-board-routes.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 

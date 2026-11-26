@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { cmdGovernanceFlow } from '../runner/dsh/governance-flow-cli.mjs';
+import { cmdGovernanceFlow } from '../runner/dsh/autopilot/governance-flow-cli.mjs';
 import {
   gdCollectDisabledIntegrityRules,
   gdFormatIntegrityBannerMarkdown,
@@ -19,8 +19,8 @@ import {
   wfcListPendingProposals,
   wfcResetProjectOverlay,
   wfcSaveProjectOverlay
-} from '../runner/dsh/workflow-compiler.mjs';
-import { executeBrickGateNode } from '../runner/dsh/brick-exec.mjs';
+} from '../runner/dsh/autopilot/workflow-compiler.mjs';
+import { executeBrickGateNode } from '../runner/dsh/autopilot/brick-exec.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 

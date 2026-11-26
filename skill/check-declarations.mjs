@@ -57,16 +57,22 @@ function lookupContractObligation(projectRoot, checkedBy) {
   return { exitCode: 0 };
 }
 
-export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
-  if (!existsSync(claimAbsPath)) return { exitCode: 3, reason: 'claim.json 不存在：' + claimAbsPath };
+function declReadClaimJson(claimAbsPath) {
+  if (!existsSync(claimAbsPath)) return { error: { exitCode: 3, reason: 'claim.json 不存在：' + claimAbsPath } };
   let claimBuf;
-  try { claimBuf = readFileSync(claimAbsPath); }
-  catch { return { exitCode: 3, reason: 'claim.json 不可读：' + claimAbsPath }; }
+  try {
+    claimBuf = readFileSync(claimAbsPath);
+  } catch {
+    return { error: { exitCode: 3, reason: 'claim.json 不可读：' + claimAbsPath } };
+  }
+  try {
+    return { claim: JSON.parse(claimBuf.toString('utf8')) };
+  } catch (e) {
+    return { error: { exitCode: 2, reason: 'claim.json JSON 解析失败：' + e.message } };
+  }
+}
 
-  let claim;
-  try { claim = JSON.parse(claimBuf.toString('utf8')); }
-  catch (e) { return { exitCode: 2, reason: 'claim.json JSON 解析失败：' + e.message }; }
-
+function declValidateClaimStructure(claim) {
   if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
     return { exitCode: 2, reason: 'claim.json 顶层必须是对象' };
   }
@@ -76,68 +82,111 @@ export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
   if (missingKeys.length || extraKeys.length) {
     return { exitCode: 2, reason: `违反严格九字段：缺 [${missingKeys.join(',')}] 多 [${extraKeys.join(',')}]` };
   }
-
   const forbidden = findForbiddenKeysDeep(claim);
   if (forbidden.length) return { exitCode: 2, reason: '出现协议禁词键名：' + forbidden.join('、') };
+  return null;
+}
 
+function declValidateClaimScalars(claim) {
+  const isNonEmptyStr = (v) => typeof v === 'string' && v.trim().length > 0;
   if (!Number.isInteger(claim.stage) || claim.stage < 1 || claim.stage > 20) return { exitCode: 2, reason: 'stage 必须是 1-20 整数' };
-  if (typeof claim.tool !== 'string' || !claim.tool.trim()) return { exitCode: 2, reason: 'tool 非法' };
-  if (typeof claim.version !== 'string' || !claim.version.trim()) return { exitCode: 2, reason: 'version 非法' };
+  if (!isNonEmptyStr(claim.tool)) return { exitCode: 2, reason: 'tool 非法' };
+  if (!isNonEmptyStr(claim.version)) return { exitCode: 2, reason: 'version 非法' };
   if (claim.role !== 'hard' && claim.role !== 'soft') return { exitCode: 2, reason: 'role 必须是 hard 或 soft' };
-  if (typeof claim.degradedTo !== 'string' || !claim.degradedTo.trim() || claim.degradedTo.trim() === '跳过') {
+  if (!isNonEmptyStr(claim.degradedTo) || claim.degradedTo.trim() === '跳过') {
     return { exitCode: 2, reason: 'degradedTo 必须是非空退化说明且不能为「跳过」' };
   }
-  if (!Array.isArray(claim.inputs) || !Array.isArray(claim.artifacts) || !Array.isArray(claim.claims) || !Array.isArray(claim.unresolved)) {
+  if (['inputs', 'artifacts', 'claims', 'unresolved'].some((k) => !Array.isArray(claim[k]))) {
     return { exitCode: 2, reason: 'inputs / artifacts / claims / unresolved 必须是数组' };
   }
+  return null;
+}
 
-  for (const u of claim.unresolved) {
-    if (!u || typeof u !== 'object' || typeof u.text !== 'string' || !u.text.trim() || !Number.isInteger(u.stage) || u.stage < 1 || u.stage > 20) {
+function declValidateUnresolvedList(unresolved) {
+  for (const u of unresolved) {
+    const validObj = u && typeof u === 'object';
+    const validText = validObj && typeof u.text === 'string' && u.text.trim().length > 0;
+    const validStage = validObj && Number.isInteger(u.stage) && u.stage >= 1 && u.stage <= 20;
+    if (!validText || !validStage) {
       return { exitCode: 2, reason: 'unresolved 条目必须含 { text, stage(1-20) }' };
     }
   }
+  return null;
+}
 
-  // 单进程一次读入内存后立即重算 SHA-256，后续只消费内存对象
-  const memFiles = new Map();
-  for (const listName of ['inputs', 'artifacts']) {
-    for (const item of claim[listName]) {
-      if (!item || typeof item.path !== 'string' || !HEX64_RE.test(String(item.sha256 || ''))) {
-        return { exitCode: 2, reason: `${listName} 条目缺少合法 path 或 64 位裸小写 sha256` };
-      }
-      const abs = resolve(projectRoot, item.path);
-      if (!existsSync(abs)) return { exitCode: 3, reason: `${listName} 文件不存在：${item.path}` };
-      let buf;
-      try { buf = readFileSync(abs); }
-      catch { return { exitCode: 3, reason: `${listName} 文件读不出：${item.path}` }; }
-      const actualHash = sha256(buf);
-      if (actualHash !== item.sha256) {
-        return { exitCode: 2, reason: `${listName} 哈希不符 (${item.path})：声明=${item.sha256} 实算=${actualHash}` };
-      }
-      memFiles.set(item.path, buf);
-      if (listName === 'artifacts' && item.kind && item.kind.endsWith('-observation')) {
-        let obsParsed;
-        try { obsParsed = JSON.parse(buf.toString('utf8')); }
-        catch { return { exitCode: 2, reason: `observation 产物 JSON 损坏：${item.path}` }; }
-        const obsForbidden = findForbiddenKeysDeep(obsParsed);
-        if (obsForbidden.length) return { exitCode: 2, reason: `observation 含协议禁词：${obsForbidden.join('、')}` };
-      }
-    }
+function declVerifyObservationJson(buf, itemPath) {
+  let obsParsed;
+  try {
+    obsParsed = JSON.parse(buf.toString('utf8'));
+  } catch {
+    return { exitCode: 2, reason: `observation 产物 JSON 损坏：${itemPath}` };
   }
+  const obsForbidden = findForbiddenKeysDeep(obsParsed);
+  if (obsForbidden.length) return { exitCode: 2, reason: `observation 含协议禁词：${obsForbidden.join('、')}` };
+  return null;
+}
 
-  for (const cl of claim.claims) {
+function declVerifySingleFileItem(listName, item, projectRoot, memFiles) {
+  if (!item || typeof item.path !== 'string' || !HEX64_RE.test(String(item.sha256 || ''))) {
+    return { exitCode: 2, reason: `${listName} 条目缺少合法 path 或 64 位裸小写 sha256` };
+  }
+  const abs = resolve(projectRoot, item.path);
+  if (!existsSync(abs)) return { exitCode: 3, reason: `${listName} 文件不存在：${item.path}` };
+  let buf;
+  try {
+    buf = readFileSync(abs);
+  } catch {
+    return { exitCode: 3, reason: `${listName} 文件读不出：${item.path}` };
+  }
+  const actualHash = sha256(buf);
+  if (actualHash !== item.sha256) {
+    return { exitCode: 2, reason: `${listName} 哈希不符 (${item.path})：声明=${item.sha256} 实算=${actualHash}` };
+  }
+  memFiles.set(item.path, buf);
+  if (listName === 'artifacts' && item.kind && item.kind.endsWith('-observation')) {
+    return declVerifyObservationJson(buf, item.path);
+  }
+  return null;
+}
+
+function declVerifyClaimEntries(claims, projectRoot, skipContractLookup) {
+  for (const cl of claims) {
     if (!cl || typeof cl !== 'object' || Array.isArray(cl)) return { exitCode: 2, reason: 'claims 条目必须是对象' };
     const cKeys = Object.keys(cl).sort();
-    if (cKeys.length !== 2 || cKeys[0] !== 'checkedBy' || cKeys[1] !== 'text' || typeof cl.text !== 'string' || !cl.text.trim()) {
+    const validShape = cKeys.length === 2 && cKeys[0] === 'checkedBy' && cKeys[1] === 'text';
+    if (!validShape || typeof cl.text !== 'string' || !cl.text.trim()) {
       return { exitCode: 2, reason: 'claims 条目严格且仅含 { text, checkedBy }' };
     }
     if (typeof cl.checkedBy !== 'string' || !/^[^/]+\/[^/]+$/.test(cl.checkedBy)) {
       return { exitCode: 2, reason: 'checkedBy 语法非法（必须为 <contractId>/<obligationId>）：' + cl.checkedBy };
     }
-    if (!opts.skipContractLookup) {
+    if (!skipContractLookup) {
       const look = lookupContractObligation(projectRoot, cl.checkedBy);
       if (look.exitCode !== 0) return look;
     }
   }
+  return null;
+}
+
+export function verifyClaimInMemory(claimAbsPath, projectRoot, opts = {}) {
+  const loaded = declReadClaimJson(claimAbsPath);
+  if (loaded.error) return loaded.error;
+  const { claim } = loaded;
+
+  const structErr = declValidateClaimStructure(claim) || declValidateClaimScalars(claim) || declValidateUnresolvedList(claim.unresolved);
+  if (structErr) return structErr;
+
+  // 单进程一次读入内存后立即重算 SHA-256，后续只消费内存对象
+  const memFiles = new Map();
+  for (const listName of ['inputs', 'artifacts']) {
+    for (const item of claim[listName]) {
+      const fileErr = declVerifySingleFileItem(listName, item, projectRoot, memFiles);
+      if (fileErr) return fileErr;
+    }
+  }
+
+  const claimErr = declVerifyClaimEntries(claim.claims, projectRoot, Boolean(opts.skipContractLookup));
+  if (claimErr) return claimErr;
 
   return { exitCode: 0, claim, memFiles, unresolvedCount: claim.unresolved.length };
 }

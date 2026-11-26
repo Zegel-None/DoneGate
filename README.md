@@ -1,4 +1,4 @@
-# DoneGate · 完结门（v0.4.0）
+# DoneGate · 完结门（v1.0.0）
 
 > **专为不懂写代码的 Vibecoder 打造的「AI 工程监理 + 可视化产品指挥台」**
 >
@@ -90,7 +90,7 @@
 - **零魔法数字自适应分层（`runner/atlas/modularity-hierarchy.mjs`）**：拒绝一刀切硬凑固定卡片数，采用 Newman-Girvan 模块度增益判据（$\Delta Q > 0$）结合有向无环凸性约束做非均衡递归聚合——简单线性项目 100% 平铺零套娃，复杂内聚子系统自动成组并支持拓扑鱼眼原地展开（参考 [C4 Model](https://c4model.com/diagrams)、[IcePanel Flows](https://docs.icepanel.io/visual-storytelling/flows) 与 [Zooming User Interface](https://en.wikipedia.org/wiki/Zooming_user_interface)）。
 - **密封契约切片与 400k 五段式派工预算（`donegate slice` / `check-node`）**：按百万窗口模型注意力黄金甜点（`1M × 40% = 400,000 Tokens`，亦支持小窗口按比例缩放）切出密封施工胶囊——0-Hop 本卡源码与测试 `160k` + 1-Hop 只读接口存根 `48k`，2-Hop 以外无关代码物理屏蔽；子智能体完工跑 `check-node --receipt` 秒级拦截越界改文件与私改接口，仅回传 500-Token 回执即可销毁子上下文。
 - **独立工具舱共享依赖池（`workflows/.deps/_shared/npm-cells/`）**：每款外部 CLI 工具（如 Storybook、Lighthouse CI、Playwright、Gitleaks）按确定性精确版本隔离安装进各自的 `npm-cells/<id>/` 独立舱室并生成跨目录 `NODE_PATH` 启动器，彻底根绝跨大版本依赖打架（如 Vite 6 vs 8）与 `npm` 互删顽疾。
-- **双层子智能体人机隔离锁（`runner/dsh/subagent-isolation.mjs`）**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
+- **双层子智能体人机隔离锁（`runner/dsh/subagent-isolation.mjs`（私有仓））**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
 - **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 31 个真实适配器链路；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
 
 ## 五、仓库目录速览与手工自检命令

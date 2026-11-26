@@ -41,34 +41,40 @@ export function isSharedGovernanceFile(relFile) {
   return fileBelongsToScopes(relFile, SHARED_GOVERNANCE_GLOBS);
 }
 
+function ctxRtrMatchesNodeFile(pat, files) {
+  const cleanDir = pat.replace(/\/+$/, '');
+  for (const f of files) {
+    if (f === pat || (cleanDir && f.startsWith(`${cleanDir}/`))) return f;
+    if (f.endsWith(`/${pat}`) || basename(f) === pat || basename(f, extname(f)) === pat) return f;
+  }
+  return undefined;
+}
+
+function ctxRtrFindPatternOwnerNode(pat, targetId, nodes) {
+  for (const node of nodes || []) {
+    if (node.id === targetId) continue;
+    if (fileBelongsToScopes(pat, node.scope || [])) return { ownerNodeId: node.id, matchedPath: pat };
+    const nodeFiles = new Set([...(node.stub?.scopeFiles || []), ...(node.stub?.relatedTestFiles || [])]);
+    const hit = ctxRtrMatchesNodeFile(pat, nodeFiles);
+    if (hit) return { ownerNodeId: node.id, matchedPath: hit };
+  }
+  return null;
+}
+
 export function inspectCrossCardFocusPatterns(target, rawPatterns, graph) {
   const warnings = [];
   const crossCardRoutes = [];
   if (!target || !Array.isArray(rawPatterns) || rawPatterns.length === 0) return { warnings, crossCardRoutes };
   const targetFiles = new Set([...(target.stub?.scopeFiles || []), ...(target.stub?.relatedTestFiles || [])]);
-  const matchesNodeFile = (pat, files) => {
-    const cleanDir = pat.replace(/\/+$/, '');
-    return [...files].find((f) => f === pat || (cleanDir && f.startsWith(`${cleanDir}/`)) || f.endsWith(`/${pat}`) || basename(f) === pat || basename(f, extname(f)) === pat);
-  };
-
   for (const rawPat of rawPatterns) {
     const pat = normalizeScopePrefix(rawPat);
     if (!pat || pat.startsWith('@')) continue;
-    if (fileBelongsToScopes(pat, target.scope || []) || matchesNodeFile(pat, targetFiles)) continue;
-
-    let ownerNodeId = null;
-    let matchedPath = pat;
-    for (const node of graph?.nodes || []) {
-      if (node.id === target.id) continue;
-      if (fileBelongsToScopes(pat, node.scope || [])) { ownerNodeId = node.id; break; }
-      const nodeFiles = new Set([...(node.stub?.scopeFiles || []), ...(node.stub?.relatedTestFiles || [])]);
-      const hit = matchesNodeFile(pat, nodeFiles);
-      if (hit) { ownerNodeId = node.id; matchedPath = hit; break; }
-    }
-    if (ownerNodeId) {
-      const cmd = `node runner/donegate.mjs slice ${ownerNodeId} --focus ${matchedPath}`;
-      warnings.push(`焦点路径 \`${pat}\` 不属于 \`${target.id}\` 的 scope[]，实际归属节点为 \`${ownerNodeId}\`；请改跑：\`${cmd}\``);
-      crossCardRoutes.push({ pattern: pat, ownerNodeId, sharedGovernance: false, command: cmd });
+    if (fileBelongsToScopes(pat, target.scope || []) || ctxRtrMatchesNodeFile(pat, targetFiles)) continue;
+    const found = ctxRtrFindPatternOwnerNode(pat, target.id, graph?.nodes);
+    if (found) {
+      const cmd = `node runner/donegate.mjs slice ${found.ownerNodeId} --focus ${found.matchedPath}`;
+      warnings.push(`焦点路径 \`${pat}\` 不属于 \`${target.id}\` 的 scope[]，实际归属节点为 \`${found.ownerNodeId}\`；请改跑：\`${cmd}\``);
+      crossCardRoutes.push({ pattern: pat, ownerNodeId: found.ownerNodeId, sharedGovernance: false, command: cmd });
     } else if (isSharedGovernanceFile(pat)) {
       warnings.push(`焦点路径 \`${pat}\` 不属于 \`${target.id}\` 的 scope[]，属于根级共享治理文件（无单一业务卡归属；微门禁验收请加 \`--allow-cross-scope\`）`);
       crossCardRoutes.push({ pattern: pat, ownerNodeId: null, sharedGovernance: true, command: null });
@@ -228,18 +234,9 @@ export function discoverHermeticGraph(projectRoot) {
   return { ok: true, errors: [], thresholds, testFiles: coverageScan.testFiles, topoOrder, sccCycles, nodes: enrichedNodes, redImports, facadeViolations };
 }
 
-export function writeProjectRouter(projectRoot, opts = {}) {
-  const graph = discoverHermeticGraph(projectRoot);
-  if (!graph.ok) return { ok: false, errors: graph.errors, nodes: [] };
-
-  const budget = resolveSubagentBudgetProfile(graph.thresholds, opts);
-  const statusSnap = computeProjectStatus(projectRoot);
-  const statusByContract = new Map((statusSnap.contractSummaries || []).map((c) => [c.id, c]));
-  const stubsDir = join(projectRoot, '.donegate', 'stubs');
-  mkdirSync(stubsDir, { recursive: true });
-
+function ctxRtrWriteNodeStubFiles(stubsDir, nodes) {
   let totalSourceTokens = 0, totalStubTokens = 0;
-  for (const n of graph.nodes) {
+  for (const n of nodes) {
     totalSourceTokens += n.stub.sourceTokens;
     totalStubTokens += n.stub.stubTokens;
     writeFileSync(join(stubsDir, `${n.id}.stub.d.ts`), n.stub.stubText, 'utf8');
@@ -250,65 +247,78 @@ export function writeProjectRouter(projectRoot, opts = {}) {
       exportedSymbols: n.stub.exportedSymbols, httpRoutes: n.stub.httpRoutes || []
     }, null, 2), 'utf8');
   }
+  return { totalSourceTokens, totalStubTokens };
+}
 
+function ctxRtrFormatTableRow(n, statusByContract) {
+  const st = statusByContract.get(n.id);
+  const stateLabel = st ? st.state : (n.isFrozenContract ? '已冻结' : '待冻结');
+  const scopes = n.scope || [];
+  const scopeSummary = scopes.slice(0, 3).map((s) => `\`${s}\``).join(', ') + (scopes.length > 3 ? ` +${scopes.length - 3}` : '');
+  const up = n.dependsOnIds.length > 0 ? n.dependsOnIds.map((d) => `\`${d}\``).join(', ') : '—';
+  const down = n.dependedByIds.length > 0 ? n.dependedByIds.map((d) => `\`${d}\``).join(', ') : '—';
+  const titleShort = String(`${n.title}${n.why ? '：' + n.why : ''}`).replace(/\|/g, '/').replace(/\s+/g, ' ').slice(0, 42);
+  return `| \`${n.id}\` | ${titleShort} | ${scopeSummary || '—'} | ${up} | ${down} | ${n.stub.sourceTokens}t | ${n.stub.stubTokens}t | ${stateLabel} | \`${n.stub.stubHash.slice(0, 10)}\` |`;
+}
+
+function ctxRtrBuildRouterMarkdown(graph, budget, statusByContract, totals) {
   const utilPct = Math.round(budget.targetUtilization * 100);
   const md = [
-    '# DoneGate L0 全局渐进路由表（ROUTER.md）',
-    '',
+    '# DoneGate L0 全局渐进路由表（ROUTER.md）', '',
     `> 子代理目标预算：**${budget.contextWindowTokens.toLocaleString()} 窗口 × ${utilPct}% = ${budget.totalSessionBudgetTokens.toLocaleString()} Tokens**（初始胶囊上限 ${budget.capsuleInitialMaxTokens.toLocaleString()}t + 按需局部展开 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t + 多轮推理施工留白 ${budget.multiTurnReserveTokens.toLocaleString()}t）`,
-    `> 拓扑施工顺序：\`${graph.topoOrder.join(' → ') || '（空）'}\``,
-    '',
+    `> 拓扑施工顺序：\`${graph.topoOrder.join(' → ') || '（空）'}\``, '',
     '| 节点 ID | 职责与边界 | 管辖范围 (scope) | 1-Hop 上游 | 1-Hop 下游 | 0-Hop 源码 | 1-Hop 存根 | 状态 | stubHash |',
     '|---|---|---|---|---|---|---|---|---|'
   ];
-
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   for (const id of graph.topoOrder) {
-    const n = graph.nodes.find((x) => x.id === id);
-    if (!n) continue;
-    const st = statusByContract.get(id);
-    const stateLabel = st ? st.state : (n.isFrozenContract ? '已冻结' : '待冻结');
-    const scopeSummary = (n.scope || []).slice(0, 3).map((s) => `\`${s}\``).join(', ') + ((n.scope || []).length > 3 ? ` +${n.scope.length - 3}` : '');
-    const up = n.dependsOnIds.length > 0 ? n.dependsOnIds.map((d) => `\`${d}\``).join(', ') : '—';
-    const down = n.dependedByIds.length > 0 ? n.dependedByIds.map((d) => `\`${d}\``).join(', ') : '—';
-    const titleShort = String(`${n.title}${n.why ? '：' + n.why : ''}`).replace(/\|/g, '/').replace(/\s+/g, ' ').slice(0, 42);
-    md.push(`| \`${n.id}\` | ${titleShort} | ${scopeSummary || '—'} | ${up} | ${down} | ${n.stub.sourceTokens}t | ${n.stub.stubTokens}t | ${stateLabel} | \`${n.stub.stubHash.slice(0, 10)}\` |`);
+    const n = nodeById.get(id);
+    if (n) md.push(ctxRtrFormatTableRow(n, statusByContract));
   }
-
   if (graph.redImports.length > 0 || graph.facadeViolations.length > 0) {
     md.push('', '## 边界告警（门 0 地基巡检）');
     for (const r of graph.redImports.slice(0, 8)) md.push(`- 红线未声明依赖：\`${r.fromNode}\` (${r.fromFile}) → \`${r.toNode}\` (${r.toFile})`);
     for (const v of graph.facadeViolations.slice(0, 8)) md.push(`- 越过门面私引内部实现：\`${v.fromNode}\` (${v.fromFile}) 私引 \`${v.toFile}\`（应经由 \`${v.expectedFacades.join(', ')}\`）`);
   }
-
   md.push(
-    '',
-    `## 子代理五段式预算配额（${budget.totalSessionBudgetTokens.toLocaleString()} Tokens 总盘）`,
+    '', `## 子代理五段式预算配额（${budget.totalSessionBudgetTokens.toLocaleString()} Tokens 总盘）`,
     `- **L0 全局路由区**：上限 ${budget.routerBudgetTokens.toLocaleString()}t | **0-Hop 本卡源码+单测区**：上限 ${budget.zeroHopSourceBudgetTokens.toLocaleString()}t | **1-Hop 邻域契约存根区**：上限 ${budget.oneHopContractBudgetTokens.toLocaleString()}t`,
     `- **按需局部展开池**：预留 ${budget.onDemandExpandBudgetTokens.toLocaleString()}t | **多轮推理与测试迭代留白**：预留 ${budget.multiTurnReserveTokens.toLocaleString()}t | **交回总控结构化回执**：上限 ${budget.receiptBudgetTokens}t`,
-    '',
-    '## 共享治理与跨切面文件说明',
+    '', '## 共享治理与跨切面文件说明',
     `- **公共治理路径 (SHARED_GOVERNANCE_GLOBS)**：${SHARED_GOVERNANCE_GLOBS.map((g) => `\`${g}\``).join(', ')}`,
     '- **跨切面变更规约**：上述工作流模板、全局说明、技能手册与公共砖块不属于单一契约卡 `scope[]`；跨切面联调执行单卡微门禁时须显式传入 `check-node <nodeId> --allow-cross-scope`，并在 `.receipt.json` 留存 `crossScopeFiles[]` 审计记录。'
   );
-
   const routerTokens = Math.ceil((md.join('\n') + '\n').length / 4);
-  const savingsPct = totalSourceTokens > 0 ? Math.max(0, Math.round((1 - routerTokens / totalSourceTokens) * 1000) / 10) : 100;
-  md.splice(4, 0, `> 全局源码压缩：全仓源码约 ${totalSourceTokens.toLocaleString()}t → 全仓 L1 存根 ${totalStubTokens.toLocaleString()}t → 本 L0 路由表 ${routerTokens.toLocaleString()}t（首屏节省 ${savingsPct}%）`);
-  const markdown = md.join('\n') + '\n';
+  const savingsPct = totals.totalSourceTokens > 0 ? Math.max(0, Math.round((1 - routerTokens / totals.totalSourceTokens) * 1000) / 10) : 100;
+  md.splice(4, 0, `> 全局源码压缩：全仓源码约 ${totals.totalSourceTokens.toLocaleString()}t → 全仓 L1 存根 ${totals.totalStubTokens.toLocaleString()}t → 本 L0 路由表 ${routerTokens.toLocaleString()}t（首屏节省 ${savingsPct}%）`);
+  return { markdown: md.join('\n') + '\n', savingsPct };
+}
+
+export function writeProjectRouter(projectRoot, opts = {}) {
+  const graph = discoverHermeticGraph(projectRoot);
+  if (!graph.ok) return { ok: false, errors: graph.errors, nodes: [] };
+  const budget = resolveSubagentBudgetProfile(graph.thresholds, opts);
+  const statusSnap = computeProjectStatus(projectRoot);
+  const statusByContract = new Map((statusSnap.contractSummaries || []).map((c) => [c.id, c]));
+  const stubsDir = join(projectRoot, '.donegate', 'stubs');
+  mkdirSync(stubsDir, { recursive: true });
+  const totals = ctxRtrWriteNodeStubFiles(stubsDir, graph.nodes);
+  const { markdown, savingsPct } = ctxRtrBuildRouterMarkdown(graph, budget, statusByContract, totals);
 
   const routerDir = join(projectRoot, '.donegate');
   mkdirSync(routerDir, { recursive: true });
   writeFileSync(join(routerDir, 'ROUTER.md'), markdown, 'utf8');
   const routerPayload = {
     schema: 'donegate-router/v1', generatedAt: new Date().toISOString(), budgetProfile: budget,
-    sharedGovernanceGlobs: SHARED_GOVERNANCE_GLOBS,
-    topoOrder: graph.topoOrder, totalSourceTokens, totalStubTokens, routerTokens: Math.ceil(markdown.length / 4),
-    savingsPct, redImports: graph.redImports, facadeViolations: graph.facadeViolations,
+    sharedGovernanceGlobs: SHARED_GOVERNANCE_GLOBS, topoOrder: graph.topoOrder,
+    totalSourceTokens: totals.totalSourceTokens, totalStubTokens: totals.totalStubTokens,
+    routerTokens: Math.ceil(markdown.length / 4), savingsPct,
+    redImports: graph.redImports, facadeViolations: graph.facadeViolations,
     nodes: graph.nodes.map((n) => ({
       id: n.id, title: n.title, why: n.why, scope: n.scope, dependsOnIds: n.dependsOnIds, dependedByIds: n.dependedByIds,
       facadeMode: n.stub.facadeMode, facadeFiles: n.stub.facadeFiles, effectiveLines: n.stub.effectiveLines,
-      physicalLines: n.stub.physicalLines,
-      sourceTokens: n.stub.sourceTokens, stubTokens: n.stub.stubTokens, stubHash: n.stub.stubHash, stubPath: `.donegate/stubs/${n.id}.stub.d.ts`
+      physicalLines: n.stub.physicalLines, sourceTokens: n.stub.sourceTokens, stubTokens: n.stub.stubTokens,
+      stubHash: n.stub.stubHash, stubPath: `.donegate/stubs/${n.id}.stub.d.ts`
     }))
   };
   writeFileSync(join(routerDir, 'router.json'), JSON.stringify(routerPayload, null, 2), 'utf8');

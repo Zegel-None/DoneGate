@@ -1,5 +1,6 @@
 // 适配器 · Complexipy Python 认知复杂度观测（Campbell 2018 · Adapter Protocol v1.1 · 委托 _shared.mjs）
-import { runAdapter } from './_shared.mjs';
+import { resolve } from 'node:path';
+import { readFirstJsonInDir, runAdapter } from './_shared.mjs';
 
 runAdapter({
   tool: 'complexipy',
@@ -7,12 +8,19 @@ runAdapter({
   degradedTo: '使用 python3 ast 人工核查深层嵌套函数，将单函数认知复杂度控制在 25 以内',
   collect(ctx) {
     const targetDir = ctx.arg('--target', '.');
-    const maxAllowed = Number(ctx.arg('--max-complexity', '25')) || 25;
+    const rawMax = ctx.arg('--max-complexity', '25');
+    const numMax = Number(rawMax);
+    const maxAllowed = rawMax !== null && rawMax !== '' && Number.isFinite(numMax) && numMax >= 0 ? numMax : 25;
     let rawText = ctx.readRawOverride('--raw-report');
     if (rawText === null) {
-      const r = ctx.runBin([targetDir, '--max-complexity-allowed', String(maxAllowed), '--output-format', 'json']);
-      if (r.error || (r.status !== 0 && r.status !== 1)) ctx.fail(3, 'complexipy 执行失败：' + (r.stderr || r.error?.message));
-      rawText = r.stdout || '';
+      const targetAbs = resolve(ctx.rootDir, targetDir);
+      rawText = ctx.withTempDir('cxpy-', (tmpDir) => {
+        const r = ctx.runBin([targetAbs, '--max-complexity-allowed', String(maxAllowed), '--output-format', 'json'], { cwd: tmpDir });
+        if (r.error || (r.status !== 0 && r.status !== 1)) ctx.fail(3, 'complexipy 执行失败：' + (r.stderr || r.error?.message));
+        const stdoutTrim = (r.stdout || '').trim();
+        if (stdoutTrim.startsWith('[') || stdoutTrim.startsWith('{')) return stdoutTrim;
+        return readFirstJsonInDir(tmpDir) ?? stdoutTrim;
+      });
     }
     const parsed = ctx.parseJsonOrFail(rawText, 'complexipy');
     const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.functions) ? parsed.functions : null);

@@ -5,6 +5,7 @@ import { walk } from '../../skill/fs-walk.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { enrichBarrelFacadeExports, extractHttpRouteContracts } from './barrel-stub-enrich.mjs';
 import { maskCommentsAndStrings } from './js-mask-lexer.mjs';
+import { extractPythonExportsBalanced, pyInitHasPublicSurface } from './python-imports.mjs';
 
 export { maskCommentsAndStrings };
 
@@ -119,11 +120,10 @@ function astStubFormatVarExport(source, masked, m) {
   return { symbol: name, doc, signature: `export ${kind} ${name}${typeSuffix};` };
 }
 
-function extractJsTsExports(source) {
-  const masked = maskCommentsAndStrings(source, '.ts');
-  const entries = [];
+function astStubExtractJsFunctions(source, masked, entries) {
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(default\s+)?(async\s+)?function(\s*\*)?\s*([A-Za-z_$][\w$]*)?\s*\(/g)) {
-    const openParen = m.index + m[0].length - 1, closeParen = findBalancedEnd(masked, openParen, '(', ')');
+    const openParen = m.index + m[0].length - 1;
+    const closeParen = findBalancedEnd(masked, openParen, '(', ')');
     if (closeParen < 0) continue;
     let tailEnd = closeParen + 1;
     while (tailEnd < masked.length && !'{;\n'.includes(masked[tailEnd])) tailEnd++;
@@ -131,65 +131,60 @@ function extractJsTsExports(source) {
     const defPref = m[1] ? 'default ' : '', asyncPref = m[2] ? 'async ' : '', genStar = m[3] ? '* ' : '';
     entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}${asyncPref}function ${genStar}${name}${compactWs(source.slice(openParen, tailEnd))};` });
   }
+}
+
+function astStubExtractJsClasses(source, masked, entries) {
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(default\s+)?class\s+([A-Za-z_$][\w$]*)([^{\n]*)\{/g)) {
-    const openBrace = m.index + m[0].length - 1, closeBrace = findBalancedEnd(masked, openBrace, '{', '}'), name = m[2];
+    const openBrace = m.index + m[0].length - 1;
+    const closeBrace = findBalancedEnd(masked, openBrace, '{', '}');
+    const name = m[2];
     const heritage = compactWs(source.slice(m.index + m[0].indexOf(name) + name.length, openBrace));
     const methods = closeBrace > openBrace ? extractJsClassMethods(source.slice(openBrace + 1, closeBrace), masked.slice(openBrace + 1, closeBrace)) : [];
     const defPref = m[1] ? 'default ' : '', heritagePart = heritage ? ` ${heritage}` : '';
     const bodyPart = methods.length > 0 ? ` { ${methods.join(' ')} }` : ' {}';
     entries.push({ symbol: name, doc: extractLeadingJsDoc(source, m.index, m[0]), signature: `export ${defPref}class ${name}${heritagePart}${bodyPart}` });
   }
-  for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*([^=\n]+?))?\s*=\s*/g)) {
-    entries.push(astStubFormatVarExport(source, masked, m));
-  }
+}
+
+function astStubExtractJsTypes(source, masked, entries) {
   for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(interface|type|enum)\s+([A-Za-z_$][\w$]*)([^\n;{]*)(?:\{|;|=)/g)) {
-    const doc = extractLeadingJsDoc(source, m.index, m[0]), kwPos = m[0].search(/\bexport\b/), declIdx = m.index + (kwPos >= 0 ? kwPos : 0);
+    const doc = extractLeadingJsDoc(source, m.index, m[0]);
+    const kwPos = m[0].search(/\bexport\b/);
+    const declIdx = m.index + (kwPos >= 0 ? kwPos : 0);
     const openBrace = (m[1] === 'interface' || m[1] === 'enum') ? source.indexOf('{', declIdx) : -1;
-    const closeBrace = openBrace >= 0 ? findBalancedEnd(masked, openBrace, '{', '}') : -1, tail = compactWs(m[3]);
-    const sig = (closeBrace > openBrace && closeBrace - openBrace <= 1600) ? compactWs(source.slice(declIdx, closeBrace + 1)) : `export ${m[1]} ${m[2]}${tail ? ' ' + tail : ''};`;
+    const closeBrace = openBrace >= 0 ? findBalancedEnd(masked, openBrace, '{', '}') : -1;
+    const tail = compactWs(m[3]);
+    const sig = (closeBrace > openBrace && closeBrace - openBrace <= 1600)
+      ? compactWs(source.slice(declIdx, closeBrace + 1))
+      : `export ${m[1]} ${m[2]}${tail ? ' ' + tail : ''};`;
     entries.push({ symbol: m[2], doc, signature: sig });
   }
+}
+
+function astStubExtractJsReexports(source, masked, entries) {
   for (const m of source.matchAll(/(?:^|\n)\s*export\s+(\*(?:\s+as\s+[A-Za-z_$][\w$]*)?|\{[^}]+\})\s*(?:from\s*(['"][^'"]+['"]))?\s*;?/g)) {
     if (masked[m.index + m[0].indexOf('export')] === ' ') continue;
     const clause = compactWs(m[1]), fromPart = m[2] ? ` from ${m[2]}` : '';
     entries.push({ symbol: `reexport:${clause}${fromPart}`, doc: '', signature: `export ${clause}${fromPart};` });
   }
-  return entries;
 }
 
-function pyShouldExportName(name, isNested) {
-  if (!name.startsWith('_')) return true;
-  return isNested && name.startsWith('__') && name.endsWith('__');
-}
-
-function pyFindHeaderColon(masked, startPos) {
-  let cursor = startPos;
-  while (cursor < masked.length && /[ \t]/.test(masked[cursor])) cursor++;
-  if (masked[cursor] === '(') {
-    const closeIdx = findBalancedEnd(masked, cursor, '(', ')');
-    if (closeIdx < 0) return -1;
-    cursor = closeIdx + 1;
-  }
-  return masked.indexOf(':', cursor);
-}
-
-function extractPythonExportsBalanced(source, masked) {
+function extractJsTsExports(source) {
+  const masked = maskCommentsAndStrings(source, '.ts');
   const entries = [];
-  for (const m of masked.matchAll(/^([ \t]*)(async\s+def|def|class)\s+([A-Za-z_][\w]*)/gm)) {
-    const indent = m[1] || '', isNested = indent.length > 0;
-    if (indent.length > 4 || !pyShouldExportName(m[3], isNested)) continue;
-    const colonIdx = pyFindHeaderColon(masked, m.index + m[0].length);
-    if (colonIdx < 0) continue;
-    const header = compactWs(source.slice(m.index + indent.length, colonIdx));
-    const sym = m[2] === 'class' ? m[3] : (isNested ? `.${m[3]}` : m[3]);
-    entries.push({ symbol: sym, doc: '', signature: `${isNested ? '  ' : ''}${header}: ...` });
+  astStubExtractJsFunctions(source, masked, entries);
+  astStubExtractJsClasses(source, masked, entries);
+  for (const m of masked.matchAll(/(?:^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*([^=\n]+?))?\s*=\s*/g)) {
+    entries.push(astStubFormatVarExport(source, masked, m));
   }
+  astStubExtractJsTypes(source, masked, entries);
+  astStubExtractJsReexports(source, masked, entries);
   return entries;
 }
 
-function extractPyOrGoExports(source, ext) {
+function extractPyOrGoExports(source, ext, relPath = '') {
   const masked = maskCommentsAndStrings(source, ext);
-  if (ext === '.py') return extractPythonExportsBalanced(source, masked);
+  if (ext === '.py') return extractPythonExportsBalanced(source, masked, relPath);
   const entries = [];
   if (ext === '.go') {
     for (const m of masked.matchAll(/^func\s+([A-Z][\w]*)\s*\(/gm)) {
@@ -212,7 +207,7 @@ export function extractFileInterfaceStub(source, relPath = '') {
   let effectiveLines = 0, physicalLines = 0;
   for (const line of source.split(/\r?\n/)) if (line.trim()) physicalLines++;
   for (const line of masked.split(/\r?\n/)) if (line.trim()) effectiveLines++;
-  const exports = (ext === '.py' || ext === '.go') ? extractPyOrGoExports(source, ext) : extractJsTsExports(source);
+  const exports = (ext === '.py' || ext === '.go') ? extractPyOrGoExports(source, ext, relPath) : extractJsTsExports(source);
   return { relPath, effectiveLines, physicalLines, sourceChars: source.length, exports };
 }
 
@@ -223,7 +218,7 @@ function astStubStatSafe(abs) {
 
 function astStubIsTestRelPath(rel, includeTestDirs) {
   if (includeTestDirs && /(^|\/)(tests?|__tests__)(\/|$)/i.test(rel)) return true;
-  return /\.(test|spec)\.[a-z0-9]+$|.*-fixtures\.mjs$/i.test(rel);
+  return /\.(test|spec)\.[a-z0-9]+$|(?:^|\/)fixtures-[^/]+\.mjs$|-fixtures\.mjs$/i.test(rel);
 }
 
 function astStubWalkCodeIntoSets(projectRoot, absDir, found, relatedTests) {
@@ -242,7 +237,8 @@ function astStubCollectScopeDir(projectRoot, abs, dirClean, found, relatedTests,
   const barrels = dirCodeFiles.filter((f) => {
     const slash = f.lastIndexOf('/');
     const dir = slash >= 0 ? f.slice(0, slash) : '', base = slash >= 0 ? f.slice(slash + 1) : f;
-    return dir === dirClean && FACADE_BASENAMES.has(base);
+    if (dir !== dirClean || !FACADE_BASENAMES.has(base)) return false;
+    return base === '__init__.py' ? pyInitHasPublicSurface(join(projectRoot, f)) : true;
   });
   for (const item of (barrels.length > 0 ? barrels : dirCodeFiles)) publicEntries.add(item);
   return barrels.length > 0;
@@ -275,10 +271,9 @@ export function resolveNodeScopeFiles(projectRoot, scopes = []) {
   return { scopeFiles, relatedTestFiles: [...relatedTests].sort(), facadeMode: hasBarrel ? 'barrel' : 'module-exports', facadeFiles };
 }
 
-export function buildNodeInterfaceStub(projectRoot, node) {
-  const { scopeFiles, relatedTestFiles, facadeMode, facadeFiles } = resolveNodeScopeFiles(projectRoot, node.scope || []);
+function astStubMeasureScopeFiles(projectRoot, scopeFiles) {
   let sourceChars = 0, effectiveLines = 0, physicalLines = 0, maxFileEffectiveLines = 0, maxFile = null;
-  const fileMetrics = new Map(), rawByFile = new Map(), scopeSet = new Set(scopeFiles);
+  const fileMetrics = new Map(), rawByFile = new Map();
   for (const rel of scopeFiles) {
     let raw = '';
     try { raw = readFileSync(join(projectRoot, rel), 'utf8'); } catch (err) { void err; continue; }
@@ -287,27 +282,35 @@ export function buildNodeInterfaceStub(projectRoot, node) {
     sourceChars += parsed.sourceChars;
     effectiveLines += parsed.effectiveLines;
     physicalLines += parsed.physicalLines;
-    if (parsed.effectiveLines > maxFileEffectiveLines) { maxFileEffectiveLines = parsed.effectiveLines; maxFile = rel; }
+    if (parsed.effectiveLines > maxFileEffectiveLines) {
+      maxFileEffectiveLines = parsed.effectiveLines;
+      maxFile = rel;
+    }
     fileMetrics.set(rel, parsed);
   }
-  const barrelEnriched = facadeMode === 'barrel'
-    ? enrichBarrelFacadeExports(facadeFiles, rawByFile, fileMetrics, scopeSet, maskCommentsAndStrings, projectRoot)
-    : null;
-  const httpRoutes = extractHttpRouteContracts(rawByFile);
+  return { sourceChars, effectiveLines, physicalLines, maxFileEffectiveLines, maxFile, fileMetrics, rawByFile };
+}
 
+function astStubAppendEntryExports(entryRel, entryPack, exportedSymbols, hashLines, richLines) {
+  hashLines.push(`// [entry: ${entryRel}]`);
+  richLines.push(`// [entry: ${entryRel}]`);
+  for (const td of entryPack.typedefs || []) {
+    if (!entryPack.exports.some((e) => e.doc === td)) richLines.push(td);
+  }
+  for (const ex of entryPack.exports) {
+    exportedSymbols.push({ file: entryRel, symbol: ex.symbol, signature: ex.signature });
+    hashLines.push(ex.signature);
+    if (ex.doc) richLines.push(ex.doc);
+    richLines.push(ex.signature);
+  }
+}
+
+function astStubCollectFacadeAndRoutes(facadeFiles, barrelEnriched, fileMetrics, httpRoutes) {
   const exportedSymbols = [], hashLines = [], richLines = [];
   for (const entryRel of facadeFiles) {
     const entryPack = barrelEnriched ? barrelEnriched.get(entryRel) : fileMetrics.get(entryRel);
     if (!entryPack || entryPack.exports.length === 0) continue;
-    hashLines.push(`// [entry: ${entryRel}]`);
-    richLines.push(`// [entry: ${entryRel}]`);
-    for (const td of entryPack.typedefs || []) if (!entryPack.exports.some((e) => e.doc === td)) richLines.push(td);
-    for (const ex of entryPack.exports) {
-      exportedSymbols.push({ file: entryRel, symbol: ex.symbol, signature: ex.signature });
-      hashLines.push(ex.signature);
-      if (ex.doc) richLines.push(ex.doc);
-      richLines.push(ex.signature);
-    }
+    astStubAppendEntryExports(entryRel, entryPack, exportedSymbols, hashLines, richLines);
   }
   if (httpRoutes.length > 0) {
     richLines.push('// === HTTP Route Contracts ===');
@@ -317,13 +320,25 @@ export function buildNodeInterfaceStub(projectRoot, node) {
       richLines.push(routeLine);
     }
   }
+  return { exportedSymbols, hashLines, richLines };
+}
+
+export function buildNodeInterfaceStub(projectRoot, node) {
+  const { scopeFiles, relatedTestFiles, facadeMode, facadeFiles } = resolveNodeScopeFiles(projectRoot, node.scope || []);
+  const m = astStubMeasureScopeFiles(projectRoot, scopeFiles);
+  const barrelEnriched = facadeMode === 'barrel'
+    ? enrichBarrelFacadeExports(facadeFiles, m.rawByFile, m.fileMetrics, new Set(scopeFiles), maskCommentsAndStrings, projectRoot)
+    : null;
+  const httpRoutes = extractHttpRouteContracts(m.rawByFile);
+  const { exportedSymbols, hashLines, richLines } = astStubCollectFacadeAndRoutes(facadeFiles, barrelEnriched, m.fileMetrics, httpRoutes);
   const stubHash = sha256(hashLines.join('\n') || `empty:${node.id}`);
   const header = `// @donegate-stub node=${node.id} mode=${facadeMode} hash=${stubHash}`;
   const stubText = richLines.length > 0 ? `${header}\n${richLines.join('\n')}\n` : `${header}\n// (no public code exports)\n`;
   return {
     nodeId: node.id, facadeMode, facadeFiles, scopeFiles, relatedTestFiles,
-    effectiveLines, physicalLines, maxFileEffectiveLines, maxFile, sourceChars,
-    sourceTokens: Math.ceil(sourceChars / 4), stubTokens: Math.ceil(stubText.length / 4),
+    effectiveLines: m.effectiveLines, physicalLines: m.physicalLines,
+    maxFileEffectiveLines: m.maxFileEffectiveLines, maxFile: m.maxFile, sourceChars: m.sourceChars,
+    sourceTokens: Math.ceil(m.sourceChars / 4), stubTokens: Math.ceil(stubText.length / 4),
     stubHash, exportedSymbols, httpRoutes, stubText
   };
 }

@@ -14,7 +14,7 @@ import {
 } from '../runner/dsh/index.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const WF_DEPS_CLI = join(REPO_ROOT, 'runner', 'dsh', 'workflow-deps.mjs');
+const WF_DEPS_CLI = join(REPO_ROOT, 'runner', 'dsh', 'deps', 'workflow-deps.mjs');
 
 function startLocalTestServer(handler) {
   return new Promise((resolveServer) => {

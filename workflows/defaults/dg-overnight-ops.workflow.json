@@ -24,7 +24,7 @@
         { "key": "maxSelfHealRounds", "label": "自愈重试硬上限（轮）", "type": "number", "min": 1, "max": 5, "default": 2 },
         { "key": "maxSubagentTools", "label": "单个子代理最多挂载工具数", "type": "number", "min": 4, "max": 20, "default": 10 }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+      "exec": { "kind": "donegate_cmd", "args": ["graph"], "requireFile": "contracts" }
     },
     {
       "id": "ops-sandbox",
@@ -42,7 +42,7 @@
         { "key": "strictSandbox", "label": "无 OS 级沙箱 (srt) 时强制停机阻断", "type": "boolean", "default": false },
         { "key": "snapshotHeldOut", "label": "挂机启动时自动冻结只读考题镜像", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/verify-install.mjs", "args": ["--json"], "passRoot": false }
     },
     {
       "id": "ops-human-gate",

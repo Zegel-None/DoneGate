@@ -220,7 +220,7 @@ const WB_MENUS_VIEWPORT_LINES = [
   "            <div class=\"text-[10.5px] mt-0.5\" style=\"color: var(--text-muted);\">${esc(f.note)}</div>",
   "          </div>",
   "          <div class=\"flex items-center gap-1.5 shrink-0\">",
-  "            <button type=\"button\" class=\"ghost-btn is-primary text-[11px]\" onclick=\"openFolderViaBackend('${esc(f.dir)}')\">定位打开</button>",
+  "            <button type=\"button\" class=\"ghost-btn is-primary text-[11px]\" data-open-folder-dir=\"${esc(f.dir)}\">定位打开</button>",
   "            <button type=\"button\" class=\"ghost-btn text-[11px]\" data-copy-path=\"${esc(f.dir)}\">复制路径</button>",
   "          </div>",
   "        </div>",

@@ -9,13 +9,13 @@ import {
   tlDismissSuggestion,
   tlRecordEscapeRelapse,
   tlRecordRuleOutcomes
-} from '../runner/dsh/trust-ladder.mjs';
+} from '../runner/dsh/autopilot/trust-ladder.mjs';
 import {
   gtApplyPersonalTemplate,
   gtListPersonalTemplates,
   gtSavePersonalTemplate
-} from '../runner/dsh/governance-templates.mjs';
-import { wfcCompileWorkflow, wfcSaveProjectOverlay } from '../runner/dsh/workflow-compiler.mjs';
+} from '../runner/dsh/autopilot/governance-templates.mjs';
+import { wfcCompileWorkflow, wfcSaveProjectOverlay } from '../runner/dsh/autopilot/workflow-compiler.mjs';
 
 describe('stage13: restrained model trust ladder & personal reusable governance templates', () => {
   it('stays silent before streak threshold, suggests at most 1 non-integrity rule after 8 clean runs, and alerts re-enable on relapse/new model', () => {

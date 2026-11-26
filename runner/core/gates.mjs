@@ -2,6 +2,7 @@
 export {
   DEFAULT_THRESHOLDS,
   SELF_WRITER_RE,
+  isDeliveryContract,
   isSelfWriterIdentity,
   loadThresholds,
   loadContracts,

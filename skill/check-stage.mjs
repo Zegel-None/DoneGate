@@ -91,7 +91,7 @@ function csgInspectContractEntry(cDir, entry) {
     return { kind: 'err', exitCode: 3, line: 'RESULT: 无法判断 契约读不出：' + cPath };
   }
   const c = res.value;
-  if (c && c.retired) return { kind: 'skip' };
+  if (c && (c.retired || c.track === 'explore')) return { kind: 'skip' };
   const reqObs = Array.isArray(c && c.obligations) ? c.obligations.filter((o) => o && o.required === true) : [];
   return { kind: 'active', cleared: reqObs.length > 0 && reqObs.every(csgIsObligationCleared) };
 }

@@ -30,13 +30,15 @@ const dgGovUiState = {
   open: false,
   summary: (typeof ATLAS !== 'undefined' && ATLAS && ATLAS.workbench && ATLAS.workbench.governance) ? ATLAS.workbench.governance : null,
   trustSuggestion: null,
+  reenableAlerts: [],
   templates: [],
   expandedNodeKey: '',
+  lastError: '',
   busy: false
 };
 
 function dgGovEsc(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function dgGovSyncFab() {
@@ -71,7 +73,8 @@ async function dgGovRefreshSummary() {
     if (rSum && rSum.ok) dgGovUiState.summary = await rSum.json();
     if (rTrust && rTrust.ok) {
       const tj = await rTrust.json();
-      dgGovUiState.trustSuggestion = (tj && tj.suggestion) ? tj.suggestion : null;
+      dgGovUiState.trustSuggestion = (Array.isArray(tj && tj.suggestions) && tj.suggestions[0]) || (tj && tj.suggestion) || null;
+      dgGovUiState.reenableAlerts = Array.isArray(tj && tj.reenableAlerts) ? tj.reenableAlerts : [];
     }
     if (rTpl && rTpl.ok) {
       const tpj = await rTpl.json();
@@ -101,8 +104,10 @@ function dgGovRenderNodeInspectorHtml(flow, node) {
     } else if (f.type === 'enum' && Array.isArray(f.options)) {
       const eOpts = f.options.map((v) => '<option value="' + dgGovEsc(v) + '"' + (v === curVal ? ' selected' : '') + '>' + dgGovEsc(v) + '</option>').join('');
       parts.push('<label>' + dgGovEsc(f.label) + '：<select data-gov-cfg-key="' + dgGovEsc(f.key) + '">' + eOpts + '</select></label>');
-    } else {
+    } else if (f.type === 'number') {
       parts.push('<label>' + dgGovEsc(f.label) + '：<input type="number" value="' + dgGovEsc(curVal) + '" data-gov-cfg-key="' + dgGovEsc(f.key) + '" style="width:92px"></label>');
+    } else {
+      parts.push('<label>' + dgGovEsc(f.label) + '：<input type="text" value="' + dgGovEsc(curVal) + '" data-gov-cfg-key="' + dgGovEsc(f.key) + '" style="width:160px"></label>');
     }
   }
   if (parts.length === 0) parts.push('<div>当前节点暂无可调参数。</div>');
@@ -139,13 +144,21 @@ function dgGovRenderModal() {
       '</div>'
     );
   }
+  if (dgGovUiState.lastError) {
+    banners.push('<div class="dg-gov-banner-red">操作失败：' + dgGovEsc(dgGovUiState.lastError) + '</div>');
+  }
   if (dgGovUiState.trustSuggestion) {
     const ts = dgGovUiState.trustSuggestion;
     banners.push(
       '<div class="dg-gov-banner-info">' +
-      '<span>🧭 模型信任阶梯建议（' + dgGovEsc(ts.modelId || '当前模型') + '）：' + dgGovEsc(ts.message || '表现稳定，可松绑低风险推荐项') + '</span>' +
-      '<div style="display:flex;gap:6px"><button type="button" class="dg-gov-btn" data-gov-trust-dismiss="' + dgGovEsc(ts.modelId || '') + '">本次暂不</button></div>' +
+      '<span>🧭 模型信任阶梯建议（' + dgGovEsc(ts.modelId || '当前模型') + '）：' + dgGovEsc(ts.reason || ts.message || '表现稳定，可松绑低风险推荐项') + '</span>' +
+      '<div style="display:flex;gap:6px"><button type="button" class="dg-gov-btn" data-gov-trust-dismiss="' + dgGovEsc(ts.modelId || '') + '" data-gov-trust-flow="' + dgGovEsc(ts.flowId || '') + '" data-gov-trust-node="' + dgGovEsc(ts.nodeId || '') + '">本次暂不</button></div>' +
       '</div>'
+    );
+  }
+  for (const al of (dgGovUiState.reenableAlerts || [])) {
+    banners.push(
+      '<div class="dg-gov-banner-red">🛡️ 信任安全带提醒（' + dgGovEsc(al.modelId || '当前模型') + '）：' + dgGovEsc(al.reason || al.title || '建议重新开启已关闭规则') + '</div>'
     );
   }
   const tplOpts = (dgGovUiState.templates || []).map((tp) => '<option value="' + dgGovEsc(tp.name) + '">' + dgGovEsc(tp.name) + '</option>').join('');
@@ -190,13 +203,20 @@ function dgGovRenderModal() {
 
 async function dgGovPostApi(path, bodyObj) {
   if (typeof fetchDoneGateApi !== 'function') return null;
+  dgGovUiState.lastError = '';
   const r = await fetchDoneGateApi('/donegate/api' + path, undefined, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyObj)
   });
   if (!r) return null;
-  const data = await r.json();
+  let data = null;
+  try { data = await r.json(); } catch (err) { void err; }
+  if (!r.ok || (data && data.ok === false)) {
+    dgGovUiState.lastError = (data && (data.reason || data.error)) || ('请求失败 (HTTP ' + r.status + ')');
+    dgGovRenderModal();
+    return data;
+  }
   if (data && data.summary) {
     dgGovUiState.summary = data.summary;
     dgGovSyncFab();
@@ -254,7 +274,11 @@ if (typeof document !== 'undefined') {
     if (td) {
       dgGovUiState.trustSuggestion = null;
       dgGovRenderModal();
-      dgGovPostApi('/governance/trust-dismiss', { modelId: td.getAttribute('data-gov-trust-dismiss') || 'default' });
+      dgGovPostApi('/governance/trust-dismiss', {
+        modelId: td.getAttribute('data-gov-trust-dismiss') || 'default',
+        flowId: td.getAttribute('data-gov-trust-flow') || '',
+        nodeId: td.getAttribute('data-gov-trust-node') || ''
+      });
       return;
     }
     if (t.closest('[data-gov-tpl-save]')) {

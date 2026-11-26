@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { createChecks } from '../skill/assert.mjs';
 import { dispatchCommand } from './donegate.mjs';
-import { ATLAS_SUBPACKS, buildProjectAtlas, startAtlasHttpServer, WB_CONCAT_MANIFEST } from './atlas/index.mjs';
+import { ATLAS_SUBPACKS, buildProjectAtlas, WB_CONCAT_MANIFEST } from './atlas/index.mjs';
+import { startAtlasHttpServer } from './dsh/host/serve-atlas.mjs';
 import { buildWbDshBridge } from './atlas/wb-dsh-bridge.mjs';
 import { buildWbDshShell } from './atlas/wb-dsh-shell.mjs';
 import { buildWbUiBoardScript } from './atlas/wb-uiboard.mjs';
 import { parseQuoteCapsule } from './dsh/contract.mjs';
-import { exportDashboardHtml } from './core/index.mjs';
+import { exportDashboardHtml } from './atlas/dashboard.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const c = createChecks();
@@ -368,6 +369,7 @@ try {
 
   // 4. 真测后台实时服务：刷新重扫 + 负坐标落盘 + 目录解析 + 工作流依赖巡检与隔离补齐路由
   const srvInfo = await startAtlasHttpServer(proj, { port: 0, idleExitSec: 30 });
+  const authHeaders = { 'Content-Type': 'application/json', 'X-DoneGate-Session-Token': srvInfo.sessionToken };
   try {
     const beforeCount = atlas.project.moduleCount;
     writeFileSync(join(proj, 'services/api/coupons.py'), [
@@ -377,7 +379,7 @@ try {
       'def issue_coupon():',
       '    return {"issued": True}'
     ].join('\n') + '\n');
-    const resp = await fetch(`${srvInfo.url}api/atlas/refresh`, { method: 'POST' });
+    const resp = await fetch(`${srvInfo.url}api/atlas/refresh`, { method: 'POST', headers: authHeaders });
     const refreshed = await resp.json();
     const diskHtmlAfter = readFileSync(htmlPath, 'utf8');
     c.check('点击「刷新最新数据」触发后台重扫全仓，新增接口即时入账并同步落盘',
@@ -391,7 +393,7 @@ try {
 
     const saveResp = await fetch(`${srvInfo.url}api/workbench/state`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         customPacks: { 'pack-u-e2e': { id: 'pack-u-e2e', name: '端到端持久化工作流', group: '客户端与全栈', nodes: [], links: [] } },
         hostNodeLayouts: { [webNode.id]: { x: -640, y: -1280, w: 310, h: 220, color: 'blue' } },
@@ -413,7 +415,7 @@ try {
 
     const provResp = await fetch(`${srvInfo.url}donegate/api/workflow-deps/provision`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         pack: {
           id: 'pack-stage-01',
@@ -435,7 +437,7 @@ try {
 
     const wfSaveResp = await fetch(`${srvInfo.url}donegate/api/workflow-pack/save`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders,
       body: JSON.stringify({
         pack: { id: "shared-comfy-flow", name: "跨团队共享工作流", group: "项目声明式工作流", nodes: [{ id: "n1", title: "静态体检", tplId: "tpl-adp-biome" }], links: [] }
       })
@@ -447,7 +449,7 @@ try {
     const obsPrevJson = await obsPrevResp.json();
     const judgePreResp = await fetch(`${srvInfo.url}donegate/api/judge/pack`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders,
       body: JSON.stringify({ contractId: "non-existent" })
     });
     const judgePreJson = await judgePreResp.json();
@@ -471,22 +473,22 @@ try {
       const proxyHtml = await (await fetch(`${srvInfo.url}donegate/api/uiboard/proxy?url=` + encodeURIComponent(`http://127.0.0.1:${devPort}/`))).text();
       const ssrfResp = await fetch(`${srvInfo.url}donegate/api/uiboard/proxy?url=` + encodeURIComponent('https://example.com/'));
       const lockRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/theme-lock`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders,
         body: JSON.stringify({ proposalId: 'industrial-dark', projectName: 'DemoApp' })
       })).json();
       const layRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/layout`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders,
         body: JSON.stringify({ op: 'add', blockType: 'confirm_modal_trigger' })
       })).json();
       const spRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/self-play`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        method: 'POST', headers: authHeaders, body: '{}'
       })).json();
       const wireRes = await (await fetch(`${srvInfo.url}donegate/api/uiboard/wire-backend`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders,
         body: JSON.stringify({ actionIds: ['act-create-order'], markWired: true })
       })).json();
       const uibProv = await (await fetch(`${srvInfo.url}donegate/api/uiboard/provision`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        method: 'POST', headers: authHeaders, body: '{}'
       })).json();
       c.check('UI 看板三阶段闭环：同源代理注入桥（防 SSRF）、多套美学锁 MASTER.md、JSON 拖拽加块、Agent 自测与假动作转真后端全通',
         Boolean(
@@ -506,7 +508,7 @@ try {
 
     const folderResp = await fetch(`${srvInfo.url}api/workbench/open-folder`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ paths: ['apps/web/', 'services/api/orders.py', '../../../etc/passwd'], openOs: false })
     });
     const folderJson = await folderResp.json();

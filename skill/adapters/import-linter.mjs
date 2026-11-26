@@ -9,9 +9,11 @@ runAdapter({
   collect(ctx) {
     let rawText = ctx.readRawOverride('--raw-report');
     let parsed = null;
+    let binExitStatus = null;
     if (rawText === null) {
       const r = ctx.runBin([]);
       if (r.error || (r.status !== 0 && r.status !== 1)) ctx.fail(3, 'lint-imports 执行失败：' + (r.stderr || r.error?.message));
+      binExitStatus = r.status;
       rawText = (r.stdout || '') + '\n' + (r.stderr || '');
     }
     const trimmed = rawText.trim();
@@ -23,8 +25,12 @@ runAdapter({
       brokenContractCount = Number(parsed.brokenContractCount ?? parsed.broken ?? 0);
     } else {
       const m = trimmed.match(/(\d+)\s+kept,\s*(\d+)\s+broken/i);
+      const hasBrokenTag = /\bBROKEN\b/.test(trimmed);
+      if (binExitStatus === 1 && !m && !hasBrokenTag) {
+        ctx.fail(3, 'lint-imports 配置缺失或运行异常（拒绝静默报 0 违规）：' + trimmed.slice(0, 300));
+      }
       keptContractCount = m ? Number(m[1]) : 0;
-      brokenContractCount = m ? Number(m[2]) : (/BROKEN/.test(trimmed) ? 1 : 0);
+      brokenContractCount = m ? Number(m[2]) : (hasBrokenTag ? 1 : 0);
       parsed = { rawOutput: trimmed.slice(0, 4000), keptContractCount, brokenContractCount };
     }
     const totalContracts = keptContractCount + brokenContractCount;

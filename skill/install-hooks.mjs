@@ -36,20 +36,22 @@ export function resolveSkillPrefix(projectRoot, dgRoot = DG_ROOT, pathApi = path
 export function buildPreCommitScript(projectRoot, dgRoot = DG_ROOT, pathApi = path) {
   const skillPrefix = resolveSkillPrefix(projectRoot, dgRoot, pathApi);
   const runnerPrefix = skillPrefix === 'skill' ? 'runner/donegate.mjs' : `${skillPrefix.replace(/\/skill$/, '')}/runner/donegate.mjs`;
+  const shDq = (s) => String(s).replace(/([\\"$`])/g, '\\$1');
 
   return [
     '#!/bin/sh',
     '# DoneGate 自动提交前守门钩子（防小模型超量提交、改测试凑绿、留空壳代码或漏跑自检）',
     'set -e',
-    `DG_SKILL="${skillPrefix}"`,
-    `DG_RUNNER="${runnerPrefix}"`,
-    'unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT',
+    `DG_SKILL="${shDq(skillPrefix)}"`,
+    `DG_RUNNER="${shDq(runnerPrefix)}"`,
+    'unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_PREFIX',
     'if [ -f ".donegate/workflows/overrides/dg-pre-commit.overlay.json" ] && [ -f "$DG_RUNNER" ]; then',
     '  node "$DG_RUNNER" flow run dg-pre-commit --staged --root .',
+    '  unset GIT_INDEX_FILE',
     '  exit 0',
     'fi',
     'node "$DG_SKILL/check-commit-hygiene.mjs" --staged --root .',
-    'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX',
+    'unset GIT_INDEX_FILE',
     'if [ -f "skill/check-escapes.mjs" ] && [ -f "escapes.jsonl" ]; then',
     '  node "skill/check-escapes.mjs" --self-check --project .',
     'elif [ -f "INTENT.md" ]; then',
@@ -133,6 +135,87 @@ export function installGitHooks(projectRoot) {
   return { hookPath, activated };
 }
 
+function ihRunGit(cwd, args, env) {
+  return spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env });
+}
+
+function ihTestNoexecAndCrossDrive(check) {
+  const mockMounts = 'tmpfs /tmp tmpfs rw,nosuid,nodev,noexec 0 0\n/dev/vdb /work xfs rw,relatime 0 0\n';
+  const expectedRepoTmp = resolve('/work/repo/.donegate/tmp');
+  const noexecOk = isNoexecMount('/tmp/dg-any', mockMounts) === true &&
+    isNoexecMount('/work/repo', mockMounts) === false &&
+    resolveHookTestTmpBase('/work/repo', {}, mockMounts, false) === expectedRepoTmp &&
+    resolveHookTestTmpBase('/work/repo', { TMPDIR: '/tmp/sub' }, mockMounts, false) === expectedRepoTmp &&
+    resolveHookTestTmpBase('/work/repo', { TMPDIR: '/work/exec-tmp' }, mockMounts, false) === resolve('/work/exec-tmp');
+  check('noexec 挂载识别与 .donegate/tmp 可执行回退：TMPDIR 缺失或处于 noexec /tmp 时自动回退项目 .donegate/tmp', noexecOk);
+
+  const mockWinDg = win32.join('D:', 'skills', 'DoneGate');
+  const expectedWinSkill = win32.join(mockWinDg, 'skill').replace(/\\/g, '/');
+  const crossDriveHook = buildPreCommitScript(win32.join('C:', 'Temp', 'dg-hook-x'), mockWinDg, win32);
+  const parentDrivePrefix = resolveSkillPrefix(win32.join('D:'), mockWinDg, win32);
+  const winCaseDiffSelf = resolveSkillPrefix(win32.join('d:', 'skills', 'donegate'), mockWinDg, win32);
+  const winPathOk = crossDriveHook.includes(`DG_SKILL="${expectedWinSkill}"`) &&
+    parentDrivePrefix === expectedWinSkill &&
+    winCaseDiffSelf === 'skill' &&
+    crossDriveHook.includes('[ -f "escapes.jsonl" ]');
+  check('Windows 跨盘符/父目录写绝对正斜杠路径且本仓盘符大小写差异仍用相对 skill', winPathOk);
+}
+
+function ihInitTempHookRepo(tmp, gitEnv) {
+  mkdirSync(join(tmp, 'src'), { recursive: true });
+  writeFileSync(join(tmp, '.gitignore'), '.donegate/\n');
+  writeFileSync(join(tmp, 'src/a.mjs'), 'export const a = 1;\n');
+  ihRunGit(tmp, ['init', '-q'], gitEnv);
+  ihRunGit(tmp, ['config', 'user.email', 'h@local'], gitEnv);
+  ihRunGit(tmp, ['config', 'user.name', 'H'], gitEnv);
+  ihRunGit(tmp, ['add', '.'], gitEnv);
+  ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], gitEnv);
+}
+
+function ihTestSlopAndCleanCommits(tmp, gitEnv, check) {
+  const inst = installGitHooks(tmp);
+  check('安装 .githooks/pre-commit 并激活 git core.hooksPath', inst.activated && existsSync(inst.hookPath));
+
+  writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TO' + 'DO: 以后再写\n  return 1;\n}\n');
+  ihRunGit(tmp, ['add', 'src/a.mjs'], gitEnv);
+  const rBlocked = ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'bad slop commit'], gitEnv);
+  const blockedOut = (rBlocked.stderr || '') + (rBlocked.stdout || '');
+  check('必红样本：含 TODO 空壳代码的 git commit 被 pre-commit 钩子当场拦截', rBlocked.status !== 0 && /未完成占位符/.test(blockedOut));
+
+  writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() {\n  return 2;\n}\n');
+  ihRunGit(tmp, ['add', 'src/a.mjs'], gitEnv);
+  const rPass = ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'clean small commit'], gitEnv);
+  check('正样本：修掉空壳后的小步干净 git commit 顺畅放行', rPass.status === 0, rPass.stderr);
+}
+
+function ihTestWorktreeIsolation(tmp, gitEnv, check) {
+  writeFileSync(join(tmp, 'escapes.jsonl'), '');
+  mkdirSync(join(tmp, 'skill'), { recursive: true });
+  writeFileSync(join(tmp, 'skill/check-escapes.mjs'), `import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'; import { spawnSync } from 'node:child_process'; const d = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'dg-sub-')); writeFileSync(join(d, 'x.txt'), '1'); spawnSync('git', ['-C', d, 'init', '-q']); spawnSync('git', ['-C', d, 'config', 'user.email', 'leak@bad']); spawnSync('git', ['-C', d, 'config', 'user.name', 'Leak']); spawnSync('git', ['-C', d, 'add', '.']); spawnSync('git', ['-C', d, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'sub-init']); rmSync(d, { recursive: true, force: true });\n`);
+  ihRunGit(tmp, ['add', '.'], gitEnv);
+  ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add self-check stub', '--no-verify'], gitEnv);
+  const wtDir = join(tmp, '.donegate', 'wt-hook-check');
+  ihRunGit(tmp, ['worktree', 'add', '-q', '-b', 'wt/hook-check', wtDir, 'HEAD'], gitEnv);
+  writeFileSync(join(wtDir, 'src/a.mjs'), 'export function a() {\n  return 3;\n}\n');
+  ihRunGit(wtDir, ['add', 'src/a.mjs'], gitEnv);
+  const rWt = ihRunGit(wtDir, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'worktree clean commit'], gitEnv);
+  const wtMsg = (ihRunGit(wtDir, ['log', '-1', '--format=%s'], gitEnv).stdout || '').trim();
+  const bareVal = (ihRunGit(tmp, ['config', '--get', 'core.bare'], gitEnv).stdout || '').trim();
+  const userVal = (ihRunGit(tmp, ['config', '--get', 'user.email'], gitEnv).stdout || '').trim();
+  const wtOk = rWt.status === 0 && wtMsg === 'worktree clean commit' && bareVal !== 'true' && userVal === 'h@local';
+  check('Git Worktree 提交隔离：钩子剥离 GIT_DIR 后子自检不污染分支 HEAD、core.bare 与 user.email', wtOk, rWt.stderr);
+}
+
+function ihCleanupHookTmp(tmp, baseTmp) {
+  rmSync(tmp, { recursive: true, force: true });
+  if (!/[\\/]\.donegate[\\/]tmp$/.test(baseTmp)) return;
+  try {
+    if (existsSync(baseTmp) && readdirSync(baseTmp).length === 0) rmdirSync(baseTmp);
+  } catch (err) {
+    void err;
+  }
+}
+
 function runRedSelfTest() {
   const baseTmp = resolveHookTestTmpBase(DG_ROOT);
   const tmp = mkdtempSync(join(baseTmp, 'dg-hook-test-'));
@@ -143,72 +226,12 @@ function runRedSelfTest() {
     if (!cond) bad++;
   };
   try {
-    const mockMounts = 'tmpfs /tmp tmpfs rw,nosuid,nodev,noexec 0 0\n/dev/vdb /work xfs rw,relatime 0 0\n';
-    const expectedRepoTmp = resolve('/work/repo/.donegate/tmp');
-    check(
-      'noexec 挂载识别与 .donegate/tmp 可执行回退：TMPDIR 缺失或处于 noexec /tmp 时自动回退项目 .donegate/tmp',
-      isNoexecMount('/tmp/dg-any', mockMounts) === true &&
-        isNoexecMount('/work/repo', mockMounts) === false &&
-        resolveHookTestTmpBase('/work/repo', {}, mockMounts, false) === expectedRepoTmp &&
-        resolveHookTestTmpBase('/work/repo', { TMPDIR: '/tmp/sub' }, mockMounts, false) === expectedRepoTmp &&
-        resolveHookTestTmpBase('/work/repo', { TMPDIR: '/work/exec-tmp' }, mockMounts, false) === resolve('/work/exec-tmp')
-    );
-
-    mkdirSync(join(tmp, 'src'), { recursive: true });
-    writeFileSync(join(tmp, '.gitignore'), '.donegate/\n');
-    writeFileSync(join(tmp, 'src/a.mjs'), 'export const a = 1;\n');
-    spawnSync('git', ['-C', tmp, 'init', '-q'], { env: gitEnv });
-    spawnSync('git', ['-C', tmp, 'config', 'user.email', 'h@local'], { env: gitEnv });
-    spawnSync('git', ['-C', tmp, 'config', 'user.name', 'H'], { env: gitEnv });
-    spawnSync('git', ['-C', tmp, 'add', '.'], { env: gitEnv });
-    spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], { env: gitEnv });
-
-    const mockWinDg = win32.join('D:', 'skills', 'DoneGate');
-    const expectedWinSkill = win32.join(mockWinDg, 'skill').replace(/\\/g, '/');
-    const crossDriveHook = buildPreCommitScript(win32.join('C:', 'Temp', 'dg-hook-x'), mockWinDg, win32);
-    const parentDrivePrefix = resolveSkillPrefix(win32.join('D:'), mockWinDg, win32);
-    const winCaseDiffSelf = resolveSkillPrefix(win32.join('d:', 'skills', 'donegate'), mockWinDg, win32);
-    check(
-      'Windows 跨盘符/父目录写绝对正斜杠路径且本仓盘符大小写差异仍用相对 skill',
-      crossDriveHook.includes(`DG_SKILL="${expectedWinSkill}"`) &&
-        parentDrivePrefix === expectedWinSkill &&
-        winCaseDiffSelf === 'skill' &&
-        crossDriveHook.includes('[ -f "escapes.jsonl" ]')
-    );
-    const inst = installGitHooks(tmp);
-    check('安装 .githooks/pre-commit 并激活 git core.hooksPath', inst.activated && existsSync(inst.hookPath));
-
-    writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TO' + 'DO: 以后再写\n  return 1;\n}\n');
-    spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs'], { env: gitEnv });
-    const rBlocked = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'bad slop commit'], { encoding: 'utf8', env: gitEnv });
-    check('必红样本：含 TODO 空壳代码的 git commit 被 pre-commit 钩子当场拦截', rBlocked.status !== 0 && /未完成占位符/.test((rBlocked.stderr || '') + (rBlocked.stdout || '')));
-
-    writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() {\n  return 2;\n}\n');
-    spawnSync('git', ['-C', tmp, 'add', 'src/a.mjs'], { env: gitEnv });
-    const rPass = spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-m', 'clean small commit'], { encoding: 'utf8', env: gitEnv });
-    check('正样本：修掉空壳后的小步干净 git commit 顺畅放行', rPass.status === 0, rPass.stderr);
-
-    writeFileSync(join(tmp, 'escapes.jsonl'), '');
-    mkdirSync(join(tmp, 'skill'), { recursive: true });
-    writeFileSync(join(tmp, 'skill/check-escapes.mjs'), `import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'; import { spawnSync } from 'node:child_process'; const d = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'dg-sub-')); writeFileSync(join(d, 'x.txt'), '1'); spawnSync('git', ['-C', d, 'init', '-q']); spawnSync('git', ['-C', d, 'config', 'user.email', 'leak@bad']); spawnSync('git', ['-C', d, 'config', 'user.name', 'Leak']); spawnSync('git', ['-C', d, 'add', '.']); spawnSync('git', ['-C', d, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'sub-init']); rmSync(d, { recursive: true, force: true });\n`);
-    spawnSync('git', ['-C', tmp, 'add', '.'], { env: gitEnv });
-    spawnSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add self-check stub', '--no-verify'], { env: gitEnv });
-    const wtDir = join(tmp, '.donegate', 'wt-hook-check');
-    spawnSync('git', ['-C', tmp, 'worktree', 'add', '-q', '-b', 'wt/hook-check', wtDir, 'HEAD'], { env: gitEnv });
-    writeFileSync(join(wtDir, 'src/a.mjs'), 'export function a() {\n  return 3;\n}\n');
-    spawnSync('git', ['-C', wtDir, 'add', 'src/a.mjs'], { env: gitEnv });
-    const rWt = spawnSync('git', ['-C', wtDir, '-c', 'commit.gpgsign=false', 'commit', '-m', 'worktree clean commit'], { encoding: 'utf8', env: gitEnv });
-    const wtMsg = (spawnSync('git', ['-C', wtDir, 'log', '-1', '--format=%s'], { encoding: 'utf8', env: gitEnv }).stdout || '').trim();
-    const bareVal = (spawnSync('git', ['-C', tmp, 'config', '--get', 'core.bare'], { encoding: 'utf8', env: gitEnv }).stdout || '').trim();
-    const userVal = (spawnSync('git', ['-C', tmp, 'config', '--get', 'user.email'], { encoding: 'utf8', env: gitEnv }).stdout || '').trim();
-    check('Git Worktree 提交隔离：钩子剥离 GIT_DIR 后子自检不污染分支 HEAD、core.bare 与 user.email', rWt.status === 0 && wtMsg === 'worktree clean commit' && bareVal !== 'true' && userVal === 'h@local', rWt.stderr);
+    ihTestNoexecAndCrossDrive(check);
+    ihInitTempHookRepo(tmp, gitEnv);
+    ihTestSlopAndCleanCommits(tmp, gitEnv, check);
+    ihTestWorktreeIsolation(tmp, gitEnv, check);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
-    if (/[\\/]\.donegate[\\/]tmp$/.test(baseTmp)) {
-      try {
-        if (existsSync(baseTmp) && readdirSync(baseTmp).length === 0) rmdirSync(baseTmp);
-      } catch (err) { void err; }
-    }
+    ihCleanupHookTmp(tmp, baseTmp);
   }
   console.log(bad === 0 ? '\nRESULT: PASS Git pre-commit 钩子真拦截与放行自检全过' : `\nRESULT: FAIL ${bad} 项未过`);
   return bad === 0 ? 0 : 1;

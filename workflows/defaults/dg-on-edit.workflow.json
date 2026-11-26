@@ -29,7 +29,7 @@
         { "key": "maxCognitiveComplexity", "label": "复杂度硬阻断上限", "type": "number", "min": 15, "max": 40, "default": 25 },
         { "key": "maxCoreFileLines", "label": "核心模块行数上限", "type": "number", "min": 200, "max": 600, "default": 350 }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/lint-edit.mjs", "args": ["--red-self-test"], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/lint-edit.mjs", "args": ["--changed"] }
     },
     {
       "id": "edit-term-check",
@@ -46,7 +46,7 @@
       "configSchema": [
         { "key": "strict", "label": "严格拦截未归一化旧术语", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [] }
     },
     {
       "id": "edit-py-ruff",

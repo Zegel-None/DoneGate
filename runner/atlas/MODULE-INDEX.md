@@ -22,7 +22,7 @@
 
 ## 三、`data-ui-owner` 界面归属矩阵与聚焦切片示例
 
-在工作台或 UI 看板按住 `Alt+Click` 拾取元素时，`wb-dsh-shell.mjs` 与 `runner/dsh/ui-board-bridge.mjs` 中的 `resolveUiOwner(el, meta)` 会向上查找 `[data-ui-owner]` 并回退动作/控件映射表，将 `uiOwner` 与 `sliceCmd` 注入 `[DG-TARGET]` 胶囊：
+在工作台或 UI 看板按住 `Alt+Click` 拾取元素时，`wb-dsh-shell.mjs` 与 `runner/dsh/ui-board-bridge.mjs` （私有仓）中的 `resolveUiOwner(el, meta)` 会向上查找 `[data-ui-owner]` 并回退动作/控件映射表，将 `uiOwner` 与 `sliceCmd` 注入 `[DG-TARGET]` 胶囊：
 
 | 界面区域 / 交互组件 | DOM 选择器与特征属性 | `data-ui-owner` 归属模块 | 所属子包 |
 |---|---|---|---|
@@ -49,5 +49,5 @@ node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/ui-shell.mjs
 node runner/donegate.mjs slice atlas-workbench --focus runner/atlas/wb-dsh-shell.mjs,runner/atlas/wb-dsh-bridge.mjs,runner/atlas/wb-jit-workflow.mjs
 
 # 3. 跨 iframe 拾取桥聚焦切片
-node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/ui-board-bridge.mjs,runner/dsh/quote-protocol.mjs
+node runner/donegate.mjs slice dsh-orchestrator --focus runner/dsh/ui-board-bridge.mjs,runner/dsh/quote-protocol.mjs（私有仓）
 ```

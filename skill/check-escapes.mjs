@@ -82,36 +82,56 @@ export function validateEscapeEntry(entry, lineNo) {
   return errs;
 }
 
-export function auditEscapesFile(jsonlPath, execCwd, opts = {}) {
-  const onlyId = opts.onlyId || null;
-  const runGates = opts.runGates !== false;
-  const fails = [], passed = [];
-  if (!existsSync(jsonlPath)) return { exists: false, entries: [], passed, fails };
-  const lines = readFileSync(jsonlPath, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const seenIds = new Set(), entries = [];
-  lines.forEach((line, idx) => {
+function escParseEscapeLines(lines, fails) {
+  const seenIds = new Set();
+  const entries = [];
+  for (let idx = 0; idx < lines.length; idx++) {
     let obj;
-    try { obj = JSON.parse(line); } catch (e) { fails.push(`第 ${idx + 1} 行 JSON 损坏：${e.message}`); return; }
+    try {
+      obj = JSON.parse(lines[idx]);
+    } catch (e) {
+      fails.push(`第 ${idx + 1} 行 JSON 损坏：${e.message}`);
+      continue;
+    }
     const errs = validateEscapeEntry(obj, idx + 1);
     if (seenIds.has(obj.id)) errs.push(`第 ${idx + 1} 行 id 重复：${obj.id}`);
     seenIds.add(obj.id);
-    if (errs.length) { fails.push(...errs); return; }
+    if (errs.length) {
+      fails.push(...errs);
+      continue;
+    }
     entries.push(obj);
-  });
+  }
+  return entries;
+}
 
+function escRunSingleEscapeGate(entry, execCwd, builtinGates, passed, fails) {
+  if (builtinGates && builtinGates[entry.id]) {
+    const res = builtinGates[entry.id]();
+    if (!res.ok) fails.push(`${entry.id} 回归门禁红灯：${res.detail}`);
+    else passed.push(`${entry.id}: ${res.detail}`);
+    return;
+  }
+  const r = spawnSync(entry.gateCommand, { cwd: execCwd, shell: true, encoding: 'utf8', timeout: 120000 });
+  if (r.error || r.status !== 0) {
+    fails.push(`${entry.id} 门禁命令失败（exit=${r.status}）：${entry.gateCommand}\n${(r.stderr || r.stdout || '').trim()}`);
+  } else {
+    passed.push(`${entry.id}: ${entry.gateCommand} → exit 0`);
+  }
+}
+
+export function auditEscapesFile(jsonlPath, execCwd, opts = {}) {
+  const onlyId = opts.onlyId || null;
+  const runGates = opts.runGates !== false;
+  const fails = [];
+  const passed = [];
+  if (!existsSync(jsonlPath)) return { exists: false, entries: [], passed, fails };
+  const lines = readFileSync(jsonlPath, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const entries = escParseEscapeLines(lines, fails);
   if (runGates) {
     for (const e of entries) {
       if (onlyId && e.id !== onlyId) continue;
-      if (opts.builtinGates && opts.builtinGates[e.id]) {
-        const res = opts.builtinGates[e.id]();
-        if (!res.ok) fails.push(`${e.id} 回归门禁红灯：${res.detail}`);
-        else passed.push(`${e.id}: ${res.detail}`);
-      } else {
-        const r = spawnSync(e.gateCommand, { cwd: execCwd, shell: true, encoding: 'utf8', timeout: 120000 });
-        if (r.error || r.status !== 0) {
-          fails.push(`${e.id} 门禁命令失败（exit=${r.status}）：${e.gateCommand}\n${(r.stderr || r.stdout || '').trim()}`);
-        } else passed.push(`${e.id}: ${e.gateCommand} → exit 0`);
-      }
+      escRunSingleEscapeGate(e, execCwd, opts.builtinGates, passed, fails);
     }
   }
   return { exists: true, entries, passed, fails };

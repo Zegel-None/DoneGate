@@ -6,8 +6,8 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { verifyClaimInMemory } from '../skill/check-declarations.mjs';
-import { executeDeterministicWorkflowRun } from '../runner/dsh/workflow-runner.mjs';
-import { approveAutopilotHumanGate, AUTOPILOT_STATES } from '../runner/dsh/autopilot-state.mjs';
+import { executeDeterministicWorkflowRun } from '../runner/dsh/autopilot/workflow-runner.mjs';
+import { approveAutopilotHumanGate, AUTOPILOT_STATES } from '../runner/dsh/autopilot/autopilot-state.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];

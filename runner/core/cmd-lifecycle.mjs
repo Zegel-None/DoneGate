@@ -3,11 +3,16 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { validateContractSchema } from '../../skill/schema-lite.mjs';
 import { installGitHooks } from '../../skill/install-hooks.mjs';
-import { frozenHashOf, materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
+import { materialFingerprintOf, sha256 } from '../../skill/hash.mjs';
 import { appendChainEntry, readAndVerifyChain } from './chain.mjs';
-import { DEFAULT_THRESHOLDS, computeProjectStatus, isSelfWriterIdentity, loadThresholds } from './gates.mjs';
+import { DEFAULT_THRESHOLDS, computeProjectStatus, isSelfWriterIdentity } from './gates.mjs';
 import { renderProgressBlock } from './progress.mjs';
+import {
+  lcCheckFreezeBatchQuota, lcExecuteContractSignoff,
+  lcSealObligationsAndWrite, lcValidateObligationsForFreeze
+} from './contract-freeze.mjs';
 
 export function gitAnchorInfo(projectRoot) {
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -75,7 +80,7 @@ export function collectOrderedIncompleteContractGaps(projectRoot) {
   const st = computeProjectStatus(projectRoot);
   const gaps = [];
   for (const c of st.contractSummaries) {
-    if (c.retired) continue;
+    if (c.retired || c.track === 'explore') continue;
     if (c.obligations.length === 0) gaps.push({ contractId: c.id });
     for (const o of c.obligations) {
       if (o.state !== '通过' || o.pendingRecheck || o.subclass === 'A2' || o.subclass === 'A3') {
@@ -165,6 +170,7 @@ export function cmdContractPromote(projectRoot, opts) {
   const cPath = join(projectRoot, 'contracts', id, 'contract.json');
   const res = readJsonStrict(cPath);
   if (!res.ok) return { exitCode: res.error === 'parse' ? 2 : 3, stderr: '读取契约失败：' + cPath };
+  const origRaw = readFileSync(cPath, 'utf8');
   const contract = res.value;
   if (contract.track !== 'explore') {
     return { exitCode: 1, stderr: `契约 ${id} 不是探索态（track=${contract.track || 'delivery'}），无需 promote` };
@@ -172,17 +178,29 @@ export function cmdContractPromote(projectRoot, opts) {
   if (!opts.by || !opts.by.trim() || isSelfWriterIdentity(opts.by)) {
     return { exitCode: 1, stderr: 'G-10 晋升冻结必须由人类裁方签字（--by <裁方姓名>，禁 AI 代签）' };
   }
-  contract.track = 'delivery';
-  contract.exploreMeta = { ...(contract.exploreMeta || {}), promotedAt: new Date().toISOString(), promotedBy: opts.by.trim() };
-  writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
+  const chainChk = readAndVerifyChain(projectRoot);
+  if (!chainChk.ok) return { exitCode: chainChk.exitCode || 2, stderr: chainChk.reason };
+  const candidate = {
+    ...contract,
+    track: 'delivery',
+    provisional: false,
+    exploreMeta: { ...(contract.exploreMeta || {}), promotedAt: new Date().toISOString(), promotedBy: opts.by.trim() }
+  };
+  const schemaErrs = validateContractSchema(candidate, { full: true }).filter((e) => !/\/obligations\/\d+\/(?:frozenHash|signedBy):/.test(e));
+  if (schemaErrs.length > 0) {
+    return { exitCode: 1, stderr: `探索契约 ${id} 尚不满足正式交付 11 字段要求，拒绝晋升：\n  - ${schemaErrs.join('\n  - ')}` };
+  }
+  writeFileSync(cPath, JSON.stringify(candidate, null, 2) + '\n');
   const frz = cmdContractFreeze(projectRoot, { ...opts, forceBatch: true });
-  if (frz.exitCode !== 0) return frz;
+  if (frz.exitCode !== 0) {
+    writeFileSync(cPath, origRaw, 'utf8');
+    return frz;
+  }
   return { ...frz, stdout: `🚀 探索契约 ${id} 已晋升为正式交付契约（track=delivery）\n${frz.stdout}` };
 }
 
 export function cmdContractFreeze(projectRoot, opts) {
-  const id = opts.id;
-  const by = opts.by;
+  const { id, by } = opts;
   if (!id) return { exitCode: 1, stderr: '缺少契约标识' };
   if (!by || !by.trim()) return { exitCode: 1, stderr: '缺少签字人 --by' };
   if (isSelfWriterIdentity(by)) {
@@ -194,92 +212,14 @@ export function cmdContractFreeze(projectRoot, opts) {
   const contract = res.value;
   const obs = Array.isArray(contract.obligations) ? contract.obligations : [];
   if (obs.length === 0) return { exitCode: 1, stderr: '契约没有 obligations，无法冻结' };
+  if (opts.signoff) return lcExecuteContractSignoff(projectRoot, id, by, contract, obs, opts, collectMaterialList);
 
-  if (opts.signoff) {
-    if (!opts.attest || !opts.attest.trim()) {
-      return { exitCode: 1, stderr: '签收 (--signoff) 必须附 --attest 口头复述内容' };
-    }
-    const status = computeProjectStatus(projectRoot);
-    if (!status.chainRes.ok) return { exitCode: status.chainRes.exitCode || 2, stderr: status.chainRes.reason };
-    const cSum = status.contractSummaries.find((x) => x.id === id);
-    if (!cSum || cSum.state !== '通过') {
-      return { exitCode: 1, stderr: `契约 ${id} 当前状态为 ${cSum ? cSum.state : '未知'}，非「通过」不可签收` };
-    }
-    const notA1 = cSum.obligations.filter((o) => o.required && o.kind === 'command' && o.subclass !== 'A1');
-    if (notA1.length > 0) {
-      return { exitCode: 1, stderr: `契约 ${id} 仍有非「算数(A1)」判据：${notA1.map((x) => x.id + '=' + x.subclassLabel).join('、')}` };
-    }
-    const verifyOk = status.chainRes.entries.filter((e) => e.kind === 'verify-result' && e.contractId === id).pop();
-    if (!verifyOk || verifyOk.result !== 'pass') {
-      return { exitCode: 1, stderr: `契约 ${id} 尚未通过门 5 verify apply 复核` };
-    }
-    const implEntry = status.chainRes.entries.filter((e) => e.kind === 'implement' && e.contractId === id).pop();
-    const materials = collectMaterialList(projectRoot, contract);
-    let signoffDurationSec = null;
-    let speedWarn = '';
-    if (opts.openedAt) {
-      signoffDurationSec = Math.max(0, Math.round((Date.now() - Date.parse(opts.openedAt)) / 1000));
-      const minSec = (status.thresholds.minSignoffSecPerCriterion || 20) * obs.length;
-      if (Number.isFinite(signoffDurationSec) && signoffDurationSec < minSec) {
-        speedWarn = `\n⚠ 签字可能在走过场（总耗时 ${signoffDurationSec}s < ${minSec}s）`;
-      }
-    }
-    const app = appendChainEntry(projectRoot, {
-      kind: 'signoff',
-      contractId: id,
-      signedBy: by.trim(),
-      attestation: opts.attest.trim(),
-      signoffDurationSec,
-      implementSeq: implEntry ? implEntry.seq : null,
-      packageHash: verifyOk.packageHash || null,
-      materialFingerprint: materialFingerprintOf(materials)
-    });
-    if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
-    return {
-      exitCode: 0,
-      stdout: `契约 ${id}：通关（已签收，链序号 seq=${app.entry.seq}）${speedWarn}\n\n` +
-        renderProgressBlock(projectRoot, { focusContractId: id, headline: `🏆 「${contract.title || id}」已签收通关 · 总进度 {{PCT}}` })
-    };
-  }
+  const quotaErr = lcCheckFreezeBatchQuota(projectRoot, id, obs, opts);
+  if (quotaErr) return quotaErr;
+  const obErr = lcValidateObligationsForFreeze(obs);
+  if (obErr) return obErr;
 
-  // 失效链 A：单轮新增判据上限（默认 3 条，超限须 --force-batch）
-  const thresholds = loadThresholds(projectRoot);
-  const chainNow = readAndVerifyChain(projectRoot);
-  const prevFreeze = chainNow.ok ? chainNow.entries.filter((e) => e.kind === 'freeze' && e.contractId === id).pop() : null;
-  if (prevFreeze && prevFreeze.criteriaHashes && !opts.forceBatch) {
-    const prevIds = new Set(Object.keys(prevFreeze.criteriaHashes));
-    const addedCount = obs.filter((o) => o && !prevIds.has(o.id)).length;
-    if (addedCount > (thresholds.maxNewCriteriaPerRound || 3)) {
-      return { exitCode: 1, stderr: `链 A 单轮新增判据 ${addedCount} 条超过上限 ${thresholds.maxNewCriteriaPerRound || 3}（请分轮或加 --force-batch）` };
-    }
-  }
-
-  for (const o of obs) {
-    if (!o || !o.id || !o.kind || !o.expect) {
-      return { exitCode: 1, stderr: `判据 ${o && o.id ? o.id : '?'} 缺少 kind 或 expect，禁止冻结` };
-    }
-    if (o.kind === 'command' && (!o.command || typeof o.command !== 'string')) {
-      return { exitCode: 1, stderr: `command 判据 ${o.id} 缺少 command` };
-    }
-    if (o.scopeAck && isSelfWriterIdentity(o.scopeAck.by)) {
-      return { exitCode: 1, stderr: `G-10 判据 ${o.id} 的 scopeAck.by="${o.scopeAck.by}" 不许是本轮写方自己或 AI 代签` };
-    }
-  }
-  const nowIso = new Date().toISOString();
-  const today = nowIso.slice(0, 10);
-  const criteriaHashes = {};
-  contract.provisional = false;
-  for (const o of obs) {
-    if (!o.scopeAck || !o.scopeAck.by || !o.scopeAck.at) {
-      o.scopeAck = { by: by.trim(), at: today };
-    }
-    o.frozenAt = nowIso;
-    const h = frozenHashOf(o);
-    o.frozenHash = h;
-    o.signedBy = by.trim();
-    criteriaHashes[o.id] = h;
-  }
-  writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
+  const criteriaHashes = lcSealObligationsAndWrite(cPath, contract, obs, by);
   const anchor = gitAnchorInfo(projectRoot);
   const materials = collectMaterialList(projectRoot, contract);
   const preExistingCode = materials.map((m) => m.path).filter((p) => /\.(mjs|cjs|js|ts|tsx|jsx|py|go)$/i.test(p));
@@ -287,21 +227,14 @@ export function cmdContractFreeze(projectRoot, opts) {
     ? `\n⚠ 注意：冻结前作用域已存在 ${preExistingCode.length} 个源码文件（${preExistingCode.slice(0, 3).join(', ')}）；若非存量迁移请加 --legacy 留痕`
     : '';
   const app = appendChainEntry(projectRoot, {
-    kind: 'freeze',
-    contractId: id,
-    signedBy: by.trim(),
-    freezeCommit: anchor.head,
-    legacyMigration: Boolean(opts.legacy),
-    preExistingCodeCount: preExistingCode.length,
-    criteriaHashes,
-    materialFingerprint: materialFingerprintOf(materials)
+    kind: 'freeze', contractId: id, signedBy: by.trim(), freezeCommit: anchor.head,
+    legacyMigration: Boolean(opts.legacy), preExistingCodeCount: preExistingCode.length,
+    criteriaHashes, materialFingerprint: materialFingerprintOf(materials)
   });
   if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
-  return {
-    exitCode: 0,
-    stdout: `冻结 ${obs.length} 条（seq=${app.entry.seq}）：\n` + obs.map((o) => `  ${o.id}  frozenHash=${o.frozenHash.slice(0, 12)}`).join('\n') + legacyNotice + '\n\n' +
-      renderProgressBlock(projectRoot, { focusContractId: id, headline: `🔒 「${contract.title || id}」${obs.length} 项验收标准已锁定 · 总进度 {{PCT}}` })
-  };
+  const frozenList = obs.map((o) => `  ${o.id}  frozenHash=${o.frozenHash.slice(0, 12)}`).join('\n');
+  const progress = renderProgressBlock(projectRoot, { focusContractId: id, headline: `🔒 「${contract.title || id}」${obs.length} 项验收标准已锁定 · 总进度 {{PCT}}` });
+  return { exitCode: 0, stdout: `冻结 ${obs.length} 条（seq=${app.entry.seq}）：\n${frozenList}${legacyNotice}\n\n${progress}` };
 }
 
 export function cmdRetire(projectRoot, opts) {

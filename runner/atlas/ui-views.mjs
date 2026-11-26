@@ -58,7 +58,7 @@ function uiVwRenderModuleCard(m, isPassed) {
   const badgeText = isPassed ? '已通过自动验收' : uiVwScrubPlainText(m.vibeLabel || '待补充自动验收');
   const explainText = uiVwScrubPlainText(m.vibeExplain || m.kindLabel || '业务功能代码模块');
   const guardLabel = m.contractTitle || m.contractId ? ('已纳入「' + (m.contractTitle || m.contractId) + '」自动验收') : '尚未绑定自动验收标准';
-  const encPrompt = encodeURIComponent(m.aiPrompt || ('请帮我为 ' + m.path + ' 补充自动验收保护并跑通检查'));
+  const encPrompt = encodeURIComponent(m.aiPrompt || ('请帮我为 ' + m.path + ' 补充自动验收保护并跑通检查')).replace(/'/g, '%27');
   const actionBtn = isPassed
     ? ''
     : '<button type="button" class="ghost-btn is-primary text-[11px]" onclick="copyAtlasAiPrompt(\'' + encPrompt + '\')">复制这句话发给 AI 处理</button>';
@@ -124,7 +124,7 @@ function uiVwRenderBranchesTab(branches) {
       ? '<div class="mt-1 px-2.5 py-1.5 rounded-lg text-[11px]" style="background: var(--err-bg); color: var(--err);">撞车提醒：与 ' +
         esc(b.collidesWith.map((x) => x.branch + '（共同修改：' + (x.files || []).join('、') + '）').join('；')) + ' 同时改动同一文件</div>'
       : '';
-    const encPrompt = encodeURIComponent(b.aiPrompt || ('请帮我核对分支 ' + b.name + ' 的代码改动与合并风险'));
+    const encPrompt = encodeURIComponent(b.aiPrompt || ('请帮我核对分支 ' + b.name + ' 的代码改动与合并风险')).replace(/'/g, '%27');
     const copyBtn = b.isDefault ? '' : '<button type="button" class="ghost-btn text-[11px]" onclick="copyAtlasAiPrompt(\'' + encPrompt + '\')">复制这句话发给 AI 处理</button>';
     const desc = b.isDefault
       ? '当前默认主线（正式稳定基线）'
@@ -200,7 +200,7 @@ function uiVwRenderLedgerTab(p, mods, branches, contracts, led) {
   }).join('');
 
   const nextSteps = uiVwBuildNextActionItems(mods, branches, led).map((item) => {
-    const enc = encodeURIComponent(item.prompt);
+    const enc = encodeURIComponent(item.prompt).replace(/'/g, '%27');
     return '<div class="p-2.5 rounded-xl border flex items-center justify-between gap-2 flex-wrap" style="background: var(--surface-soft); border-color: var(--border-subtle);">' +
       '<span style="color: var(--text-main);">' + esc(item.text) + '</span>' +
       '<button type="button" class="ghost-btn is-primary text-[11px]" onclick="copyAtlasAiPrompt(\'' + enc + '\')">复制这句话发给 AI 处理</button>' +

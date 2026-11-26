@@ -3,7 +3,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
-import { buildGovernanceSummaryPayload, inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
+import { inspectAllKnownWorkflowPacks } from '../dsh/deps/index.mjs';
+import { readUiToolchainStatus } from '../dsh/uiboard/index.mjs';
+import { buildGovernanceSummaryPayload } from '../dsh/autopilot/index.mjs';
 import { WB_PRESET_TEMPLATE_TRAITS } from './wb-catalog.mjs';
 import { buildAdaptiveBusinessHierarchy } from './modularity-hierarchy.mjs';
 
@@ -61,9 +63,12 @@ const HYD_WB_SUBUNIT_RULES = [
   { match: (p) => p.startsWith('runner/atlas/') && /\/(?:scan-|assemble-atlas|hydrate-workbench|humanize|contract\.|index\.)/.test(p), key: 'atlas-scanner', title: '自动盘点项目功能与改乱风险', scope: 'runner/atlas/', tier: 3 },
   { match: (p) => p.startsWith('runner/atlas/') && /\/(?:serve-atlas|ui-|wb-catalog|wb-jit-|wb-subagent|wb-uiboard|wb-dsh-)/.test(p), key: 'atlas-shell', title: '实时状态同步与过夜挂机', scope: 'runner/atlas/', tier: 2 },
   { match: (p) => p.startsWith('runner/atlas/'), key: 'atlas-canvas', title: '流程图拖拽、连线与展开收起', scope: 'runner/atlas/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/') && /\/(?:shared-pool-|workflow-deps|dg-deps-|workflow-jit)/.test(p), key: 'dsh-deps', title: '自动安装检查工具（免配环境）', scope: 'runner/dsh/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/') && /\/ui-/.test(p), key: 'dsh-uiboard', title: '边看网页效果、边点选修改处', scope: 'runner/dsh/', tier: 3 },
-  { match: (p) => p.startsWith('runner/dsh/'), key: 'dsh-host', title: '安排后台小助手分头改代码', scope: 'runner/dsh/', tier: 2 },
+  { match: (p) => p.startsWith('runner/shared/'), key: 'shared-prim', title: '共享底座原语与浏览器拉起器', scope: 'runner/shared/', tier: 0 },
+  { match: (p) => p.startsWith('runner/cockpit/'), key: 'cockpit', title: '主控三级变焦驾驶舱视图', scope: 'runner/cockpit/', tier: 1 },
+  { match: (p) => p.startsWith('runner/dsh/deps/'), key: 'dsh-deps', title: '自动安装检查工具（免配环境）', scope: 'runner/dsh/deps/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/uiboard/'), key: 'dsh-uiboard', title: '边看网页效果、边点选修改处', scope: 'runner/dsh/uiboard/', tier: 3 },
+  { match: (p) => p.startsWith('runner/dsh/autopilot/'), key: 'dsh-autopilot', title: '工作流编译与多组件过夜挂机', scope: 'runner/dsh/autopilot/', tier: 2 },
+  { match: (p) => p.startsWith('runner/dsh/'), key: 'dsh-host', title: '安排后台小助手分头改代码', scope: 'runner/dsh/host/', tier: 2 },
   { match: (p) => p.startsWith('skill/adapters/'), key: 'skill-adapters', title: '调用开源工具查漏洞与坏味道', scope: 'skill/adapters/', tier: 5 },
   { match: (p) => p.startsWith('skill/') && /\/(?:check-|cognitive-complexity|commit-hygiene|schema-lite)/.test(p), key: 'skill-gates', title: '拦截 AI 偷懒删功能与绕脑代码', scope: 'skill/', tier: 5 },
   { match: (p) => p.startsWith('skill/'), key: 'skill-kit', title: '基础文件读写与公开发布打包', scope: 'skill/', tier: 5 },
@@ -75,43 +80,8 @@ const LANE_ROLE_LABEL = { ui: '界面', api: '接口', tool: '工具' };
 const SEC_ADAPTER_TOOLS = new Set(['gitleaks', 'osv-scanner', 'semgrep', 'syft', 'trivy', 'vuln-merge']);
 const E2E_ADAPTER_TOOLS = new Set(['playwright', 'maestro', 'vitest']);
 
-function defaultSavedState() {
-  return {
-    schemaVersion: '1.0', hostLayoutVer: 3, customPacks: {}, importedSandboxes: {}, componentWorkflows: {}, hostNodeLayouts: {}, hostGroups: [], hostSubgraphs: [],
-    collapsedWfGroups: [], collapsedNodeCats: [], workshopOverrides: {}, textOverrides: {}, textStyles: {}, controlStyles: {},
-    starredRepos: ['mobile-dev-inc/Maestro', 'biomejs/biome'], updatedAt: null
-  };
-}
-
-export function readSavedWorkbenchState(projectRoot) {
-  const p = join(resolve(projectRoot), '.donegate', 'workbench-state.json');
-  if (!existsSync(p)) return defaultSavedState();
-  const r = readJsonStrict(p);
-  if (!r.ok || !r.value || typeof r.value !== 'object') return defaultSavedState();
-  const merged = { ...defaultSavedState(), ...r.value };
-  if (r.value.hostLayoutVer !== 3 && merged.hostNodeLayouts && typeof merged.hostNodeLayouts === 'object') {
-    const cleaned = {};
-    for (const [k, v] of Object.entries(merged.hostNodeLayouts)) {
-      if (v && typeof v === 'object') {
-        const { x: _x, y: _y, expanded: _exp, ...rest } = v;
-        void _x;
-        void _y;
-        void _exp;
-        cleaned[k] = rest;
-      }
-    }
-    merged.hostNodeLayouts = cleaned;
-    merged.hostLayoutVer = 3;
-  }
-  if (merged.componentWorkflows && typeof merged.componentWorkflows === 'object') {
-    for (const b of Object.values(merged.componentWorkflows)) {
-      if (b && typeof b.baseName === 'string') {
-        b.baseName = b.baseName.replace(/护栏包|开发包|开发流/g, '工作流'); // dg-term-allow: 清洗历史落盘旧名
-      }
-    }
-  }
-  return merged;
-}
+import { readSavedWorkbenchState } from '../shared/workbench-state.mjs';
+export { readSavedWorkbenchState };
 
 function laneOrderRank(lane) {
   return LANE_RANK[lane] ?? 3;

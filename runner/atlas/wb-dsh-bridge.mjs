@@ -163,13 +163,16 @@ function emitDshQuote(quoteObj) {
     return;
   }
   if (IS_DSH_EMBED && window.parent && window.parent !== window) {
-    window.parent.postMessage({
-      source: 'donegate-canvas',
-      sessionId: DSH_SESSION_ID,
-      type: 'dg:insert-quote',
-      text: quoteObj.text,
-      summary: quoteObj.summary
-    }, '*');
+    const targetOrigin = (location && location.origin && location.origin !== 'null') ? location.origin : (location && location.protocol === 'http:' ? 'http://127.0.0.1' : '');
+    if (targetOrigin) {
+      window.parent.postMessage({
+        source: 'donegate-canvas',
+        sessionId: DSH_SESSION_ID,
+        type: 'dg:insert-quote',
+        text: quoteObj.text,
+        summary: quoteObj.summary
+      }, targetOrigin);
+    }
     showToast('❝ 已引用至底部输入框：' + quoteObj.summary.label);
     return;
   }
@@ -255,12 +258,15 @@ function openRightFilePreview(filePath, title, customDiff) {
   const cleanFile = String(filePath || 'runner/donegate.mjs').replace(/^\\/+/, '');
   const dshAddr = \`dsh-resource://file/session/\${encodeURIComponent(DSH_SESSION_ID)}/\${cleanFile}\`;
   if (IS_DSH_EMBED && window.parent && window.parent !== window) {
-    window.parent.postMessage({
-      source: 'donegate-canvas',
-      sessionId: DSH_SESSION_ID,
-      type: 'dg:open-right-file',
-      address: dshAddr
-    }, '*');
+    const targetOrigin = (location && location.origin && location.origin !== 'null') ? location.origin : (location && location.protocol === 'http:' ? 'http://127.0.0.1' : '');
+    if (targetOrigin) {
+      window.parent.postMessage({
+        source: 'donegate-canvas',
+        sessionId: DSH_SESSION_ID,
+        type: 'dg:open-right-file',
+        address: dshAddr
+      }, targetOrigin);
+    }
     showToast('👁 已打开关联源码预览：' + cleanFile);
     return;
   }

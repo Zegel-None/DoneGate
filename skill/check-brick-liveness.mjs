@@ -66,6 +66,40 @@ export function evaluateBrickLiveness(projectRoot) {
   };
 }
 
+function blReportDuplicates(values, prefix, issues) {
+  const seen = new Set();
+  const reported = new Set();
+  for (const v of values) {
+    if (!v) continue;
+    if (seen.has(v) && !reported.has(v)) {
+      reported.add(v);
+      issues.push(`${prefix}${v}`);
+    }
+    seen.add(v);
+  }
+}
+
+function blCheckBidirectionalCoverage(adapters, bricks, issues) {
+  // 双向覆盖：注册表里每一条都要在台账里有对应（按 registryId 优先，退到 tool）
+  for (const a of adapters) {
+    if (!a || !a.id) {
+      issues.push('注册表存在缺 id 的条目');
+      continue;
+    }
+    const hit = bricks.some((b) => b && (b.registryId === a.id || (b.registryId === undefined && b.brick === a.tool)));
+    if (!hit) issues.push(`注册表有、台账无：${a.id}（tool=${a.tool || '?'}）`);
+  }
+  // 反向：台账里每一条都要在注册表里有对应
+  for (const b of bricks) {
+    if (!b || !b.brick) {
+      issues.push('台账存在缺 brick 的条目');
+      continue;
+    }
+    const hit = adapters.some((a) => a && (a.id === b.registryId || (b.registryId === undefined && a.tool === b.brick)));
+    if (!hit) issues.push(`台账有、注册表无：${b.brick}（registryId=${b.registryId || '未填'}）`);
+  }
+}
+
 // 注册表 ↔ 入网台账 双向一致（防「文档说冻结、注册表已入网」这类漂移）
 export function evaluateRegistryLedgerConsistency(projectRoot) {
   const regRes = readJsonStrict(join(projectRoot, 'adapters.registry.json'));
@@ -79,33 +113,11 @@ export function evaluateRegistryLedgerConsistency(projectRoot) {
   if (!Array.isArray(bricks)) return { exitCode: 2, issues: ['ledger.json 缺少 bricks 数组'], reason: '结构损坏' };
 
   const issues = [];
-
   // 结构：注册表 id / tool 不许重复（重复会让「按 id 匹配」失去意义）
-  const ids = adapters.map((a) => a && a.id).filter(Boolean);
-  const tools = adapters.map((a) => a && a.tool).filter(Boolean);
-  for (const v of new Set(ids)) {
-    if (ids.filter((x) => x === v).length > 1) issues.push(`注册表 adapter id 重复：${v}`);
-  }
-  for (const v of new Set(tools)) {
-    if (tools.filter((x) => x === v).length > 1) issues.push(`注册表 tool 重复：${v}`);
-  }
-  const brickNames = bricks.map((b) => b && b.brick).filter(Boolean);
-  for (const v of new Set(brickNames)) {
-    if (brickNames.filter((x) => x === v).length > 1) issues.push(`台账 brick 重复：${v}`);
-  }
-
-  // 双向覆盖：注册表里每一条都要在台账里有对应（按 registryId 优先，退到 tool）
-  for (const a of adapters) {
-    if (!a || !a.id) { issues.push('注册表存在缺 id 的条目'); continue; }
-    const hit = bricks.some((b) => b && (b.registryId === a.id || (b.registryId === undefined && b.brick === a.tool)));
-    if (!hit) issues.push(`注册表有、台账无：${a.id}（tool=${a.tool || '?'}）`);
-  }
-  // 反向：台账里每一条都要在注册表里有对应
-  for (const b of bricks) {
-    if (!b || !b.brick) { issues.push('台账存在缺 brick 的条目'); continue; }
-    const hit = adapters.some((a) => a && (a.id === b.registryId || (b.registryId === undefined && a.tool === b.brick)));
-    if (!hit) issues.push(`台账有、注册表无：${b.brick}（registryId=${b.registryId || '未填'}）`);
-  }
+  blReportDuplicates(adapters.map((a) => a && a.id), '注册表 adapter id 重复：', issues);
+  blReportDuplicates(adapters.map((a) => a && a.tool), '注册表 tool 重复：', issues);
+  blReportDuplicates(bricks.map((b) => b && b.brick), '台账 brick 重复：', issues);
+  blCheckBidirectionalCoverage(adapters, bricks, issues);
 
   return {
     exitCode: issues.length > 0 ? 1 : 0,
@@ -148,23 +160,113 @@ function readContractsIndex(projectRoot) {
   return { exists: true, map };
 }
 
+function blParseCheckedByRef(ref) {
+  if (typeof ref !== 'string') return null;
+  const parts = ref.split('/');
+  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) return null;
+  return parts;
+}
+
+function blCollectMalformedCheckedBy(adapters) {
+  const malformed = [];
+  for (const a of adapters) {
+    if (!a || !a.id) continue;
+    const refs = Array.isArray(a.checkedBy) ? a.checkedBy : [a.checkedBy];
+    for (const ref of refs) {
+      if (!blParseCheckedByRef(ref)) {
+        malformed.push(`${a.id}: checkedBy 语法非法（必须 <契约id>/<判据id>）：${JSON.stringify(ref)}`);
+      }
+    }
+  }
+  return malformed;
+}
+
+function blLoadWiringBaseline(projectRoot) {
+  const basePath = join(projectRoot, 'skill', 'wiring-baseline.json');
+  if (!existsSync(basePath)) return { baseSet: new Set(), advMap: new Map() };
+  const b = readJsonStrict(basePath);
+  if (!b.ok || !b.value) {
+    return { error: { exitCode: 2, issues: ['skill/wiring-baseline.json 读不出或损坏'], wired: [], pending: [], reason: '基线损坏' } };
+  }
+  const baseSet = new Set(Array.isArray(b.value.pending) ? b.value.pending : []);
+  const advMap = new Map();
+  for (const a of (Array.isArray(b.value.advisory) ? b.value.advisory : [])) {
+    if (a && typeof a.id === 'string') advMap.set(a.id, typeof a.reason === 'string' ? a.reason : '');
+  }
+  for (const [id, reason] of advMap) {
+    if (!reason.trim()) {
+      return { error: { exitCode: 2, issues: [`wiring-baseline 的 advisory 条目 ${id} 没写理由（不许留空）`], wired: [], pending: [], reason: '基线不合规' } };
+    }
+  }
+  return { baseSet, advMap };
+}
+
+function blResolveAdapterRefs(a, contractsMap, malformed) {
+  const refs = Array.isArray(a.checkedBy) ? a.checkedBy : [a.checkedBy];
+  const reasons = [];
+  for (const ref of refs) {
+    const parts = blParseCheckedByRef(ref);
+    if (!parts) {
+      malformed.push(`${a.id}: checkedBy 语法非法（必须 <契约id>/<判据id>）：${JSON.stringify(ref)}`);
+      continue;
+    }
+    const [cid, oid] = parts;
+    const obs = contractsMap.get(cid);
+    if (!obs) reasons.push(`契约 ${cid} 不存在`);
+    else if (!obs.has(oid)) reasons.push(`契约 ${cid} 里没有判据 ${oid}`);
+  }
+  return reasons;
+}
+
+function blAuditBaselineRatchet(baseSet, advMap, wiredSet, regIds, issues) {
+  for (const id of baseSet) {
+    if (wiredSet.has(id)) issues.push(`wiring-baseline 的 pending 里 ${id} 已经接线，请从基线删除（棘轮只减）`);
+    else if (!regIds.has(id)) issues.push(`wiring-baseline 的 pending 里 ${id} 已不在注册表，请从基线删除`);
+  }
+  for (const id of advMap.keys()) {
+    if (wiredSet.has(id)) issues.push(`wiring-baseline 的 advisory 里 ${id} 已经接线，自相矛盾：请从 advisory 删除`);
+    else if (!regIds.has(id)) issues.push(`wiring-baseline 的 advisory 里 ${id} 已不在注册表，请删除`);
+  }
+}
+
+function blClassifyUnresolvedAdapters(unresolved, baseSet, advMap, issues) {
+  const pending = [];
+  const advisory = [];
+  for (const [id, reasons] of unresolved) {
+    if (baseSet.has(id)) pending.push({ id, reasons });
+    else if (advMap.has(id)) advisory.push({ id, reasons: [advMap.get(id)] });
+    else issues.push(`${id}: 孤儿声明——checkedBy 解析不到真实判据（${reasons.join('；')}），且未登记进 skill/wiring-baseline.json 的 pending 或 advisory`);
+  }
+  return { pending, advisory };
+}
+
+function blEvaluateAdaptersAgainstContracts(adapters, contractsMap, baseSet, advMap) {
+  const issues = [];
+  const malformed = [];
+  const wired = [];
+  const unresolved = new Map();
+  for (const a of adapters) {
+    if (!a || !a.id) {
+      issues.push('注册表存在缺 id 的条目');
+      continue;
+    }
+    const reasons = blResolveAdapterRefs(a, contractsMap, malformed);
+    if (reasons.length === 0) wired.push(a.id);
+    else unresolved.set(a.id, [...new Set(reasons)]);
+  }
+  const { pending, advisory } = blClassifyUnresolvedAdapters(unresolved, baseSet, advMap, issues);
+  const regIds = new Set(adapters.map((a) => a && a.id).filter(Boolean));
+  blAuditBaselineRatchet(baseSet, advMap, new Set(wired), regIds, issues);
+  return { issues, malformed, wired, pending, advisory };
+}
+
 export function evaluateBrickWiring(projectRoot, opts = {}) {
   const regRes = readJsonStrict(join(projectRoot, 'adapters.registry.json'));
   if (!regRes.ok) return { exitCode: regRes.error === 'parse' ? 2 : 3, issues: [], wired: [], pending: [], reason: 'adapters.registry.json 读不出或损坏' };
   const adapters = regRes.value && regRes.value.adapters;
   if (!Array.isArray(adapters)) return { exitCode: 2, issues: ['adapters.registry.json 缺少 adapters 数组'], wired: [], pending: [], reason: '结构损坏' };
 
-  const earlyMalformed = [];
-  for (const a of adapters) {
-    if (!a || !a.id) continue;
-    const refs = Array.isArray(a.checkedBy) ? a.checkedBy : [a.checkedBy];
-    for (const ref of refs) {
-      const parts = typeof ref === 'string' ? ref.split('/') : [];
-      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-        earlyMalformed.push(`${a.id}: checkedBy 语法非法（必须 <契约id>/<判据id>）：${JSON.stringify(ref)}`);
-      }
-    }
-  }
+  const earlyMalformed = blCollectMalformedCheckedBy(adapters);
   if (earlyMalformed.length > 0) {
     return { exitCode: 2, issues: earlyMalformed, wired: [], pending: [], advisory: [], total: adapters.length, reason: `${earlyMalformed.length} 处 checkedBy 语法非法` };
   }
@@ -174,87 +276,21 @@ export function evaluateBrickWiring(projectRoot, opts = {}) {
   const cIdx = readContractsIndex(projectRoot);
   if (!cIdx.exists || cIdx.map.size === 0) {
     return {
-      exitCode: 3,
-      issues: [],
-      wired: [],
-      pending: [],
-      advisory: [],
-      total: adapters.length,
+      exitCode: 3, issues: [], wired: [], pending: [], advisory: [], total: adapters.length,
       reason: '本仓没有 contracts/（或为空），无法判断 checkedBy 是否被认领；引导期允许，退 3（零契约公开仓可加 --skip-contract-lookup）'
     };
   }
 
-  const basePath = join(projectRoot, 'skill', 'wiring-baseline.json');
-  let baselinePending = [];
-  let baselineAdvisory = [];
-  if (existsSync(basePath)) {
-    const b = readJsonStrict(basePath);
-    if (!b.ok || !b.value) return { exitCode: 2, issues: ['skill/wiring-baseline.json 读不出或损坏'], wired: [], pending: [], reason: '基线损坏' };
-    baselinePending = Array.isArray(b.value.pending) ? b.value.pending : [];
-    baselineAdvisory = Array.isArray(b.value.advisory) ? b.value.advisory : [];
-  }
-  const baseSet = new Set(baselinePending);
-  const advMap = new Map();
-  for (const a of baselineAdvisory) {
-    if (a && typeof a.id === 'string') advMap.set(a.id, typeof a.reason === 'string' ? a.reason : '');
-  }
-  for (const [id, reason] of advMap) {
-    if (!reason.trim()) return { exitCode: 2, issues: [`wiring-baseline 的 advisory 条目 ${id} 没写理由（不许留空）`], wired: [], pending: [], reason: '基线不合规' };
-  }
+  const baseLoaded = blLoadWiringBaseline(projectRoot);
+  if (baseLoaded.error) return baseLoaded.error;
+  const { baseSet, advMap } = baseLoaded;
+  const { issues, malformed, wired, pending, advisory } = blEvaluateAdaptersAgainstContracts(adapters, cIdx.map, baseSet, advMap);
 
-  const issues = [];
-  const malformed = [];
-  const wired = [];
-  const pending = [];
-  const advisory = [];
-  const unresolved = new Map();
-
-  for (const a of adapters) {
-    if (!a || !a.id) { issues.push('注册表存在缺 id 的条目'); continue; }
-    const refs = Array.isArray(a.checkedBy) ? a.checkedBy : [a.checkedBy];
-    const reasons = [];
-    for (const ref of refs) {
-      const parts = typeof ref === 'string' ? ref.split('/') : [];
-      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-        malformed.push(`${a.id}: checkedBy 语法非法（必须 <契约id>/<判据id>）：${JSON.stringify(ref)}`);
-        continue;
-      }
-      const [cid, oid] = parts;
-      const obs = cIdx.map.get(cid);
-      if (!obs) { reasons.push(`契约 ${cid} 不存在`); continue; }
-      if (!obs.has(oid)) reasons.push(`契约 ${cid} 里没有判据 ${oid}`);
-    }
-    if (reasons.length === 0) { wired.push(a.id); continue; }
-    unresolved.set(a.id, [...new Set(reasons)]);
-  }
-
-  // 欠账：登记在基线里的，算「已知、待接线」，不判红但每次打印；没登记的，判红。
-  // advisory：明确决定不接线的砖（观测不构成判据），必须带理由，也不判红。
-  for (const [id, reasons] of unresolved) {
-    if (baseSet.has(id)) pending.push({ id, reasons });
-    else if (advMap.has(id)) advisory.push({ id, reasons: [advMap.get(id)] });
-    else issues.push(`${id}: 孤儿声明——checkedBy 解析不到真实判据（${reasons.join('；')}），且未登记进 skill/wiring-baseline.json 的 pending 或 advisory`);
-  }
-
-  // 棘轮：pending 只许变少；advisory 与「已接线」不许同时成立。
-  const wiredSet = new Set(wired);
-  const regIds = new Set(adapters.map((a) => a && a.id).filter(Boolean));
-  for (const id of baseSet) {
-    if (wiredSet.has(id)) issues.push(`wiring-baseline 的 pending 里 ${id} 已经接线，请从基线删除（棘轮只减）`);
-    else if (!regIds.has(id)) issues.push(`wiring-baseline 的 pending 里 ${id} 已不在注册表，请从基线删除`);
-  }
-  for (const id of advMap.keys()) {
-    if (wiredSet.has(id)) issues.push(`wiring-baseline 的 advisory 里 ${id} 已经接线，自相矛盾：请从 advisory 删除`);
-    else if (!regIds.has(id)) issues.push(`wiring-baseline 的 advisory 里 ${id} 已不在注册表，请删除`);
-  }
-
-  const exitCode = malformed.length ? 2 : issues.length ? 1 : 0;
+  const exitCode = malformed.length ? 2 : (issues.length ? 1 : 0);
   return {
     exitCode,
     issues: [...malformed, ...issues],
-    wired,
-    pending,
-    advisory,
+    wired, pending, advisory,
     total: adapters.length,
     baselineCount: baseSet.size,
     reason: exitCode === 0

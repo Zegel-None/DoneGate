@@ -1,5 +1,5 @@
 // Agent Native UI 看板前端控制器：真实项目/完结门自举套娃预览、四件套实时状态、待传达功能记录与传达到项目看板 grill me 环节
-import { AESTHETIC_PROPOSALS, ARCHETYPE_CSS, buildInjectedUiBridgeScript } from '../dsh/contract.mjs';
+import { AESTHETIC_PROPOSALS, ARCHETYPE_CSS, buildInjectedUiBridgeScript } from '../dsh/uiboard/index.mjs';
 
 const EMBEDDED_PROPOSALS_JSON = JSON.stringify(AESTHETIC_PROPOSALS);
 const EMBEDDED_BRIDGE_JS = JSON.stringify(buildInjectedUiBridgeScript());

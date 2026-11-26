@@ -4,7 +4,7 @@
 //   消除全部具体适配器（以 adapters.registry.json 为准）里重复手搓的参数解析、--stage/--checked-by 越权拦截、注册表校验、
 //   跨平台二进制查找与版本提取、semver 范围核对、git 脏树拒收、SHA-256 哈希与严格九字段落盘。
 //   所有具体适配器禁止直接 import node:crypto 或 node:child_process，必须统一调用 runAdapter。
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
@@ -73,7 +73,7 @@ export function buildWinBatchSpawn(batPath, args = []) {
   const quoteCmd = (raw) => {
     const s = String(raw ?? '');
     if (!s) return '""';
-    return /[\s"&|<>^()]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /[\s"&|<>^()=;,^%]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const inner = [quoteCmd(batPath), ...args.map(quoteCmd)].join(' ');
   return {
@@ -126,21 +126,41 @@ function adpShBuildProjectVenvCandidates(spec, rootDir) {
 }
 
 // 跨平台解析可执行文件路径（显式路径 → 项目 .venv → PATH → 常见用户安装目录）
-export function resolveExecutable(spec, fallbackCandidates = [], rootDir = null) {
-  if (/[\\/]/.test(spec)) return existsSync(spec) ? adpShBuildExecEntry(spec) : null;
-  for (const vc of adpShBuildProjectVenvCandidates(spec, rootDir)) {
-    if (vc && existsSync(vc)) return adpShBuildExecEntry(vc);
+export function resolveExecutable(spec, fallbackCandidates = [], rootDir = null, opts = {}) {
+  const explicitOnly = Boolean(opts.explicitOnly);
+  if (/[\\/]/.test(spec)) {
+    if (existsSync(spec)) return adpShBuildExecEntry(spec);
+    if (rootDir) {
+      const fromRoot = resolve(rootDir, spec);
+      if (existsSync(fromRoot)) return adpShBuildExecEntry(fromRoot);
+    }
+    return null;
+  }
+  if (!explicitOnly) {
+    for (const vc of adpShBuildProjectVenvCandidates(spec, rootDir)) {
+      if (vc && existsSync(vc)) return adpShBuildExecEntry(vc);
+    }
   }
   const fromPath = adpShProbeSystemPath(spec);
   if (fromPath) return fromPath;
+  if (explicitOnly) return null;
   for (const c of adpShBuildFallbackList(spec, fallbackCandidates)) {
     if (c && existsSync(c)) return adpShBuildExecEntry(c);
   }
   return null;
 }
 
-export function runAdapter(spec) {
-  const argv = process.argv.slice(2);
+export function readFirstJsonInDir(dirPath) {
+  try {
+    const files = readdirSync(dirPath).filter((f) => /\.json$/i.test(f)).sort();
+    return files.length > 0 ? readFileSync(join(dirPath, files[0]), 'utf8') : null;
+  } catch (err) {
+    void err;
+    return null;
+  }
+}
+
+function adpShCreateArgHelpers(argv) {
   if (argv.includes('--stage') || argv.includes('--checked-by')) {
     fail(2, '协议违规：禁止传入 --stage 或 --checked-by（仅从 registry 抄录）');
   }
@@ -153,12 +173,16 @@ export function runAdapter(spec) {
     const i = argv.indexOf(k);
     return i >= 0 ? (argv[i + 1] ?? '') : null;
   };
+  return { arg, hasFlag, rawArgAfter };
+}
 
-  const dryRun = hasFlag('--dry-run');
-  const rootDir = resolve(arg('--root', process.cwd()));
-  const registryId = spec.requireRegistryId ? arg('--registry-id') : arg('--registry-id', spec.defaultRegistryId || `${spec.tool}@stage4`);
-  if (!registryId) fail(2, '缺少必填参数 --registry-id');
+function adpShIsValidCheckedBy(checkedBy) {
+  const isRef = (cb) => typeof cb === 'string' && /^[^/]+\/[^/]+$/.test(cb);
+  if (Array.isArray(checkedBy)) return checkedBy.length > 0 && checkedBy.every(isRef);
+  return isRef(checkedBy);
+}
 
+function adpShLoadRegistryEntry(rootDir, spec, registryId) {
   const regPath = existsSync(join(rootDir, 'adapters.registry.json'))
     ? join(rootDir, 'adapters.registry.json')
     : join(ADAPTERS_REPO, 'adapters.registry.json');
@@ -166,167 +190,167 @@ export function runAdapter(spec) {
   try { reg = JSON.parse(readFileSync(regPath, 'utf8')); } catch (e) { fail(2, 'adapters.registry.json 不可读或损坏：' + e.message); }
   const entry = Array.isArray(reg.adapters) ? reg.adapters.find((a) => a.id === registryId && a.tool === spec.tool) : null;
   if (!entry) fail(2, '未在 adapters.registry.json 登记的 --registry-id：' + registryId);
-
-  const validCb = Array.isArray(entry.checkedBy)
-    ? entry.checkedBy.length > 0 && entry.checkedBy.every((cb) => typeof cb === 'string' && /^[^/]+\/[^/]+$/.test(cb))
-    : typeof entry.checkedBy === 'string' && /^[^/]+\/[^/]+$/.test(entry.checkedBy);
-  if (entry.protocolVersion !== '1.1' || !Number.isInteger(entry.stage) || entry.stage < 1 || entry.stage > 20 || !validCb) {
+  const validStage = Number.isInteger(entry.stage) && entry.stage >= 1 && entry.stage <= 20;
+  if (entry.protocolVersion !== '1.1' || !validStage || !adpShIsValidCheckedBy(entry.checkedBy)) {
     fail(2, 'registry 条目协议版本或字段非法：' + registryId);
   }
+  return entry;
+}
 
-  if (typeof spec.validateArgs === 'function') {
-    spec.validateArgs({ argv, arg, hasFlag, rawArgAfter, fail });
+function adpShCreateBinRunner(resolved, rootDir, customEnv, timeoutMs) {
+  return (args, opts = {}) => {
+    const baseOpts = {
+      cwd: opts.cwd || rootDir,
+      env: opts.env ? { ...customEnv, ...opts.env } : customEnv,
+      encoding: 'utf8',
+      timeout: opts.timeout || timeoutMs,
+      windowsHide: true
+    };
+    if (resolved.isWinBatch) {
+      const wb = buildWinBatchSpawn(resolved.cmd, args);
+      return spawnSync(wb.cmd, wb.args, { ...baseOpts, ...wb.extraOpts });
+    }
+    return spawnSync(resolved.cmd, [...resolved.prefixArgs, ...args], baseOpts);
+  };
+}
+
+function adpShReadPackageVersionFallback(rootDir) {
+  const pkgPath = join(rootDir, 'package.json');
+  if (!existsSync(pkgPath)) return '1.0.0';
+  try {
+    return JSON.parse(readFileSync(pkgPath, 'utf8')).version || '1.0.0';
+  } catch (err) {
+    void err;
+    return '1.0.0';
   }
+}
 
+function adpShResolveRuntimeAndVersion(spec, rootDir, arg, hasFlag, entry) {
+  if (typeof spec.resolveVersion === 'function') {
+    return { runBin: null, toolVer: spec.resolveVersion({ arg, rootDir, repoDir: ADAPTERS_REPO, entry, fail }) };
+  }
+  if (spec.mode === 'artifact' || spec.mode === 'knowledge' || spec.mode === 'custom') {
+    return { runBin: null, toolVer: arg('--tool-version', adpShReadPackageVersionFallback(rootDir)) };
+  }
   const defaultBin = spec.defaultBin || spec.tool;
+  const hasExplicitBin = hasFlag('--bin');
   const binSpec = arg('--bin', defaultBin);
   const customEnv = spec.env ? { ...process.env, ...spec.env } : process.env;
-  const timeoutMs = spec.timeoutMs || 120000;
+  const fallbacks = hasExplicitBin ? [] : (typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : []);
+  const resolved = resolveExecutable(binSpec, fallbacks, rootDir, { explicitOnly: hasExplicitBin });
+  if (!resolved) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
 
-  let runBin = null;
-  let toolVer = '';
-  if (typeof spec.resolveVersion === 'function') {
-    toolVer = spec.resolveVersion({ arg, rootDir, repoDir: ADAPTERS_REPO, entry, fail });
-  } else if (spec.mode === 'artifact' || spec.mode === 'knowledge' || spec.mode === 'custom') {
-    const pkgPath = join(rootDir, 'package.json');
-    let fallbackVer = '1.0.0';
-    if (existsSync(pkgPath)) {
-      try { fallbackVer = JSON.parse(readFileSync(pkgPath, 'utf8')).version || '1.0.0'; } catch (err) { void err; }
-    }
-    toolVer = arg('--tool-version', fallbackVer);
-  } else {
-    const resolved = resolveExecutable(binSpec, typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : [], rootDir);
-    if (!resolved) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
-    runBin = (args, opts = {}) => {
-      const baseOpts = {
-        cwd: opts.cwd || rootDir,
-        env: opts.env ? { ...customEnv, ...opts.env } : customEnv,
-        encoding: 'utf8',
-        timeout: opts.timeout || timeoutMs,
-        windowsHide: true
-      };
-      if (resolved.isWinBatch) {
-        const wb = buildWinBatchSpawn(resolved.cmd, args);
-        return spawnSync(wb.cmd, wb.args, { ...baseOpts, ...wb.extraOpts });
-      }
-      return spawnSync(resolved.cmd, [...resolved.prefixArgs, ...args], baseOpts);
+  const runBin = adpShCreateBinRunner(resolved, rootDir, customEnv, spec.timeoutMs || 120000);
+  const verR = runBin(spec.versionArgs || ['--version'], { timeout: 20000 });
+  if (verR.error || verR.status !== 0) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
+  const verMatch = ((verR.stdout || '') + (verR.stderr || '')).match(/(\d+\.\d+\.\d+)/);
+  if (!verMatch) fail(3, `无法解析 ${defaultBin} 版本`);
+  return { runBin, toolVer: verMatch[1] };
+}
+
+function adpShReadGitAnchor(rootDir, dryRun) {
+  let anchor = { head: null, worktreeHash: null, isDirty: false };
+  let headCommitSec = 0;
+  if (dryRun) return { anchor, headCommitSec };
+  const git = (a) => spawnSync('git', ['-C', rootDir, ...a], { encoding: 'utf8' });
+  const st = git(['status', '--porcelain']);
+  if (st.status !== 0 || st.stdout.trim() !== '') fail(3, '脏树或非 git 仓库拒收退 3');
+  const h = git(['rev-parse', 'HEAD']);
+  const wt = git(['rev-parse', 'HEAD^{tree}']);
+  const ct = git(['log', '-1', '--format=%ct']);
+  if (h.status !== 0 || wt.status !== 0) fail(3, '读取 git HEAD/tree 失败');
+  anchor = { head: h.stdout.trim(), worktreeHash: wt.stdout.trim(), isDirty: false };
+  if (ct.status === 0) headCommitSec = Number(ct.stdout.trim()) || 0;
+  return { anchor, headCommitSec };
+}
+
+function adpShBuildRawArtifact(spec, res, outDir, relPath) {
+  if (res.existingReportAbs) {
+    const repBuf = res.existingReportBuf || readFileSync(res.existingReportAbs);
+    return {
+      rawWriteTarget: null,
+      rawBuf: null,
+      rawArtifact: { path: relPath(res.existingReportAbs), sha256: shaBytes(repBuf), kind: res.rawKind || `${spec.tool}-raw`, bytes: repBuf.length }
     };
-    const verArgs = spec.versionArgs || ['--version'];
-    const verR = runBin(verArgs, { timeout: 20000 });
-    if (verR.error || verR.status !== 0) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
-    const verMatch = ((verR.stdout || '') + (verR.stderr || '')).match(/(\d+\.\d+\.\d+)/);
-    if (!verMatch) fail(3, `无法解析 ${defaultBin} 版本`);
-    toolVer = verMatch[1];
   }
+  const rawWriteTarget = join(outDir, res.rawFileName || `raw-${spec.tool}.json`);
+  const rawStr = typeof res.rawContent === 'string' ? res.rawContent : JSON.stringify(res.rawJson ?? {}, null, 2) + '\n';
+  const rawBuf = Buffer.isBuffer(res.rawContent) ? res.rawContent : Buffer.from(rawStr, 'utf8');
+  return {
+    rawWriteTarget,
+    rawBuf,
+    rawArtifact: { path: relPath(rawWriteTarget), sha256: shaBytes(rawBuf), kind: res.rawKind || `${spec.tool}-raw`, bytes: rawBuf.length }
+  };
+}
 
+function adpShHashExtraArtifacts(extraArtifacts, rootDir, relPath, tool) {
+  return (extraArtifacts || []).map((ea) => {
+    const absEa = resolve(rootDir, ea.path);
+    if (!existsSync(absEa)) fail(3, `生成产物不存在：${ea.path}`);
+    const eaBuf = readFileSync(absEa);
+    return { path: relPath(absEa), sha256: shaBytes(eaBuf), kind: ea.kind || `${tool}-artifact`, bytes: eaBuf.length };
+  });
+}
+
+function adpShCreateReadRawOverride(rootDir, arg) {
+  return (flagName = '--raw-report') => {
+    const ov = arg(flagName);
+    if (!ov) return null;
+    const abs = resolve(rootDir, ov);
+    if (!existsSync(abs)) fail(3, `${flagName.replace(/^--/, '')} 不存在：${ov}`);
+    try { return readFileSync(abs, 'utf8'); } catch { fail(3, `${flagName.replace(/^--/, '')} 不可读`); }
+  };
+}
+
+export function runAdapter(spec) {
+  const argv = process.argv.slice(2);
+  const { arg, hasFlag, rawArgAfter } = adpShCreateArgHelpers(argv);
+
+  const dryRun = hasFlag('--dry-run');
+  const rootDir = resolve(arg('--root', process.cwd()));
+  const registryId = spec.requireRegistryId ? arg('--registry-id') : arg('--registry-id', spec.defaultRegistryId || `${spec.tool}@stage4`);
+  if (!registryId) fail(2, '缺少必填参数 --registry-id');
+
+  const entry = adpShLoadRegistryEntry(rootDir, spec, registryId);
+  if (typeof spec.validateArgs === 'function') spec.validateArgs({ argv, arg, hasFlag, rawArgAfter, fail });
+
+  const { runBin, toolVer } = adpShResolveRuntimeAndVersion(spec, rootDir, arg, hasFlag, entry);
   if (spec.enforceTestedRange && !semverInRange(toolVer, entry.testedToolRange)) {
     fail(3, `${spec.tool} 版本 ${toolVer} 超出 testedToolRange (${entry.testedToolRange})`);
   }
 
-  const git = (a) => spawnSync('git', ['-C', rootDir, ...a], { encoding: 'utf8' });
-  let anchor = { head: null, worktreeHash: null, isDirty: false };
-  let headCommitSec = 0;
-  if (!dryRun) {
-    const st = git(['status', '--porcelain']);
-    if (st.status !== 0 || st.stdout.trim() !== '') fail(3, '脏树或非 git 仓库拒收退 3');
-    const h = git(['rev-parse', 'HEAD']);
-    const wt = git(['rev-parse', 'HEAD^{tree}']);
-    const ct = git(['log', '-1', '--format=%ct']);
-    if (h.status !== 0 || wt.status !== 0) fail(3, '读取 git HEAD/tree 失败');
-    anchor = { head: h.stdout.trim(), worktreeHash: wt.stdout.trim(), isDirty: false };
-    if (ct.status === 0) headCommitSec = Number(ct.stdout.trim()) || 0;
-  }
-
+  const { anchor, headCommitSec } = adpShReadGitAnchor(rootDir, dryRun);
   const outPath = resolve(rootDir, arg('--out', `.donegate/adapters/${spec.tool}/claim.json`));
   const outDir = dirname(outPath);
   const relPath = (p) => relative(rootDir, p).replace(/\\/g, '/');
   const obsPath = join(outDir, 'observation.json');
   const anchorPath = join(outDir, 'git-anchor.json');
 
-  const ctx = {
-    arg,
-    hasFlag,
-    rawArgAfter,
-    dryRun,
-    rootDir,
-    repoDir: ADAPTERS_REPO,
-    entry,
-    toolVer,
-    headCommitSec,
-    outDir,
-    obsRelPath: relPath(obsPath),
-    relPath,
-    runBin,
-    fail,
-    parseJsonOrFail,
-    withTempDir,
-    hashInputFiles,
-    checkFreshFileOrFail,
-    readRawOverride(flagName = '--raw-report') {
-      const ov = arg(flagName);
-      if (!ov) return null;
-      const abs = resolve(rootDir, ov);
-      if (!existsSync(abs)) fail(3, `${flagName.replace(/^--/, '')} 不存在：${ov}`);
-      try { return readFileSync(abs, 'utf8'); } catch { fail(3, `${flagName.replace(/^--/, '')} 不可读`); }
-    }
-  };
+  const res = spec.collect({
+    arg, hasFlag, rawArgAfter, dryRun, rootDir, repoDir: ADAPTERS_REPO,
+    entry, toolVer, headCommitSec, outDir, obsRelPath: relPath(obsPath), relPath,
+    runBin, fail, parseJsonOrFail, withTempDir, hashInputFiles, checkFreshFileOrFail,
+    readRawOverride: adpShCreateReadRawOverride(rootDir, arg)
+  });
 
-  const res = spec.collect(ctx);
   const obsBuf = Buffer.from(JSON.stringify(res.observation, null, 2) + '\n', 'utf8');
   const anchorBuf = Buffer.from(JSON.stringify(anchor, null, 2) + '\n', 'utf8');
-
-  let rawArtifact;
-  let rawWriteTarget = null;
-  let rawBuf = null;
-  if (res.existingReportAbs) {
-    const repBuf = res.existingReportBuf || readFileSync(res.existingReportAbs);
-    rawArtifact = {
-      path: relPath(res.existingReportAbs),
-      sha256: shaBytes(repBuf),
-      kind: res.rawKind || `${spec.tool}-raw`,
-      bytes: repBuf.length
-    };
-  } else {
-    const rawFileName = res.rawFileName || `raw-${spec.tool}.json`;
-    rawWriteTarget = join(outDir, rawFileName);
-    rawBuf = Buffer.isBuffer(res.rawContent)
-      ? res.rawContent
-      : Buffer.from(typeof res.rawContent === 'string' ? res.rawContent : JSON.stringify(res.rawJson ?? {}, null, 2) + '\n', 'utf8');
-    rawArtifact = {
-      path: relPath(rawWriteTarget),
-      sha256: shaBytes(rawBuf),
-      kind: res.rawKind || `${spec.tool}-raw`,
-      bytes: rawBuf.length
-    };
-  }
-
-  const inputs = (res.inputs || []).map((i) => ({ path: i.path, sha256: i.sha256 }));
-  const claims = Array.isArray(res.claims)
-    ? res.claims
-    : [{ text: res.claimText, checkedBy: entry.checkedBy }];
-  const unresolved = (res.unresolved || []).map((u) => (
-    typeof u === 'string' ? { text: u, stage: entry.stage } : u
-  ));
+  const { rawArtifact, rawWriteTarget, rawBuf } = adpShBuildRawArtifact(spec, res, outDir, relPath);
 
   const claimObj = {
     stage: entry.stage,
     tool: entry.tool,
     version: toolVer,
     role: entry.role || spec.defaultRole || 'soft',
-    inputs,
+    inputs: (res.inputs || []).map((i) => ({ path: i.path, sha256: i.sha256 })),
     artifacts: [
       rawArtifact,
-      ...((res.extraArtifacts || []).map((ea) => {
-        const absEa = resolve(rootDir, ea.path);
-        if (!existsSync(absEa)) fail(3, `生成产物不存在：${ea.path}`);
-        const eaBuf = readFileSync(absEa);
-        return { path: relPath(absEa), sha256: shaBytes(eaBuf), kind: ea.kind || `${spec.tool}-artifact`, bytes: eaBuf.length };
-      })),
+      ...adpShHashExtraArtifacts(res.extraArtifacts, rootDir, relPath, spec.tool),
       { path: relPath(obsPath), sha256: shaBytes(obsBuf), kind: res.obsKind || `${spec.tool}-observation`, bytes: obsBuf.length },
       { path: relPath(anchorPath), sha256: shaBytes(anchorBuf), kind: 'git-anchor', bytes: anchorBuf.length }
     ],
-    claims,
-    unresolved,
+    claims: Array.isArray(res.claims) ? res.claims : [{ text: res.claimText, checkedBy: entry.checkedBy }],
+    unresolved: (res.unresolved || []).map((u) => (typeof u === 'string' ? { text: u, stage: entry.stage } : u)),
     degradedTo: res.degradedTo || spec.degradedTo
   };
 
