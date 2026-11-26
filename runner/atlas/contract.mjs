@@ -42,6 +42,7 @@ export const ATLAS_SUBPACKS = Object.freeze({
   '@workflow': Object.freeze([
     'runner/atlas/wb-catalog.mjs',
     'runner/atlas/wb-jit-workflow.mjs',
+    'runner/atlas/wb-governance-panel.mjs',
     'runner/atlas/ui-shell.mjs',
     'runner/atlas/wb-subagent.mjs'
   ]),

@@ -14,6 +14,7 @@ import { lookupFingerprintCache, recordFingerprintCache } from './fingerprint-ca
 import { buildBrickNodeExecSpec, executeBrickGateNode } from './brick-exec.mjs';
 import { hagSanitizeSubagentEnv } from './host-auth-guard.mjs';
 import { crLoadAutopilotLimits } from './campaign-routing.mjs';
+import { tlRecordRuleOutcomes } from './trust-ladder.mjs';
 
 const HUB_MAP = new Map();
 
@@ -450,6 +451,13 @@ export async function executeDeterministicWorkflowRun(projectRoot, ticket, pack,
   cp.cursorNodeId = null;
   cp.lastExitCode = finalExitCode;
   saveAutopilotCheckpoint(root, cp);
+  if (typeof hooks.modelId === 'string' && hooks.modelId.trim()) {
+    tlRecordRuleOutcomes(root, {
+      modelId: hooks.modelId,
+      flowId: pack.id || 'default',
+      outcomes: (cp.completedNodes || []).map((n) => ({ nodeId: n.nodeId, title: n.title, passed: n.exitCode === 0 }))
+    });
+  }
 
   const card = buildMicroVerdictCard({
     ticketId: runId, targetUri: ticket?.targetUri || null, exitCode: finalExitCode,

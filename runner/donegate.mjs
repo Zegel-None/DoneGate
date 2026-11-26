@@ -4,7 +4,8 @@
 // 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
 // 快捷入口转发映射：brief & zoom -> runner/core/cockpit-commands.mjs | impact -> runner/core/impact-radar.mjs | slice & check-node -> runner/core/commands-b.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
 import Module from 'node:module';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
@@ -19,7 +20,7 @@ const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
-  'stubs', 'decisions', 'full', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression'
+  'stubs', 'decisions', 'full', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human'
 ]);
 
 const HELP_TEXT = [
@@ -233,6 +234,15 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   }
   const root = resolve(typeof flags.root === 'string' ? flags.root : defaultRoot);
   const cmd = pos[0];
+  if (cmd === 'flow') {
+    const cliAbs = join(dirname(fileURLToPath(import.meta.url)), 'dsh', 'governance-flow-cli.mjs');
+    const r = spawnSync(process.execPath, [cliAbs, ...argv.slice(1), '--root', root], { encoding: 'utf8', windowsHide: true });
+    return {
+      exitCode: typeof r.status === 'number' ? r.status : 3,
+      stdout: (r.stdout || '').trimEnd(),
+      stderr: (r.stderr || '').trimEnd()
+    };
+  }
   if (cmd === 'init') {
     return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root);
   }

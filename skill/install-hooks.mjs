@@ -35,13 +35,19 @@ export function resolveSkillPrefix(projectRoot, dgRoot = DG_ROOT, pathApi = path
 
 export function buildPreCommitScript(projectRoot, dgRoot = DG_ROOT, pathApi = path) {
   const skillPrefix = resolveSkillPrefix(projectRoot, dgRoot, pathApi);
+  const runnerPrefix = skillPrefix === 'skill' ? 'runner/donegate.mjs' : `${skillPrefix.replace(/\/skill$/, '')}/runner/donegate.mjs`;
 
   return [
     '#!/bin/sh',
     '# DoneGate 自动提交前守门钩子（防小模型超量提交、改测试凑绿、留空壳代码或漏跑自检）',
     'set -e',
     `DG_SKILL="${skillPrefix}"`,
+    `DG_RUNNER="${runnerPrefix}"`,
     'unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT',
+    'if [ -f ".donegate/workflows/overrides/dg-pre-commit.overlay.json" ] && [ -f "$DG_RUNNER" ]; then',
+    '  node "$DG_RUNNER" flow run dg-pre-commit --staged --root .',
+    '  exit 0',
+    'fi',
     'node "$DG_SKILL/check-commit-hygiene.mjs" --staged --root .',
     'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX',
     'if [ -f "skill/check-escapes.mjs" ] && [ -f "escapes.jsonl" ]; then',

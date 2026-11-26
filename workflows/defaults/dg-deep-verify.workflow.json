@@ -1,0 +1,90 @@
+{
+  "id": "dg-deep-verify",
+  "group": "官方默认治理流",
+  "stageOrder": 4,
+  "timing": "交付深测与盲审",
+  "name": "交付深测与独立盲审（防假绿 + 界面真机 + 多模型共识）",
+  "tip": "发版或大功能交付前，用语义变异、Diff 捕获、属性随机测试、真实浏览器点击与异构盲审做深度兜底。",
+  "presetVersion": "1.0.0",
+  "deps": [],
+  "nodes": [
+    {
+      "id": "dv-mutation",
+      "title": "有牙防假绿变异实验 (ACH / Stryker)",
+      "tip": "故意把实现改坏，检验测试是不是真能抓出错误而不是空跑假绿",
+      "tier": "integrity",
+      "slot": "gate:mutation",
+      "activeBrick": "builtin-teeth-ach",
+      "bypassed": false,
+      "x": 50,
+      "y": 90,
+      "w": 265,
+      "config": { "tier": "ACH", "requireShaRestore": true },
+      "configSchema": [
+        { "key": "tier", "label": "变异档位", "type": "enum", "options": ["A", "B", "ACH"], "default": "ACH" },
+        { "key": "requireShaRestore", "label": "变异后强制校验 SHA-256 原样还原", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+    },
+    {
+      "id": "dv-jit-catch",
+      "title": "Diff 行为捕获测试与 RubFake 过滤",
+      "tip": "针对本次改动跑捕获测试，自动过滤空断言/纯 Mock 假警报，并输出一句话人类确认卡",
+      "tier": "recommended",
+      "slot": "gate:catch",
+      "activeBrick": "builtin-jit-catch",
+      "bypassed": false,
+      "x": 360,
+      "y": 90,
+      "w": 265,
+      "config": { "enableRubFakeFilter": true },
+      "configSchema": [
+        { "key": "enableRubFakeFilter", "label": "开启 RubFake 假阳性过滤", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+    },
+    {
+      "id": "dv-ui-live",
+      "title": "界面真机运行态与四维美学评估",
+      "tip": "无头浏览器捕获控制台报错、死按钮与失败截图，并按四维美学标准打分",
+      "tier": "optional",
+      "slot": "gate:ui-eval",
+      "activeBrick": "builtin-ui-live-eval",
+      "requires": ["hasPlaywright"],
+      "onMissing": "degrade",
+      "bypassed": false,
+      "x": 670,
+      "y": 90,
+      "w": 265,
+      "config": { "minRubricScore": 75, "maxButtons": 8 },
+      "configSchema": [
+        { "key": "minRubricScore", "label": "四维美学最低及格分", "type": "number", "min": 50, "max": 100, "default": 75 },
+        { "key": "maxButtons", "label": "自动探针最多点击按钮数", "type": "number", "min": 2, "max": 30, "default": 8 }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+    },
+    {
+      "id": "dv-judge-consensus",
+      "title": "独立盲审与多模型共识投票",
+      "tip": "严守写判分离，支持 <=3 轮异构多模型投票共识、半形式化推理校验与漏网回归集",
+      "tier": "integrity",
+      "slot": "gate:judge",
+      "activeBrick": "builtin-judge-consensus",
+      "bypassed": false,
+      "x": 980,
+      "y": 90,
+      "w": 265,
+      "config": { "maxVoteRounds": 3, "escapesRegression": true },
+      "configSchema": [
+        { "key": "maxVoteRounds", "label": "多模型盲审最大轮次/票数上限", "type": "number", "min": 1, "max": 5, "default": 3 },
+        { "key": "escapesRegression", "label": "打包时附带历史漏网回归校准集", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-reviewpack.mjs", "args": [], "passRoot": false }
+    }
+  ],
+  "links": [
+    { "id": "lk-dv-1", "fromNode": "dv-mutation", "fromSlot": "out", "toNode": "dv-jit-catch", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-dv-2", "fromNode": "dv-jit-catch", "fromSlot": "out", "toNode": "dv-ui-live", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-dv-3", "fromNode": "dv-ui-live", "fromSlot": "out", "toNode": "dv-judge-consensus", "toSlot": "in", "type": "SIGNAL" }
+  ]
+}

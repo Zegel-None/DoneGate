@@ -1,0 +1,55 @@
+{
+  "id": "dg-on-edit",
+  "group": "官方默认治理流",
+  "stageOrder": 1,
+  "timing": "写代码时秒查",
+  "name": "写代码时秒查（保存/编辑微门禁）",
+  "tip": "百毫秒级拦截语法错误、压行写法、超限复杂度、术语漂移与内联脚本漏挂，并给出结构化修复配方。",
+  "presetVersion": "1.0.0",
+  "deps": [],
+  "nodes": [
+    {
+      "id": "edit-lint-gate",
+      "title": "单文件即时微门禁 (lint-edit)",
+      "tip": "毫秒级校验语法、认知复杂度、C4g 反压行与内联脚本注册表，失败直接给出修复配方",
+      "tier": "recommended",
+      "slot": "gate:lint-edit",
+      "activeBrick": "builtin-lint-edit",
+      "bypassed": false,
+      "x": 60,
+      "y": 90,
+      "w": 270,
+      "config": {
+        "maxCognitiveComplexity": 25,
+        "warnCognitiveComplexity": 15,
+        "maxCoreFileLines": 350
+      },
+      "configSchema": [
+        { "key": "warnCognitiveComplexity", "label": "复杂度软预警阈值", "type": "number", "min": 8, "max": 25, "default": 15 },
+        { "key": "maxCognitiveComplexity", "label": "复杂度硬阻断上限", "type": "number", "min": 15, "max": 40, "default": 25 },
+        { "key": "maxCoreFileLines", "label": "核心模块行数上限", "type": "number", "min": 200, "max": 600, "default": 350 }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/lint-edit.mjs", "args": ["--red-self-test"], "passRoot": false }
+    },
+    {
+      "id": "edit-term-check",
+      "title": "工程名词归一化检查",
+      "tip": "拦截界面文案与代码中混用的旧口语漂移词",
+      "tier": "optional",
+      "slot": "gate:terminology",
+      "activeBrick": "builtin-terminology",
+      "bypassed": false,
+      "x": 390,
+      "y": 90,
+      "w": 270,
+      "config": { "strict": true },
+      "configSchema": [
+        { "key": "strict", "label": "严格拦截未归一化旧术语", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [], "passRoot": false }
+    }
+  ],
+  "links": [
+    { "id": "lk-edit-1", "fromNode": "edit-lint-gate", "fromSlot": "out", "toNode": "edit-term-check", "toSlot": "in", "type": "SIGNAL" }
+  ]
+}

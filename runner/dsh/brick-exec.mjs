@@ -109,6 +109,35 @@ function evaluateAdvisoryObservation(obs) {
   return { exitCode: 0, detail: '观测采集与基线核对通过' };
 }
 
+function beRunBuiltinOrDonegateCmd(root, workCwd, spec, node, env, t0) {
+  const nodeEnv = node.config && typeof node.config === 'object'
+    ? { ...env, DG_NODE_CONFIG: JSON.stringify(node.config), DG_NODE_ID: String(node.id || '') }
+    : env;
+  if (spec.requireFile && !existsSync(join(workCwd, spec.requireFile))) {
+    return {
+      exitCode: 0,
+      durationMs: Date.now() - t0,
+      skipped: true,
+      diagSummary: `按环境跳过（缺少 ${spec.requireFile}）`,
+      watchArgs: [spec.scriptRel || spec.cmd || node.id]
+    };
+  }
+  const relEntry = spec.kind === 'donegate_cmd' ? 'runner/donegate.mjs' : String(spec.scriptRel || 'skill/check-module-integrity.mjs');
+  const absEntry = existsSync(join(root, relEntry)) ? join(root, relEntry) : join(DG_ROOT, relEntry);
+  if (!existsSync(absEntry)) {
+    return { exitCode: 3, durationMs: Date.now() - t0, diagSummary: `找不到执行入口：${relEntry}`, watchArgs: [relEntry] };
+  }
+  const args = [absEntry, ...(Array.isArray(spec.args) ? spec.args : [])];
+  if (spec.passRoot !== false && !args.includes('--root')) args.push('--root', workCwd);
+  const r = spawnSync(process.execPath, args, { cwd: workCwd, env: nodeEnv, encoding: 'utf8', timeout: 120000, windowsHide: true });
+  return {
+    exitCode: typeof r.status === 'number' ? r.status : 2,
+    durationMs: Date.now() - t0,
+    diagSummary: normalizeLf((r.stdout || '') + '\n' + (r.stderr || '')).trim(),
+    watchArgs: args
+  };
+}
+
 export function executeBrickGateNode(projectRoot, workCwd, node, wfEnv) {
   const root = resolve(projectRoot);
   const env = cleanGitEnv(wfEnv);
@@ -127,6 +156,10 @@ export function executeBrickGateNode(projectRoot, workCwd, node, wfEnv) {
 
   const spec = (node.exec && node.exec.kind) ? node.exec : buildBrickNodeExecSpec(node.tplId, node, root);
   const t0 = Date.now();
+
+  if (spec.kind === 'donegate_cmd' || spec.kind === 'builtin_gate') {
+    return beRunBuiltinOrDonegateCmd(root, workCwd, spec, node, env, t0);
+  }
 
   if (spec.kind === 'external_bin') {
     const r = spawnSync(spec.bin, spec.binArgs || ['--version'], { cwd: workCwd, env, encoding: 'utf8', timeout: 120000, windowsHide: true });

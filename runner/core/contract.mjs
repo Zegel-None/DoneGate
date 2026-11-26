@@ -10,3 +10,9 @@ export {
 export { SHARED_GOVERNANCE_GLOBS, fileBelongsToScopes, inspectCrossCardFocusPatterns, isSharedGovernanceFile } from './context-router.mjs';
 export { parseFocusPatterns, parseLexicalTerms } from './hermetic-capsule.mjs';
 export { collectGitNodeChanges } from './node-micro-gate.mjs';
+export {
+  GOVERNANCE_OVERRIDES_REL,
+  gdCollectDisabledIntegrityRules,
+  gdFormatIntegrityBannerMarkdown,
+  gdFormatIntegrityBannerText
+} from './governance-disclosure.mjs';

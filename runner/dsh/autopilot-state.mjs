@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { gdCollectDisabledIntegrityRules, gdFormatIntegrityBannerMarkdown } from '../core/contract.mjs';
 
 export const AUTOPILOT_STATES = Object.freeze({
   IDLE: 'IDLE',
@@ -97,7 +98,7 @@ export function createInitialCheckpoint(projectRoot, runId, pack, ticket = {}) {
   return saveAutopilotCheckpoint(projectRoot, cp);
 }
 
-export function buildMorningBriefMarkdown(cp) {
+export function buildMorningBriefMarkdown(cp, projectRoot = null) {
   const stateLabel = {
     COMPLETED: '✅ 已自动跑通收工',
     SUSPENDED_HUMAN_GATE: '⏸ 停在人工闸门等你拍板',
@@ -107,9 +108,11 @@ export function buildMorningBriefMarkdown(cp) {
     PREFLIGHT: '🔍 预检阶段'
   }[cp.state] || cp.state;
 
+  const govCaution = projectRoot ? gdFormatIntegrityBannerMarkdown(gdCollectDisabledIntegrityRules(projectRoot)) : '';
   const lines = [
     `# 早间挂机简报 · ${cp.packName}`,
     '',
+    ...(govCaution ? [govCaution, ''] : []),
     `- **运行单号**：\`${cp.runId}\``,
     `- **当前状态**：${stateLabel}（\`${cp.state}\`）`,
     `- **门禁进度**：已过 ${cp.passedGates}/${cp.totalGates} 道门禁 · 已完成 ${cp.completedNodes.length} 个节点`,
@@ -151,7 +154,7 @@ export function saveAutopilotCheckpoint(projectRoot, cp) {
   const paths = getAutopilotPaths(projectRoot, cp.runId);
   mkdirSync(paths.runDir, { recursive: true });
   cp.updatedAt = new Date().toISOString();
-  const briefMd = buildMorningBriefMarkdown(cp);
+  const briefMd = buildMorningBriefMarkdown(cp, projectRoot);
   cp.morningSummaryLine = cp.state === AUTOPILOT_STATES.SUSPENDED_HUMAN_GATE
     ? `⏸ 挂机已停在人工闸门「${cp.pendingHumanGate?.title}」（已完成 ${cp.completedNodes.length} 步），批准后从断点续跑`
     : (cp.state === AUTOPILOT_STATES.TRIPPED_CIRCUIT_BREAKER

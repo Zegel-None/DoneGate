@@ -173,3 +173,9 @@ node "skill/check-skills.mjs"    本技能到底能不能被加载
 1. **先读 L0 路由表定位目标卡**：运行 `node <DoneGate根>/runner/donegate.mjs slice --router-only --root .`，仅读生成的 `.donegate/ROUTER.md`（约数百 Tokens）确定目标节点 `nodeId` 与上下游拓扑。
 2. **领单卡 L2 密封胶囊局部读写**：运行 `node <DoneGate根>/runner/donegate.mjs slice <nodeId> --freeze-stub --root .`（小窗口子代理可加 `--context-window 128000 --utilization 0.4`），只读 `.donegate/capsules/<nodeId>.capsule.md`（本卡 `0-Hop` 全量源码与关联单测 `160k` + 上下游 `1-Hop` 含 JSDoc 的只读 `.stub.d.ts` 存根 `48k`；`2-Hop` 以外节点物理屏蔽）。
 3. **跑单卡微门禁并交回轻量回执**：改码后执行 `node <DoneGate根>/runner/donegate.mjs check-node <nodeId> --allow-dirty --receipt --root .` 拦截越界改文件、私改冻结导出签名、跨门面私引与未声明红线依赖；退出码为 `0` 后，子代理只将 `500` Tokens 以内的结构化 JSON 回执交回总控并销毁子会话上下文。
+
+## 十四、默认治理工作流、提案确认与信任阶梯（客户主权 + 绝对诚实）
+
+1. **五条官方默认治理流**：DoneGate 自身治理机制已提炼为 `workflows/defaults/dg-*.workflow.json`（私有仓）（编辑秒查 / 提交前把关 / 契约验收 / 交付深测与盲审 / 过夜挂机），支持通过工作台极简开关清单或 `donegate flow list/inspect/run/diff` 统一查看与执行，改动以增量微调单落盘在 `.donegate/workflows/overrides/`，官方升级时不覆盖客户定制。
+2. **双通道改规则与防伪底线红字披露**：执行端 Worker 严禁修改规则；AI 收到改规则诉求时只能生成待确认提案（`/donegate/api/governance/propose`），须由业主本人确认生效。业主确认后可调整或关闭任意规则（含防伪底线），但一旦关闭防伪底线，进度卡、交接包与早间简报将自动打出醒目红字披露。
+3. **零选档模型信任阶梯**：开局默认全套限制全上，后台按模型实绩统计防呆规则连续通过轮次，仅在长期稳定零违规时克制地（每轮最多 1 条）提示减负且永不主动建议关闭防伪底线；换弱模型或出现同类漏网复发时主动提醒系回安全带。

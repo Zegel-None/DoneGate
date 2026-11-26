@@ -236,7 +236,7 @@ try {
     JSON.stringify(subpackKeys) === JSON.stringify(['@scanner', '@canvas', '@uiboard', '@workflow', '@dsh-dock']) &&
     JSON.stringify([...allSubpackFiles].sort()) === JSON.stringify(diskAtlasFiles) &&
     new Set(allSubpackFiles).size === allSubpackFiles.length &&
-    WB_CONCAT_MANIFEST.length === 24 &&
+    WB_CONCAT_MANIFEST.length === 25 &&
     manifestOrderMatchesRender);
 
   const requiredOwnerSnippets = [

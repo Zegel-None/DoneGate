@@ -21,6 +21,7 @@ import { buildViewsScript } from './ui-views.mjs';
 import { buildWbDshBridge } from './wb-dsh-bridge.mjs';
 import { buildWbUiBoardScript } from './wb-uiboard.mjs';
 import { buildWbJitWorkflowScript } from './wb-jit-workflow.mjs';
+import { buildWbGovernancePanelScript } from './wb-governance-panel.mjs';
 import { buildShellScript } from './ui-shell.mjs';
 import { buildWbDshShell } from './wb-dsh-shell.mjs';
 
@@ -47,6 +48,7 @@ const WB_CONCAT_ENTRIES = [
   { stage: 'script', path: 'runner/atlas/wb-dsh-bridge.mjs', exportName: 'buildWbDshBridge', subpack: '@dsh-dock', build: buildWbDshBridge },
   { stage: 'script', path: 'runner/atlas/wb-uiboard.mjs', exportName: 'buildWbUiBoardScript', subpack: '@uiboard', build: buildWbUiBoardScript },
   { stage: 'script', path: 'runner/atlas/wb-jit-workflow.mjs', exportName: 'buildWbJitWorkflowScript', subpack: '@workflow', build: buildWbJitWorkflowScript },
+  { stage: 'script', path: 'runner/atlas/wb-governance-panel.mjs', exportName: 'buildWbGovernancePanelScript', subpack: '@workflow', build: buildWbGovernancePanelScript },
   { stage: 'script', path: 'runner/atlas/ui-shell.mjs', exportName: 'buildShellScript', subpack: '@workflow', build: buildShellScript },
   { stage: 'script', path: 'runner/atlas/wb-dsh-shell.mjs', exportName: 'buildWbDshShell', subpack: '@dsh-dock', build: buildWbDshShell }
 ];

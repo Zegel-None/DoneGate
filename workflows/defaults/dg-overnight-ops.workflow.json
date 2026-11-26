@@ -1,0 +1,87 @@
+{
+  "id": "dg-overnight-ops",
+  "group": "官方默认治理流",
+  "stageOrder": 5,
+  "timing": "过夜无人挂机",
+  "name": "过夜挂机护栏（自适应路由 + 隔离沙箱 + 2 轮熔断 + GC 巡检）",
+  "tip": "控制长时间自动跑任务的成本与安全：按耦合度自动选顺序或并行、2 轮修不好立刻停机防烧钱、不可逆操作停在人工闸门。",
+  "presetVersion": "1.0.0",
+  "deps": [],
+  "nodes": [
+    {
+      "id": "ops-routing",
+      "title": "自适应执行路由与工具裁剪",
+      "tip": "有依赖或写冲突自动单代理顺序执行，互不冲突才并行多 Worktree，且子代理工具限制在 10 个以内",
+      "tier": "recommended",
+      "slot": "gate:routing",
+      "activeBrick": "builtin-campaign-routing",
+      "bypassed": false,
+      "x": 50,
+      "y": 90,
+      "w": 265,
+      "config": { "maxSelfHealRounds": 2, "maxSubagentTools": 10 },
+      "configSchema": [
+        { "key": "maxSelfHealRounds", "label": "自愈重试硬上限（轮）", "type": "number", "min": 1, "max": 5, "default": 2 },
+        { "key": "maxSubagentTools", "label": "单个子代理最多挂载工具数", "type": "number", "min": 4, "max": 20, "default": 10 }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+    },
+    {
+      "id": "ops-sandbox",
+      "title": "Worktree / 可选 OS 级隔离沙箱",
+      "tip": "在隔离分支与目录中跑挂机，主工作区零污染；Windows 下 srt 默认软降级，可按需开强沙箱",
+      "tier": "integrity",
+      "slot": "gate:sandbox",
+      "activeBrick": "builtin-os-sandbox",
+      "bypassed": false,
+      "x": 360,
+      "y": 90,
+      "w": 265,
+      "config": { "strictSandbox": false, "snapshotHeldOut": true },
+      "configSchema": [
+        { "key": "strictSandbox", "label": "无 OS 级沙箱 (srt) 时强制停机阻断", "type": "boolean", "default": false },
+        { "key": "snapshotHeldOut", "label": "挂机启动时自动冻结只读考题镜像", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["--help"], "passRoot": false }
+    },
+    {
+      "id": "ops-human-gate",
+      "title": "不可逆操作人工审批闸门",
+      "tip": "遇到上线、数据库迁移、删数据等不可逆节点自动暂停并写入早间简报，等你拍板再继续",
+      "tier": "integrity",
+      "isHumanGate": true,
+      "slot": "gate:human-gate",
+      "activeBrick": "tpl-human-gate",
+      "bypassed": false,
+      "x": 670,
+      "y": 90,
+      "w": 265,
+      "config": { "pauseOnIrreversible": true },
+      "configSchema": [
+        { "key": "pauseOnIrreversible", "label": "不可逆操作必须暂停等人工批准", "type": "boolean", "default": true }
+      ]
+    },
+    {
+      "id": "ops-gc-audit",
+      "title": "周期性文档与符号漂移 GC 巡检",
+      "tip": "长跑结束后自动检查是否堆积了重复函数、超载文档或漂移术语，产出 GC-REPORT.md",
+      "tier": "optional",
+      "slot": "gate:gc",
+      "activeBrick": "builtin-autopilot-gc",
+      "bypassed": false,
+      "x": 980,
+      "y": 90,
+      "w": 265,
+      "config": { "writeGcReport": true },
+      "configSchema": [
+        { "key": "writeGcReport", "label": "生成 GC-REPORT.md 体检简报", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-doc-budgets.mjs", "args": [] }
+    }
+  ],
+  "links": [
+    { "id": "lk-ops-1", "fromNode": "ops-routing", "fromSlot": "out", "toNode": "ops-sandbox", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-ops-2", "fromNode": "ops-sandbox", "fromSlot": "out", "toNode": "ops-human-gate", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-ops-3", "fromNode": "ops-human-gate", "fromSlot": "out_go", "toNode": "ops-gc-audit", "toSlot": "in", "type": "FLOW" }
+  ]
+}

@@ -19,6 +19,7 @@ export { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
 export { AESTHETIC_GROUPS, AESTHETIC_PROPOSALS } from './ui-aesthetics.mjs';
 export { ARCHETYPE_CSS, renderProposalArchetypeBody, resolveProposalArchetype } from './ui-archetypes.mjs';
 export { UI_TOOLCHAIN_DEPS_PACK, isPuckInstalled, readUiToolchainStatus } from './ui-board-engine.mjs';
+export { buildGovernanceSummaryPayload } from './governance-routes.mjs';
 export {
   BUILTIN_CATALOG_PACK_SPECS,
   DEFAULT_RANGE_CHUNK_BYTES,

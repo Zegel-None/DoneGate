@@ -1,0 +1,79 @@
+{
+  "id": "dg-on-check",
+  "group": "官方默认治理流",
+  "stageOrder": 3,
+  "timing": "契约验收",
+  "name": "契约验收（防改考题 + 真实跑通 + 互哈希留证）",
+  "tip": "核对考题有没有被分支内私自修改，真实运行验收判据并生成不可伪造的三件套证据链。",
+  "presetVersion": "1.0.0",
+  "deps": [],
+  "nodes": [
+    {
+      "id": "chk-heldout",
+      "title": "Held-Out 基线防改考题校核",
+      "tip": "比对基线分支或只读镜像中的冻结考题，防止写代码分支偷改判据或代签",
+      "tier": "integrity",
+      "slot": "gate:heldout",
+      "activeBrick": "builtin-heldout-verify",
+      "requires": ["hasContracts"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 60,
+      "y": 90,
+      "w": 270,
+      "config": { "protectGateFiles": true },
+      "configSchema": [
+        { "key": "protectGateFiles", "label": "禁止非门禁契约修改 .githooks 与守门脚本", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["status"] }
+    },
+    {
+      "id": "chk-compact-run",
+      "title": "紧凑判据执行与自首单落盘",
+      "tip": "真实执行验收命令并支持 --compact 精简输出（<=20行）与 ConfessionReport 自首单",
+      "tier": "integrity",
+      "slot": "gate:check-exec",
+      "activeBrick": "builtin-check-exec",
+      "requires": ["hasContracts"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 390,
+      "y": 90,
+      "w": 270,
+      "config": {
+        "compactOutput": true,
+        "fastSample": false,
+        "requireCleanGit": true
+      },
+      "configSchema": [
+        { "key": "compactOutput", "label": "默认紧凑输出（防长日志撑爆上下文）", "type": "boolean", "default": true },
+        { "key": "fastSample", "label": "快速抽样（先跑前 3 条判据）", "type": "boolean", "default": false },
+        { "key": "requireCleanGit", "label": "正式验收要求干净 Git 工作区", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["gaps", "--json"] }
+    },
+    {
+      "id": "chk-graph-coverage",
+      "title": "依赖三色图与契约覆盖率核对",
+      "tip": "检查契约覆盖率与未声明的跨模块违规红线依赖",
+      "tier": "recommended",
+      "slot": "gate:graph",
+      "activeBrick": "builtin-graph",
+      "requires": ["hasContracts"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 720,
+      "y": 90,
+      "w": 270,
+      "config": { "coverageMinPct": 30 },
+      "configSchema": [
+        { "key": "coverageMinPct", "label": "最低契约覆盖率警告线 (%)", "type": "number", "min": 0, "max": 100, "default": 30 }
+      ],
+      "exec": { "kind": "donegate_cmd", "args": ["graph"] }
+    }
+  ],
+  "links": [
+    { "id": "lk-chk-1", "fromNode": "chk-heldout", "fromSlot": "out", "toNode": "chk-compact-run", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-chk-2", "fromNode": "chk-compact-run", "fromSlot": "out", "toNode": "chk-graph-coverage", "toSlot": "in", "type": "SIGNAL" }
+  ]
+}

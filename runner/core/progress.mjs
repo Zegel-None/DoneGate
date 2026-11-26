@@ -7,7 +7,7 @@ import { checkCommandBans } from './isolation.mjs';
 import { exportDashboardHtml } from './dashboard.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readMaybe } from '../../skill/io.mjs';
-
+import { gdCollectDisabledIntegrityRules, gdFormatIntegrityBannerText } from './governance-disclosure.mjs';
 const NOTE_ICONS = { good: '✅', worry: '⚠️', alert: '🚨' };
 const PRG_NOTE_TAGS = { good: '补充·已验真', alert: '告警', worry: '报忧' };
 const PRG_OB_ICONS = { 通过: '✅', 未通过: '❌', 过期: '⚠️', 无法判断: '⚠️' };
@@ -293,12 +293,13 @@ function prgAppendDashboardHint(lines, projectRoot, statusData, totalPct, focusC
   const dr = exportDashboardHtml(projectRoot, join(projectRoot, '.donegate', 'dashboard.html'), { statusData, totalPct });
   if (dr.ok) lines.push(`全景看板：.donegate/dashboard.html${focusContractId ? `#focus=${focusContractId}` : ''}（${desc}）`);
 }
-
 export function renderProgressBlock(projectRoot, opts = {}) {
   const snap = computeProgressSnapshot(projectRoot, opts.statusData || null);
   const customNotes = [...loadCustomNotes(projectRoot), ...(Array.isArray(opts.extraItems) ? opts.extraItems : [])];
   const hasStageNotes = (s) => customNotes.some((n) => Number(n.stage) === s);
   const lines = [`#### 📊 DoneGate · 验收进度   ${snap.bar} ${snap.totalPct}%`];
+  const govBanner = gdFormatIntegrityBannerText(gdCollectDisabledIntegrityRules(projectRoot));
+  if (govBanner) lines.push(govBanner);
   if (opts.headline) lines.push(opts.headline.replaceAll('{{PCT}}', `${snap.totalPct}% ${snap.bar}`));
   const s1Done = (snap.s1Item1 ? 1 : 0) + (snap.s1Item2 ? 1 : 0), cTotal = snap.contractProgress.length;
   if (s1Done === 2 && cTotal > 0 && !hasStageNotes(1) && opts.activeStage !== 1) {
@@ -328,7 +329,6 @@ export function renderProgressBlock(projectRoot, opts = {}) {
   prgAppendDashboardHint(lines, projectRoot, snap.statusData, snap.totalPct, opts.focusContractId, '双击用浏览器打开：大白话查看全部功能、前后配合与支线进度');
   return lines.join('\n');
 }
-
 export function renderWorryBlock(projectRoot, opts = {}) {
   const exitCode = opts.exitCode ?? 1, stage = opts.stage || 2;
   const icon = exitCode === 2 ? '🚨' : (exitCode === 3 ? '⚠️' : '❌');

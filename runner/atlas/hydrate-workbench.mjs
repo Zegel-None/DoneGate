@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from '../../skill/io.mjs';
-import { inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
+import { buildGovernanceSummaryPayload, inspectAllKnownWorkflowPacks, readUiToolchainStatus } from '../dsh/contract.mjs';
 import { WB_PRESET_TEMPLATE_TRAITS } from './wb-catalog.mjs';
 import { buildAdaptiveBusinessHierarchy } from './modularity-hierarchy.mjs';
 
@@ -603,17 +603,19 @@ function loadRegisteredAdapterTemplates(projectRoot) {
 function loadDeclarativeWorkflowPacks(projectRoot) {
   const packs = {};
   for (const base of [DG_ROOT, resolve(projectRoot)]) {
-    const wfDir = join(base, 'workflows');
-    if (!existsSync(wfDir)) continue;
-    try {
-      for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
-        const r = readJsonStrict(join(wfDir, f));
-        if (r.ok && r.value && r.value.id && Array.isArray(r.value.nodes)) {
-          packs[r.value.id] = { group: r.value.group || '项目声明式工作流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
+    for (const sub of ['workflows', join('workflows', 'defaults')]) {
+      const wfDir = join(base, sub);
+      if (!existsSync(wfDir)) continue;
+      try {
+        for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.workflow.json'))) {
+          const r = readJsonStrict(join(wfDir, f));
+          if (r.ok && r.value && r.value.id && Array.isArray(r.value.nodes)) {
+            packs[r.value.id] = { group: r.value.group || '项目声明式工作流', ...r.value, links: r.value.links || [], groups: r.value.groups || [] };
+          }
         }
+      } catch (err) {
+        void err;
       }
-    } catch (err) {
-      void err;
     }
   }
   return packs;
@@ -627,6 +629,7 @@ export function hydrateWorkbenchData(projectRoot, baseAtlas) {
   const registeredTemplates = loadRegisteredAdapterTemplates(projectRoot);
   const depsBundle = inspectAllKnownWorkflowPacks(projectRoot, savedState.customPacks);
   const uiboardToolchain = readUiToolchainStatus(projectRoot);
+  const governance = buildGovernanceSummaryPayload(projectRoot);
   return {
     hostId: hostSandbox.id,
     hostSandbox,
@@ -636,6 +639,7 @@ export function hydrateWorkbenchData(projectRoot, baseAtlas) {
     packDepReports: depsBundle.reports,
     sharedPool: depsBundle.sharedPool,
     depsRefreshStamp: depsBundle.refreshStamp,
-    uiboardToolchain
+    uiboardToolchain,
+    governance
   };
 }

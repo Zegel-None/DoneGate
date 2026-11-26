@@ -15,6 +15,7 @@ export { writeStandaloneDepsCli };
 import { loadAutopilotCheckpoint } from './autopilot-state.mjs';
 import { loadCampaignCheckpoint } from './campaign-autopilot.mjs';
 import { handleAutopilotSubRoute } from './autopilot-routes.mjs';
+import { handleGovernanceSubRoute } from './governance-routes.mjs';
 import { readUiToolchainStatus } from './ui-board-engine.mjs';
 import { handleUiBoardSubRoute } from './ui-board-routes.mjs';
 import { handleWorkflowJitSubRoute } from './workflow-jit-routes.mjs';
@@ -343,6 +344,9 @@ async function handleSliceJudgeAndPackRoutes(req, res, cleanPath, root, hub, opt
   }
   if (cleanPath.startsWith('/autopilot/')) {
     return handleAutopilotSubRoute(req, res, cleanPath, root, readJsonBody);
+  }
+  if (cleanPath.startsWith('/governance/')) {
+    return handleGovernanceSubRoute(req, res, cleanPath, root, hub, readJsonBody);
   }
   if (await handleSystemAndProjectRoutes(req, res, cleanPath, root, hub, opts)) return true;
   if (await hrHandleCoreSliceRoutes(req, res, cleanPath, root)) return true;

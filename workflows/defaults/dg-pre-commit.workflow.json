@@ -1,0 +1,119 @@
+{
+  "id": "dg-pre-commit",
+  "group": "官方默认治理流",
+  "stageOrder": 2,
+  "timing": "提交前把关",
+  "name": "提交前把关（Git 提交护栏）",
+  "tip": "每次 git commit 前自动把关：防超量提交、防跨文件模块断链、防说明文档膨胀、防决策记录私改。",
+  "presetVersion": "1.0.0",
+  "deps": [],
+  "nodes": [
+    {
+      "id": "pc-commit-hygiene",
+      "title": "四维提交预算与防作弊拦截",
+      "tip": "拦住单次塞太多文件、偷删断言、空 catch、.skip 跳过测试等常见小模型偷懒行为",
+      "tier": "integrity",
+      "slot": "gate:commit-hygiene",
+      "activeBrick": "builtin-commit-hygiene",
+      "bypassed": false,
+      "x": 50,
+      "y": 90,
+      "w": 265,
+      "config": {
+        "maxProdCommitFiles": 6,
+        "maxCommitCodeLines": 450,
+        "blockEmptyCatch": true
+      },
+      "configSchema": [
+        { "key": "maxProdCommitFiles", "label": "单次提交最多修改生产文件数", "type": "number", "min": 2, "max": 20, "default": 6 },
+        { "key": "maxCommitCodeLines", "label": "单次提交净增代码硬上限", "type": "number", "min": 150, "max": 1200, "default": 450 },
+        { "key": "blockEmptyCatch", "label": "拦截吞异常的空 catch", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-commit-hygiene.mjs", "args": ["--audit-repo"], "passRoot": false }
+    },
+    {
+      "id": "pc-module-integrity",
+      "title": "跨文件模块引用完整性",
+      "tip": "零依赖扫描 ESM 导入导出与大小写路径，防止引了不存在的函数或文件",
+      "tier": "recommended",
+      "slot": "gate:module-integrity",
+      "activeBrick": "builtin-module-integrity",
+      "bypassed": false,
+      "x": 360,
+      "y": 90,
+      "w": 265,
+      "config": { "checkCaseSensitivity": true },
+      "configSchema": [
+        { "key": "checkCaseSensitivity", "label": "检查跨平台文件名大小写一致", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-module-integrity.mjs", "args": [] }
+    },
+    {
+      "id": "pc-doc-budgets",
+      "title": "AGENTS 文档体积与反废话预算",
+      "tip": "控制根 AGENTS.md 不超过 8KB/130 行，拦截重复章节与超长段落墙",
+      "tier": "recommended",
+      "slot": "gate:doc-budget",
+      "activeBrick": "builtin-doc-budgets",
+      "bypassed": false,
+      "x": 670,
+      "y": 90,
+      "w": 265,
+      "config": {
+        "rootAgentsMaxBytes": 8192,
+        "rootAgentsMaxLines": 130,
+        "maxParagraphLines": 14
+      },
+      "configSchema": [
+        { "key": "rootAgentsMaxBytes", "label": "根 AGENTS.md 字节上限", "type": "number", "min": 2048, "max": 32768, "default": 8192 },
+        { "key": "rootAgentsMaxLines", "label": "根 AGENTS.md 行数上限", "type": "number", "min": 40, "max": 300, "default": 130 },
+        { "key": "maxParagraphLines", "label": "单段落连续行数上限", "type": "number", "min": 6, "max": 30, "default": 14 }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-doc-budgets.mjs", "args": [] }
+    },
+    {
+      "id": "pc-decisions-inv13",
+      "title": "决策记录只增不改 (INV-13)",
+      "tip": "防止历史决策记录被事后篡改或删除，并检查新增记录五段结构完整",
+      "tier": "integrity",
+      "slot": "gate:decisions",
+      "activeBrick": "builtin-decisions",
+      "requires": ["hasDecisions"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 980,
+      "y": 90,
+      "w": 265,
+      "config": { "enforceFiveSections": true },
+      "configSchema": [
+        { "key": "enforceFiveSections", "label": "新增决策必须写齐五段结构", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-decisions.mjs", "args": [] }
+    },
+    {
+      "id": "pc-symbols-gate",
+      "title": "重复函数与死代码基线检查",
+      "tip": "拦截 AI 重复造轮子复制粘贴同名或同体函数",
+      "tier": "optional",
+      "slot": "gate:symbols",
+      "activeBrick": "builtin-symbols",
+      "requires": ["hasSymbolsBaseline"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 670,
+      "y": 250,
+      "w": 265,
+      "config": { "strictGate": true },
+      "configSchema": [
+        { "key": "strictGate", "label": "禁止新增重复函数", "type": "boolean", "default": true }
+      ],
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-symbols.mjs", "args": ["--gate"], "passRoot": false, "requireFile": "skill/symbols.baseline.json" }
+    }
+  ],
+  "links": [
+    { "id": "lk-pc-1", "fromNode": "pc-commit-hygiene", "fromSlot": "out", "toNode": "pc-module-integrity", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-2", "fromNode": "pc-module-integrity", "fromSlot": "out", "toNode": "pc-doc-budgets", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-3", "fromNode": "pc-doc-budgets", "fromSlot": "out", "toNode": "pc-decisions-inv13", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-4", "fromNode": "pc-decisions-inv13", "fromSlot": "out", "toNode": "pc-symbols-gate", "toSlot": "in", "type": "SIGNAL" }
+  ]
+}

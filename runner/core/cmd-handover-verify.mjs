@@ -10,6 +10,7 @@ import { computeProjectStatus } from './gates.mjs';
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 import { CMDB_REPO, collectGapsList } from './cmd-inspect.mjs';
 import { verifyHeldOutContract } from './heldout-verifier.mjs';
+import { gdCollectDisabledIntegrityRules, gdFormatIntegrityBannerMarkdown } from './governance-disclosure.mjs';
 import { vcAggregateVoteFiles, vcBuildEscapesRegressionBundle, vcEvaluateVerdictMatrix } from './verify-consensus.mjs';
 
 export function cmdHandover(projectRoot, opts = {}) {
@@ -27,9 +28,11 @@ export function cmdHandover(projectRoot, opts = {}) {
   const dgBin = existsSync(join(projectRoot, 'runner', 'donegate.mjs'))
     ? 'runner/donegate.mjs'
     : `"${resolve(dirname(fileURLToPath(import.meta.url)), '..', 'donegate.mjs')}"`;
+  const govCautionMd = gdFormatIntegrityBannerMarkdown(gdCollectDisabledIntegrityRules(projectRoot));
   const md = [
     '# HANDOVER · 项目交接包',
     '',
+    ...(govCautionMd ? [govCautionMd, ''] : []),
     '## 一、当前状态',
     st.ledgerLines[0],
     st.ledgerLines[1],
