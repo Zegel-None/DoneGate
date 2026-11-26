@@ -118,7 +118,7 @@ function runGate3DshMount(root, dshHome, doInstall, env) {
   const profiles = discoverDshProfileNames(dshHome);
   if (doInstall) {
     for (const pf of profiles) {
-      const r = runNodeScriptGate(root, installerRel, ['--profile', pf, '--dsh-home', dshHome], env);
+      const r = runNodeScriptGate(root, installerRel, ['--legacy-direct-profile-write', '--profile', pf, '--dsh-home', dshHome], env);
       if (!r.ok) return { ok: false, profiles, detail: r.detail, fixHint: `请检查目录写入权限：${dshHome}` };
     }
   }

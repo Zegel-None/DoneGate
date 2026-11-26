@@ -8,9 +8,20 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const isStr = (v, nonEmpty = false) => typeof v === 'string' && (!nonEmpty || v.trim().length > 0);
 const isStrArr = (v, nonEmpty = false) => Array.isArray(v) && (!nonEmpty || v.length > 0) && v.every((x) => isStr(x, true));
 const INPUT_CLASSES = new Set(['正常', '边界', '异常']);
+const TRACK_VALUES = new Set(['delivery', 'explore']);
+const SANDBOX_MODES = new Set(['worktree', 'host-local']);
+
+function validateExecutionBlock(exec, pushErr) {
+  if (!isObj(exec)) { pushErr('/execution', 'expected object'); return; }
+  if (exec.sandbox !== undefined && !SANDBOX_MODES.has(exec.sandbox)) pushErr('/execution/sandbox', 'expected worktree | host-local');
+  for (const k of ['resourceLocks', 'envPassthrough']) if (exec[k] !== undefined && !isStrArr(exec[k])) pushErr(`/execution/${k}`, 'expected string[]');
+  if (exec.preFlightPlug !== undefined && !isStr(exec.preFlightPlug, true)) pushErr('/execution/preFlightPlug', 'expected non-empty string');
+  if (exec.operatorVisualCheck !== undefined && typeof exec.operatorVisualCheck !== 'boolean') pushErr('/execution/operatorVisualCheck', 'expected boolean');
+}
 
 export function validateContractSchema(doc, opts = {}) {
-  const full = opts.full !== false;
+  const isExplore = doc && typeof doc === 'object' && doc.track === 'explore';
+  const full = opts.full !== false && !isExplore;
   const errs = [];
   const pushErr = (ptr, msg) => errs.push(`${ptr}: ${msg}`);
   if (!isObj(doc)) return ['/ : expected contract JSON object'];
@@ -18,6 +29,9 @@ export function validateContractSchema(doc, opts = {}) {
   for (const k of topReq) if (doc[k] === undefined) pushErr('/' + k, 'missing required field');
   if (doc.id !== undefined && !isStr(doc.id, true)) pushErr('/id', 'expected non-empty string');
   for (const k of ['title', 'why', 'owner', 'skipReason']) if (doc[k] !== undefined && !isStr(doc[k], k !== 'skipReason')) pushErr('/' + k, 'expected string');
+  if (doc.track !== undefined && !TRACK_VALUES.has(doc.track)) pushErr('/track', 'expected delivery | explore');
+  if (doc.exploreMeta !== undefined && !isObj(doc.exploreMeta)) pushErr('/exploreMeta', 'expected object');
+  if (doc.execution !== undefined) validateExecutionBlock(doc.execution, pushErr);
   if (doc.provisional !== undefined && typeof doc.provisional !== 'boolean') pushErr('/provisional', 'expected boolean');
   for (const k of ['scope', 'dependsOn', 'overlapsWith']) if (doc[k] !== undefined && !isStrArr(doc[k], k === 'scope')) pushErr('/' + k, 'expected string[]');
   if (doc.retired !== undefined && !isObj(doc.retired)) pushErr('/retired', 'expected object');

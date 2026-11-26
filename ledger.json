@@ -224,6 +224,38 @@
       "actionsChanged": 0,
       "note": "advisory（属性基随机不变量测试与最小化反例观测器，供解析器/状态机/计费域按需接入，接受 3 批硬淘汰考核）",
       "ecosystem": "core"
+    },
+    {
+      "brick": "complexipy",
+      "registryId": "complexipy@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（Rust 版 Python Campbell 2018 认知复杂度门禁，由 Python 默认治理流自动激活，接受 3 批硬淘汰考核）",
+      "ecosystem": "python"
+    },
+    {
+      "brick": "pytest",
+      "registryId": "pytest@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（Python 单元/集成测试与 xdist_group 分组观测器，由 Python 默认治理流自动激活，接受 3 批硬淘汰考核）",
+      "ecosystem": "python"
+    },
+    {
+      "brick": "ty",
+      "registryId": "ty@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（Astral Rust 单二进制 Python 类型检查器，零 Node 依赖，由 Python 默认治理流按需激活，接受 3 批硬淘汰考核）",
+      "ecosystem": "python"
+    },
+    {
+      "brick": "import-linter",
+      "registryId": "import-linter@stage4",
+      "wiredAtBatch": 3,
+      "actionsChanged": 0,
+      "note": "advisory（基于 grimp 的 Python 架构边界与分层契约门禁，由 Python 项目按需启用，接受 3 批硬淘汰考核）",
+      "ecosystem": "python"
     }
   ]
 }

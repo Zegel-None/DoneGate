@@ -70,10 +70,46 @@
         { "key": "coverageMinPct", "label": "最低契约覆盖率警告线 (%)", "type": "number", "min": 0, "max": 100, "default": 30 }
       ],
       "exec": { "kind": "donegate_cmd", "args": ["graph"] }
+    },
+    {
+      "id": "chk-py-pytest",
+      "title": "Python 单元与集成验收测试 (Pytest)",
+      "tip": "检测到 Python 仓库时自动激活：经项目 .venv 运行 pytest 并支持 xdist_group 串行分组",
+      "tier": "recommended",
+      "slot": "gate:py-test",
+      "activeBrick": "adp-pytest",
+      "requires": ["hasPython"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 60,
+      "y": 250,
+      "w": 270,
+      "config": { "target": "." },
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "pytest", "entryRel": "skill/adapters/pytest-run.mjs", "registryId": "pytest@stage4" }
+    },
+    {
+      "id": "chk-py-import-linter",
+      "title": "Python 模块架构分层检查 (Import Linter)",
+      "tip": "存在 .importlinter 或安装 lint-imports 时自动校验 Python 跨层违规导入",
+      "tier": "optional",
+      "slot": "gate:py-arch",
+      "activeBrick": "adp-import-linter",
+      "requires": ["hasPython", "hasImportLinter"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 390,
+      "y": 250,
+      "w": 270,
+      "config": {},
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "import-linter", "entryRel": "skill/adapters/import-linter.mjs", "registryId": "import-linter@stage4" }
     }
   ],
   "links": [
     { "id": "lk-chk-1", "fromNode": "chk-heldout", "fromSlot": "out", "toNode": "chk-compact-run", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-chk-2", "fromNode": "chk-compact-run", "fromSlot": "out", "toNode": "chk-graph-coverage", "toSlot": "in", "type": "SIGNAL" }
+    { "id": "lk-chk-2", "fromNode": "chk-compact-run", "fromSlot": "out", "toNode": "chk-graph-coverage", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-chk-3", "fromNode": "chk-graph-coverage", "fromSlot": "out", "toNode": "chk-py-pytest", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-chk-4", "fromNode": "chk-py-pytest", "fromSlot": "out", "toNode": "chk-py-import-linter", "toSlot": "in", "type": "SIGNAL" }
   ]
 }

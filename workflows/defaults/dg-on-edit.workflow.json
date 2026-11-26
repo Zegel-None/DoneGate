@@ -47,9 +47,27 @@
         { "key": "strict", "label": "严格拦截未归一化旧术语", "type": "boolean", "default": true }
       ],
       "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [], "passRoot": false }
+    },
+    {
+      "id": "edit-py-ruff",
+      "title": "Python 语法与幻觉符号快检 (Ruff)",
+      "tip": "检测到 Python 仓库时自动激活：毫秒级拦截缩进截断、F821 未定义符号与裸 except",
+      "tier": "recommended",
+      "slot": "gate:py-lint",
+      "activeBrick": "adp-ruff",
+      "requires": ["hasPython"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 720,
+      "y": 90,
+      "w": 270,
+      "config": { "target": "." },
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "ruff", "entryRel": "skill/adapters/ruff-lint.mjs", "registryId": "ruff@stage4" }
     }
   ],
   "links": [
-    { "id": "lk-edit-1", "fromNode": "edit-lint-gate", "fromSlot": "out", "toNode": "edit-term-check", "toSlot": "in", "type": "SIGNAL" }
+    { "id": "lk-edit-1", "fromNode": "edit-lint-gate", "fromSlot": "out", "toNode": "edit-term-check", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-edit-2", "fromNode": "edit-term-check", "fromSlot": "out", "toNode": "edit-py-ruff", "toSlot": "in", "type": "SIGNAL" }
   ]
 }

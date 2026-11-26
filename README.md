@@ -91,7 +91,7 @@
 - **密封契约切片与 400k 五段式派工预算（`donegate slice` / `check-node`）**：按百万窗口模型注意力黄金甜点（`1M × 40% = 400,000 Tokens`，亦支持小窗口按比例缩放）切出密封施工胶囊——0-Hop 本卡源码与测试 `160k` + 1-Hop 只读接口存根 `48k`，2-Hop 以外无关代码物理屏蔽；子智能体完工跑 `check-node --receipt` 秒级拦截越界改文件与私改接口，仅回传 500-Token 回执即可销毁子上下文。
 - **独立工具舱共享依赖池（`workflows/.deps/_shared/npm-cells/`）**：每款外部 CLI 工具（如 Storybook、Lighthouse CI、Playwright、Gitleaks）按确定性精确版本隔离安装进各自的 `npm-cells/<id>/` 独立舱室并生成跨目录 `NODE_PATH` 启动器，彻底根绝跨大版本依赖打架（如 Vite 6 vs 8）与 `npm` 互删顽疾。
 - **双层子智能体人机隔离锁（`runner/dsh/subagent-isolation.mjs`）**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
-- **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 27 个真实适配器链路；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
+- **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 31 个真实适配器链路；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
 
 ## 五、仓库目录速览与手工自检命令
 
@@ -102,7 +102,7 @@
 | `donegate/` · `donegate-judge/` · `donegate-forge/` | 三套核心技能：写方立约施工、双盲独立冷酷裁判、外部开源工具扩展工坊 |
 | `runner/atlas/` · `runner/dsh/` | 无限画布工作台（项目看板 / 工作流 / UI 看板）、DSH Web 插件总装与 Git Worktree 过夜挂机引擎 |
 | `runner/donegate.mjs` | 判定核统一命令行入口（含 `brief` / `zoom` 三级变焦驾驶舱、`impact` 波及面雷达、`lint-edit` 微门禁与 `slice` 密封切片） |
-| `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 27 个外部确定性工具适配器 |
+| `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 31 个外部确定性工具适配器 |
 
 若你想在本地随时重跑全套工程健康自检，在仓库根目录执行：
 

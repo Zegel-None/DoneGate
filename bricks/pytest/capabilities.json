@@ -1,0 +1,33 @@
+{
+  "说明": "工具能力清单：Pytest Python 单元/集成测试与 xdist_group 分组执行观测。",
+  "tool": "pytest",
+  "registryId": "pytest@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "failedCount",
+      "from": "failedCount",
+      "kind": "count",
+      "assertableAs": ["zero"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；Python 用户项目由默认治理流与契约判据直接断言为 0",
+      "note": "失败测试用例数"
+    },
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": ["zero"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码",
+      "note": "夹具或收集阶段报错数"
+    }
+  ],
+  "requiresProject": ["含 .py 测试的 Python 项目"],
+  "blindSpots": ["测试强度取决于用例与断言质量，需配合有牙实验或属性测试防假绿"],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；作为 Python 项目默认治理流与契约验收的核心测试适配器。"
+  }
+}

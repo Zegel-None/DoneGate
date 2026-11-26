@@ -11,6 +11,8 @@ import { STATE_PRIORITY, VALID_TEETH, checkHumanOutcome, checkMaterialsFresh, is
 
 export const CONTRACT_LIFECYCLE = {
   RETIRED: 'RETIRED',
+  EXPLORING: 'EXPLORING',
+  EXPLORE_EXPIRED: 'EXPLORE_EXPIRED',
   DRAFT: 'DRAFT',
   FROZEN: 'FROZEN',
   IMPLEMENTED: 'IMPLEMENTED',
@@ -18,9 +20,24 @@ export const CONTRACT_LIFECYCLE = {
   SIGNED_OFF: 'SIGNED_OFF'
 };
 
+export function isExploreContractExpired(contract) {
+  const exp = contract?.exploreMeta?.expiresAt;
+  if (!exp) return false;
+  const ts = Date.parse(exp);
+  return Number.isFinite(ts) && Date.now() > ts;
+}
+
 export function deriveContractLifecycle(contract, obs, obResults, reqCmds, allTrusted, signedOff, worstState) {
   if (contract.retired) {
     return { lifecycleState: CONTRACT_LIFECYCLE.RETIRED, lifecycleLabel: '已退役', nextCommand: null };
+  }
+  if (contract.track === 'explore') {
+    const expired = isExploreContractExpired(contract);
+    return {
+      lifecycleState: expired ? CONTRACT_LIFECYCLE.EXPLORE_EXPIRED : CONTRACT_LIFECYCLE.EXPLORING,
+      lifecycleLabel: expired ? '探索已过期·需晋升或退役' : '探索沙箱·不计交付算数',
+      nextCommand: `node runner/donegate.mjs contract promote ${contract.id} --by <裁方姓名>`
+    };
   }
   const reqObs = obs.filter((o) => o.required !== false);
   const allFrozen = reqObs.length > 0 && reqObs.every((o) => typeof o.signedBy === 'string' && o.signedBy.trim() && typeof o.frozenHash === 'string' && o.frozenHash.trim());
@@ -207,6 +224,16 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
     if (c.retired) {
       const lc = deriveContractLifecycle(c, [], [], [], false, false, '已退役');
       contractSummaries.push({ id: c.id, title: c.title, retired: c.retired, state: '已退役', ...lc, obligations: [] });
+      continue;
+    }
+    if (c.track === 'explore') {
+      const expired = isExploreContractExpired(c);
+      const lc = deriveContractLifecycle(c, [], [], [], false, false, expired ? '探索已过期' : '探索中');
+      contractSummaries.push({
+        id: c.id, title: c.title || c.id, track: 'explore', exploreMeta: c.exploreMeta || null,
+        state: expired ? '探索已过期' : '探索中', ...lc, cleared: false, signedOff: false,
+        passTrusted: 0, passTotal: 0, obligations: []
+      });
       continue;
     }
     const obs = Array.isArray(c.obligations) ? c.obligations : [];

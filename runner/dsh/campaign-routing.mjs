@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { loadContracts } from '../core/contract.mjs';
 import { normalizeSlashes } from './win-paths.mjs';
 
 export const AUTOPILOT_DEFAULT_MAX_SELF_HEAL_ROUNDS = 2;
@@ -101,7 +102,40 @@ function crBuildAdjacency(active, links) {
   return { byId, adj, indeg };
 }
 
-export function crComputeDependencyWaves(nodes = [], links = []) {
+function crResolveNodeExecutionProfile(node, contractMap) {
+  const cid = node.contractId || node.id;
+  const linked = (cid && contractMap.get(cid)) || null;
+  const exec = { ...(linked?.execution || {}), ...(node.execution || {}) };
+  const resourceLocks = [...new Set((Array.isArray(exec.resourceLocks) ? exec.resourceLocks : []).map((s) => String(s || '').trim()).filter(Boolean))];
+  const sandbox = exec.sandbox === 'host-local' || resourceLocks.length > 0 ? 'host-local' : 'worktree';
+  const hasHumanOb = Array.isArray(linked?.obligations) && linked.obligations.some((o) => o && o.kind === 'human');
+  const requiresOperatorGate = Boolean(exec.operatorVisualCheck || hasHumanOb);
+  return {
+    sandbox,
+    resourceLocks,
+    preFlightPlug: typeof exec.preFlightPlug === 'string' && exec.preFlightPlug.trim() ? exec.preFlightPlug.trim() : null,
+    envPassthrough: Array.isArray(exec.envPassthrough) ? exec.envPassthrough : [],
+    operatorVisualCheck: Boolean(exec.operatorVisualCheck),
+    hasHumanObligation: hasHumanOb,
+    requiresOperatorGate
+  };
+}
+
+function crWaveHasResourceConflict(waveNodes, execMap) {
+  const seenLocks = new Set();
+  for (const n of waveNodes) {
+    const ex = execMap.get(n.id);
+    if (!ex) continue;
+    if (ex.sandbox === 'host-local' && waveNodes.length > 1) return true;
+    for (const lk of ex.resourceLocks) {
+      if (seenLocks.has(lk)) return true;
+      seenLocks.add(lk);
+    }
+  }
+  return false;
+}
+
+export function crComputeDependencyWaves(nodes = [], links = [], execMap = new Map()) {
   const active = (Array.isArray(nodes) ? nodes : []).filter(crIsActiveNode);
   const { byId, adj, indeg } = crBuildAdjacency(active, links);
   const waves = [];
@@ -111,11 +145,16 @@ export function crComputeDependencyWaves(nodes = [], links = []) {
   while (frontier.length > 0) {
     const waveNodes = frontier.map((id) => byId.get(id)).filter(Boolean);
     for (const id of frontier) visited.add(id);
+    const scopeConflict = crWaveHasScopeConflict(waveNodes);
+    const resourceConflict = crWaveHasResourceConflict(waveNodes, execMap);
+    const hasHostLocal = waveNodes.some((n) => execMap.get(n.id)?.sandbox === 'host-local');
     waves.push({
       waveIndex: waves.length,
       nodeIds: waveNodes.map((n) => n.id),
-      hasScopeConflict: crWaveHasScopeConflict(waveNodes),
-      parallelizable: waveNodes.length > 1 && !crWaveHasScopeConflict(waveNodes)
+      hasScopeConflict: scopeConflict,
+      hasResourceConflict: resourceConflict,
+      sandboxMode: hasHostLocal ? 'host-local' : 'worktree',
+      parallelizable: waveNodes.length > 1 && !scopeConflict && !resourceConflict && !hasHostLocal
     });
     const nextFrontier = [];
     for (const id of frontier) {
@@ -134,6 +173,8 @@ export function crComputeDependencyWaves(nodes = [], links = []) {
       waveIndex: waves.length,
       nodeIds: cyclic.map((n) => n.id),
       hasScopeConflict: true,
+      hasResourceConflict: false,
+      sandboxMode: 'worktree',
       parallelizable: false
     });
   }
@@ -143,9 +184,18 @@ export function crComputeDependencyWaves(nodes = [], links = []) {
 export function planCampaignExecutionStrategy(nodes = [], links = [], opts = {}) {
   const limits = crLoadAutopilotLimits(opts.projectRoot || null);
   const active = (Array.isArray(nodes) ? nodes : []).filter(crIsActiveNode);
-  const waves = crComputeDependencyWaves(active, links);
+  const contractMap = new Map();
+  if (opts.projectRoot && existsSync(join(resolve(opts.projectRoot), 'contracts'))) {
+    const loaded = loadContracts(resolve(opts.projectRoot));
+    for (const c of loaded.contracts || []) if (c && c.id) contractMap.set(c.id, c);
+  }
+  const execMap = new Map(active.map((n) => [n.id, crResolveNodeExecutionProfile(n, contractMap)]));
+  const nodeExecutionModes = Object.fromEntries(execMap.entries());
+  const exclusiveResourceLocks = [...new Set([...execMap.values()].flatMap((e) => e.resourceLocks))];
+  const hasHostLocalNodes = [...execMap.values()].some((e) => e.sandbox === 'host-local');
+  const waves = crComputeDependencyWaves(active, links, execMap);
   const maxWaveWidth = waves.reduce((mx, w) => Math.max(mx, w.nodeIds.length), 0);
-  const hasConflict = waves.some((w) => w.hasScopeConflict);
+  const hasConflict = waves.some((w) => w.hasScopeConflict || w.hasResourceConflict);
   const hasParallelWave = waves.some((w) => w.parallelizable);
   const sharedState = opts.hasSharedExternalState === true;
   const toolBudget = Array.isArray(opts.tools)
@@ -157,13 +207,19 @@ export function planCampaignExecutionStrategy(nodes = [], links = [], opts = {})
   let reason = '组件数量 <= 1 或为纯顺序依赖链，采用单代理顺序执行以避免多代理协调损耗';
   if (sharedState) {
     reason = '存在共享外部状态约束，强制退回单代理顺序执行以确保确定性';
+  } else if (hasHostLocalNodes && !hasParallelWave) {
+    mode = 'host-serial-exclusive';
+    reason = `检测到宿主机独占节点（resourceLocks=${exclusiveResourceLocks.join(',') || 'host-local'}），自动采用宿主机单源串行执行`;
+  } else if (hasHostLocalNodes && hasParallelWave) {
+    mode = 'hybrid-worktree-and-host-serial';
+    const cap = Number.isFinite(Number(opts.maxConcurrency)) && Number(opts.maxConcurrency) >= 1 ? Math.floor(Number(opts.maxConcurrency)) : 4;
+    maxConcurrency = Math.min(maxWaveWidth, cap);
+    reason = `混合分波调度：纯隔离组件走 Worktree 波次，宿主机独占组件（${exclusiveResourceLocks.join(',') || 'host-local'}）在宿主目录串行执行`;
   } else if (hasConflict && !hasParallelWave) {
-    reason = '同波次组件存在写范围重叠，自动降级为单代理顺序执行防止合并冲突';
+    reason = '同波次组件存在写范围或独占资源锁重叠，自动降级为单代理顺序执行防止冲突';
   } else if (active.length > 1 && hasParallelWave) {
     mode = 'parallel-worktree';
-    const cap = Number.isFinite(Number(opts.maxConcurrency)) && Number(opts.maxConcurrency) >= 1
-      ? Math.floor(Number(opts.maxConcurrency))
-      : 4;
+    const cap = Number.isFinite(Number(opts.maxConcurrency)) && Number(opts.maxConcurrency) >= 1 ? Math.floor(Number(opts.maxConcurrency)) : 4;
     maxConcurrency = Math.min(maxWaveWidth, cap);
     reason = `检测到同波次存在 ${maxWaveWidth} 个写范围互不重叠的独立组件，启用按波次多 Worktree 并行执行`;
   }
@@ -175,6 +231,9 @@ export function planCampaignExecutionStrategy(nodes = [], links = [], opts = {})
     waveCount: waves.length,
     maxWaveWidth,
     maxConcurrency,
+    hasHostLocalNodes,
+    exclusiveResourceLocks,
+    nodeExecutionModes,
     maxSelfHealRounds: Number(opts.maxSelfHealRounds || limits.maxSelfHealRounds),
     maxSubagentTools: Number(opts.maxSubagentTools || limits.maxSubagentTools),
     waves,

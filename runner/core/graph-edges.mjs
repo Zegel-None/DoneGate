@@ -4,6 +4,7 @@ import { dirname, join, normalize, relative } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { readMaybe } from '../../skill/io.mjs';
 import { loadContracts, loadThresholds } from './gates.mjs';
+import { extractPythonImportTargets } from './python-imports.mjs';
 
 const GE3_STATIC_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
 const GE3_DYNAMIC_IMPORT_RE = /\b(?:import|require)\s*\(\s*[^'")\s]/g;
@@ -61,6 +62,12 @@ function ge3AddOwnerPairs(srcOwners, dstOwners, actualPairs) {
 function ge3ScanFileImports(projectRoot, cf, srcOwners, activeContracts, codeSet, actualPairs) {
   const body = readMaybe(join(projectRoot, cf));
   if (body === null) return 0;
+  if (cf.endsWith('.py')) {
+    for (const hit of extractPythonImportTargets(cf, body, codeSet)) {
+      ge3AddOwnerPairs(srcOwners, ge3OwnersOfFile(activeContracts, hit), actualPairs);
+    }
+    return /\bimportlib\.import_module\s*\(/.test(body) ? 1 : 0;
+  }
   for (const m of body.matchAll(GE3_STATIC_IMPORT_RE)) {
     const hit = ge3ResolveRelativeTarget(cf, m[1].split(/[?#]/)[0], codeSet);
     if (hit) ge3AddOwnerPairs(srcOwners, ge3OwnersOfFile(activeContracts, hit), actualPairs);

@@ -215,6 +215,11 @@ function connectDoneGateLiveEvents() {
           } else {
             syncAllWorkflowDepsFromBackend(state.activePackId, true);
           }
+        } else if (msg.type === 'governance_updated' || msg.type === 'governance_proposal_ready') {
+          if (typeof window.dgGovRefreshSummary === 'function') window.dgGovRefreshSummary();
+          if (msg.type === 'governance_proposal_ready' && typeof showToast === 'function') {
+            showToast('📝 收到新的治理规则提案，请点右下角治理按钮审阅确认');
+          }
         }
       } catch (err) { void err; }
     };

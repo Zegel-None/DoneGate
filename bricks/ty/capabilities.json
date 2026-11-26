@@ -1,0 +1,24 @@
+{
+  "说明": "工具能力清单：Astral ty Rust 高速 Python 类型检查器。",
+  "tool": "ty",
+  "registryId": "ty@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": ["zero", "max"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；供 Python 用户项目零 Node 依赖快速检查跨文件类型错误",
+      "note": "类型错误数"
+    }
+  ],
+  "requiresProject": ["含 .py 源码的 Python 项目"],
+  "blindSpots": ["静态类型检查不覆盖动态 getattr/COM 晚期绑定与运行时业务语义"],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；供 Python 用户项目在未装 Node 版 pyright 时零依赖接管类型门禁。"
+  }
+}

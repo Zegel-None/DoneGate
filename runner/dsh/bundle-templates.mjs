@@ -176,10 +176,19 @@ export function renderDshHostIndexJs(projectRoot) {
   const routesModuleUrl = toSafeFileUrl(`${normalizeSlashes(projectRoot).replace(/\/+$/, '')}/runner/dsh/host-routes.mjs`);
   const cleanRoot = normalizeSlashes(projectRoot);
   return `// DSH Host 端插件入口（遵循 dsh-doc 单一 apply 导出规范，按会话工作区动态路由完结门接口并隔离人类直连子代理）
+import { randomBytes } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export const inject = ['webServer'];
+export const Config = {
+  type: 'object',
+  properties: {
+    projectRoot: { type: 'string' },
+    requireAuth: { type: 'boolean', default: true },
+    sessionToken: { type: 'string' }
+  }
+};
 
 function isExistingDir(dirPath) {
   try { return Boolean(dirPath && typeof dirPath === 'string' && existsSync(dirPath) && statSync(dirPath).isDirectory()); }
@@ -238,10 +247,11 @@ export async function apply(ctx, config) {
   };
 
   const handlerByRoot = new Map();
-  const authOpts = {
-    requireAuth: Boolean(config && config.requireAuth),
-    sessionToken: (config && typeof config.sessionToken === 'string') ? config.sessionToken : undefined
-  };
+  const requireAuth = Boolean(config && config.requireAuth);
+  const instanceSessionToken = (config && typeof config.sessionToken === 'string' && config.sessionToken.trim())
+    ? config.sessionToken.trim()
+    : (requireAuth ? randomBytes(32).toString('hex') : undefined);
+  const authOpts = { requireAuth, sessionToken: instanceSessionToken };
   const getHandler = (rootDir) => {
     const key = resolve(rootDir || defaultRoot);
     if (!handlerByRoot.has(key)) handlerByRoot.set(key, mod.createDoneGateWebRouteHandler(key, { dispatchSubagent, ...authOpts }));

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { extractFileInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
+import { extractPythonImportTargets } from './python-imports.mjs';
 import { inspectCrossCardFocusPatterns, writeProjectRouter } from './context-router.mjs';
 import { buildDomWiringGraph, computeFileLineMetrics, formatDomWiringStubComment, resolveSubpackFocusPatterns } from './dom-wiring-graph.mjs';
 import { adviseCapsuleModularitySplit, formatShardAdviceLines } from './capsule-shard-advisor.mjs';
@@ -78,12 +79,10 @@ export function parseFocusPatterns(rawFocus) {
   const arr = Array.isArray(rawFocus) ? rawFocus : (typeof rawFocus === 'string' ? rawFocus.split(',') : []);
   return arr.map((s) => String(s || '').trim().replace(/\\/g, '/').replace(/^\.\//, '')).filter(Boolean);
 }
-
 export function parseLexicalTerms(rawLexical) {
   const arr = Array.isArray(rawLexical) ? rawLexical : (typeof rawLexical === 'string' ? rawLexical.split(',') : []);
   return arr.map((s) => String(s || '').trim()).filter(Boolean);
 }
-
 function matchesFocusPattern(relPath, patterns) {
   const rel = String(relPath || '').replace(/\\/g, '/'), base = basename(rel), stem = basename(rel, extname(rel));
   return patterns.some((p) => {
@@ -97,6 +96,10 @@ function computeIntraHopFocusClosure(scopeSet, rawByFile, seedSet, facadeFiles, 
   if (seedSet.size === 0) return closure;
   for (const f of facadeFiles || []) if (scopeSet.has(f)) closure.add(f);
   for (const [src, body] of rawByFile.entries()) {
+    if (src.endsWith('.py')) {
+      for (const dst of extractPythonImportTargets(src, body, scopeSet)) if (seedSet.has(src) || seedSet.has(dst)) { closure.add(src); closure.add(dst); }
+      continue;
+    }
     const masked = maskCommentsAndStrings(body, extname(src).toLowerCase());
     for (const m of body.matchAll(HCAP_IMPORT_RE)) {
       if (masked[m.index] === ' ') continue;
@@ -107,9 +110,7 @@ function computeIntraHopFocusClosure(scopeSet, rawByFile, seedSet, facadeFiles, 
       if (dst && dst !== src && (seedSet.has(src) || seedSet.has(dst))) { closure.add(src); closure.add(dst); }
     }
   }
-  for (const seed of seedSet) {
-    for (const linked of domGraph.edges.get(seed) || []) if (scopeSet.has(linked)) closure.add(linked);
-  }
+  for (const seed of seedSet) for (const linked of domGraph.edges.get(seed) || []) if (scopeSet.has(linked)) closure.add(linked);
   return closure;
 }
 

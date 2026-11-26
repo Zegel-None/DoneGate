@@ -173,10 +173,10 @@ if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
     const idx = args.indexOf(flag);
     return idx >= 0 && args[idx + 1] ? args[idx + 1] : null;
   };
-  if (args.includes('--build-only')) {
-    const out = buildDshBundleDirectory(REPO_ROOT, getOpt('--out'));
-    console.log(`✓ 已按 DSH 创造模式 (dsh-doc) 规范生成本地插件包 → ${normalizeSlashes(out.bundleDir)}`);
-    console.log('  可在 DSH Web 左栏「插件 > 添加插件」直接选择该目录安装，或由创造模式调用 plugin_manager install_bundle 安装。');
+  if (args.includes('--dry-run')) {
+    const outDir = resolve(getOpt('--out') || join(REPO_ROOT, '.donegate', 'dsh-bundle', 'dsh-donegate'));
+    console.log(`[dry-run] 将在工作区生成标准 DSH Bundle（不改动 ~/.dsh/profiles/*）：${normalizeSlashes(outDir)}`);
+    console.log('  推荐安装方式：DSH Web「插件 > 添加插件」或调用 plugin_manager install_bundle 指向该目录。');
     process.exit(0);
   }
   if (args.includes('--uninstall')) {
@@ -184,13 +184,18 @@ if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
     console.log(`✓ 已从 DSH Web 配置卸载 ${DSH_BUNDLE_NAME} (${res.profileDir})`);
     process.exit(0);
   }
-  const res = installDshWebBundle({
-    projectRoot: REPO_ROOT,
-    profile: getOpt('--profile') || 'web',
-    dshHome: getOpt('--dsh-home')
-  });
-  console.log(`✓ 已按 DSH 创造模式规范装配并写入 ${res.bundleName}：`);
-  console.log(`  · 本地标准 Bundle 目录：${res.bundleDir}（亦可在 DSH「插件 > 添加插件」直接选此目录）`);
-  console.log(`  · Profile 落盘目录：${res.targetModDir}`);
-  console.log('  · 打开方式：启动 dsh web 后，点击主会话顶栏「完结门」视图标签即可切换画布并保留底部原生输入框！');
+  if (args.includes('--legacy-direct-profile-write')) {
+    console.warn('⚠ 警告：--legacy-direct-profile-write 会直接改写 profile package.json，可能导致 profile 内 pnpm add 404；更推荐默认安全打包模式并走 plugin_manager install_bundle。');
+    const res = installDshWebBundle({
+      projectRoot: REPO_ROOT,
+      profile: getOpt('--profile') || 'web',
+      dshHome: getOpt('--dsh-home')
+    });
+    console.log(`✓ [legacy] 已写入 ${res.bundleName} → ${res.targetModDir}`);
+    process.exit(0);
+  }
+  const out = buildDshBundleDirectory(REPO_ROOT, getOpt('--out'));
+  console.log(`✓ 已按 DSH 创造模式 (dsh-doc) 规范安全生成工作区插件包（未触碰 ~/.dsh/profiles/*）→ ${normalizeSlashes(out.bundleDir)}`);
+  console.log('  安装方式：在 DSH Web 左栏「插件 > 添加插件」直接选择该目录，或调用 plugin_manager install_bundle 传入该绝对路径。');
+  process.exit(0);
 }

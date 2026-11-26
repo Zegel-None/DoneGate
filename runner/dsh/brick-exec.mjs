@@ -24,7 +24,14 @@ const HARD_TOOL_OBLIGATION = {
   'osv-scanner': 'osv-no-high-severity',
   depcruise: 'depcruise-no-violations',
   knip: 'knip-no-unlisted-deps',
-  biome: 'biome-no-errors'
+  biome: 'biome-no-errors',
+  ruff: 'ruff-no-violations',
+  complexipy: 'complexipy-under-cap',
+  pyright: 'pyright-no-errors',
+  ty: 'ty-no-errors',
+  pytest: 'pytest-all-pass',
+  'import-linter': 'import-linter-no-broken-contracts',
+  'fuck-u-code': 'fuck-u-code-no-hot-files'
 };
 
 let cachedRegistry = null;
@@ -99,12 +106,20 @@ function evaluateAdvisoryObservation(obs) {
     ['failedCount', '失败用例'],
     ['errorCount', '错误项'],
     ['findingCount', '风险发现项'],
-    ['typoCount', '拼写滑移项']
+    ['typoCount', '拼写滑移项'],
+    ['violationCount', '静态规则违规项'],
+    ['syntaxErrorCount', '语法错误项'],
+    ['undefinedNameCount', '未定义符号项'],
+    ['overThresholdCount', '超认知复杂度上限函数'],
+    ['brokenContractCount', '违反架构边界契约项']
   ];
   for (const [key, label] of badChecks) {
     if (typeof obs[key] === 'number' && obs[key] > 0) {
       return { exitCode: 1, detail: `检出 ${obs[key]} 处${label}` };
     }
+  }
+  if (Array.isArray(obs.hotFiles) && obs.hotFiles.length > 0) {
+    return { exitCode: 1, detail: `检出 ${obs.hotFiles.length} 个高复杂度热点文件` };
   }
   return { exitCode: 0, detail: '观测采集与基线核对通过' };
 }

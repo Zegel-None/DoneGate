@@ -10,14 +10,14 @@ import { fileURLToPath } from 'node:url';
 
 try { Module.enableCompileCache?.(); } catch (err) { void err; }
 
-import { cmdInit, cmdContractNew, cmdContractFreeze, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
+import { cmdInit, cmdContractNew, cmdContractFreeze, cmdContractPromote, cmdCheck, cmdTeeth, cmdRetire } from './core/commands-a.mjs';
 import { cmdCatch } from './core/teeth-ach.mjs';
 import { cmdStatus, cmdGraph, cmdGaps, cmdHandover, cmdVerifyPack, cmdVerifyApply, cmdSlice, cmdCheckNode, cmdImpact, cmdBrief, cmdZoom } from './core/commands-b.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
 const BOOLEAN_FLAGS = new Set([
-  'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass',
+  'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass', 'explore',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
   'stubs', 'decisions', 'full', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human'
@@ -28,7 +28,8 @@ const HELP_TEXT = [
   '',
   '用法：node runner/donegate.mjs <命令> [参数] [--root <项目根>]',
   '  init [dir]                                      初始化项目骨架（已存在退 3）',
-  '  contract new <id> [--title --why --scope --owner --depends-on]   新建契约骨架（标识重复或不合规退 1）',
+  '  contract new <id> [--title --why --scope --owner --depends-on --explore --ttl-days --golden]   新建契约（--explore 建探索态）',
+  '  contract promote <id> --by <签字人> [--legacy]   将探索态契约晋升为正式交付契约并一次签字冻结',
   '  contract freeze <id> --by <签字人> [--legacy] [--force-batch]   冻结判据并签字（有判据缺 expect 或 kind 退 1）',
   '  contract freeze <id> --by <签字人> --signoff --attest <口头复述>   实现后裁方签收（记录复核包哈希与链上位置）',
   '  check <id> [--criterion <oid>] [--allow-dirty] [--human-pass] [--skip-gates] [--node]   跑判据并落证据（有未通过退 1，跑不起来退 3）',
@@ -89,7 +90,13 @@ function dgCmdContract(root, sub, pos, flags) {
   if (sub === 'new') {
     return cmdContractNew(root, {
       id: pos[2], title: flags.title, why: flags.why, scope: flags.scope,
-      owner: flags.owner, dependsOn: flags['depends-on']
+      owner: flags.owner, dependsOn: flags['depends-on'],
+      explore: Boolean(flags.explore), ttlDays: flags['ttl-days'], golden: flags.golden
+    });
+  }
+  if (sub === 'promote') {
+    return cmdContractPromote(root, {
+      id: pos[2], by: flags.by, legacy: Boolean(flags.legacy)
     });
   }
   if (sub === 'freeze') {
@@ -179,6 +186,8 @@ function dgCmdCheckOrTeeth(cmd, root, pos, flags) {
       heldOutDir: typeof flags['heldout-dir'] === 'string' ? flags['heldout-dir'] : undefined,
       compact: Boolean(flags.compact), fastSample: Boolean(flags['fast-sample']),
       allowDirty: Boolean(flags['allow-dirty']), humanPass: Boolean(flags['human-pass']),
+      humanEvidence: typeof flags['human-evidence'] === 'string' ? flags['human-evidence'] : undefined,
+      explore: Boolean(flags.explore),
       skipGates: Boolean(flags['skip-gates'])
     });
   }

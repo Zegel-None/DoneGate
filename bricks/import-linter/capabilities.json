@@ -1,0 +1,24 @@
+{
+  "说明": "工具能力清单：Import Linter (grimp) Python 模块架构边界与分层依赖门禁。",
+  "tool": "import-linter",
+  "registryId": "import-linter@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "brokenContractCount",
+      "from": "brokenContractCount",
+      "kind": "count",
+      "assertableAs": ["zero"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；供 Python 模块化项目拦截跨层与违规导入",
+      "note": "违反架构边界契约的数量"
+    }
+  ],
+  "requiresProject": ["含 .importlinter 或 [tool.importlinter] 配置的 Python 项目"],
+  "blindSpots": ["仅校验静态导入图与声明的架构分层契约，不覆盖运行时动态 importlib 调用"],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；作为 dependency-cruiser 的 Python 活跃维护对等工具按需启用。"
+  }
+}

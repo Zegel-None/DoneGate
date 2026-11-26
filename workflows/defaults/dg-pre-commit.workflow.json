@@ -108,12 +108,50 @@
         { "key": "strictGate", "label": "禁止新增重复函数", "type": "boolean", "default": true }
       ],
       "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-symbols.mjs", "args": ["--gate"], "passRoot": false, "requireFile": "skill/symbols.baseline.json" }
+    },
+    {
+      "id": "pc-py-complexipy",
+      "title": "Python 认知复杂度硬顶 (Complexipy ≤25)",
+      "tip": "检测到 Python 仓库时自动激活：按 Campbell 2018 标准拦截认知复杂度 >25 的高耦合函数",
+      "tier": "recommended",
+      "slot": "gate:py-complexity",
+      "activeBrick": "adp-complexipy",
+      "requires": ["hasPython"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 50,
+      "y": 250,
+      "w": 265,
+      "config": { "maxComplexity": 25 },
+      "configSchema": [
+        { "key": "maxComplexity", "label": "Python 单函数认知复杂度硬顶", "type": "number", "min": 10, "max": 40, "default": 25 }
+      ],
+      "exec": { "kind": "adapter_node", "tool": "complexipy", "entryRel": "skill/adapters/complexipy-check.mjs", "registryId": "complexipy@stage4" }
+    },
+    {
+      "id": "pc-py-types",
+      "title": "Python 静态类型检查 (Astral ty / Pyright)",
+      "tip": "检测到 Python 仓库时自动激活：拦住跨文件参数类型失配与不存在的属性调用",
+      "tier": "optional",
+      "slot": "gate:py-types",
+      "activeBrick": "adp-ty",
+      "requires": ["hasPython"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 360,
+      "y": 250,
+      "w": 265,
+      "config": { "target": "." },
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "ty", "entryRel": "skill/adapters/ty-check.mjs", "registryId": "ty@stage4" }
     }
   ],
   "links": [
     { "id": "lk-pc-1", "fromNode": "pc-commit-hygiene", "fromSlot": "out", "toNode": "pc-module-integrity", "toSlot": "in", "type": "SIGNAL" },
     { "id": "lk-pc-2", "fromNode": "pc-module-integrity", "fromSlot": "out", "toNode": "pc-doc-budgets", "toSlot": "in", "type": "SIGNAL" },
     { "id": "lk-pc-3", "fromNode": "pc-doc-budgets", "fromSlot": "out", "toNode": "pc-decisions-inv13", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-pc-4", "fromNode": "pc-decisions-inv13", "fromSlot": "out", "toNode": "pc-symbols-gate", "toSlot": "in", "type": "SIGNAL" }
+    { "id": "lk-pc-4", "fromNode": "pc-decisions-inv13", "fromSlot": "out", "toNode": "pc-symbols-gate", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-5", "fromNode": "pc-commit-hygiene", "fromSlot": "out", "toNode": "pc-py-complexipy", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-6", "fromNode": "pc-py-complexipy", "fromSlot": "out", "toNode": "pc-py-types", "toSlot": "in", "type": "SIGNAL" }
   ]
 }

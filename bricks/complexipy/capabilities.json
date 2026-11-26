@@ -1,0 +1,33 @@
+{
+  "说明": "工具能力清单：Complexipy Python 认知复杂度（Campbell 2018）高速检测。",
+  "tool": "complexipy",
+  "registryId": "complexipy@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "overThresholdCount",
+      "from": "overThresholdCount",
+      "kind": "count",
+      "assertableAs": ["zero", "max"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码；Python 用户项目可在自身契约与默认治理流中对超 25 函数数断言为 0",
+      "note": "认知复杂度超过阈值上限的函数数量"
+    },
+    {
+      "id": "maxComplexity",
+      "from": "maxComplexity",
+      "kind": "count",
+      "assertableAs": ["max"],
+      "wired": false,
+      "reason": "本仓无 Python 业务源码",
+      "note": "全仓单函数最高认知复杂度值"
+    }
+  ],
+  "requiresProject": ["含 .py 源码的 Python 项目"],
+  "blindSpots": ["仅按 Campbell 2018 度量 Python 函数认知复杂度，不覆盖运行时行为与跨文件类型错误"],
+  "disposition": {
+    "state": "advisory",
+    "reason": "本仓无 Python 业务主体；作为 Python 项目一等公民默认治理流节点补齐认知复杂度硬顶（<=25）。"
+  }
+}

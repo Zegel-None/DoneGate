@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from './io.mjs';
 import { validateDecisionFiveSections } from './check-decisions.mjs';
-import { analyzeCodeComplexityAndGolfing, auditRepository4D } from './cognitive-complexity.mjs';
+import { analyzeCodeComplexityAndGolfing, auditRepository4D, auditRepository4DWithStats } from './cognitive-complexity.mjs';
 import { DEFAULT_HYGIENE_BUDGETS, computeRelocatedCodeLines, countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 
 export { DEFAULT_HYGIENE_BUDGETS, computeRelocatedCodeLines, countEffectiveCodeLines };
@@ -22,23 +22,23 @@ const ROOT_CONFIG_FILE_RE = /^[^/]+\.(?:config|rc)\.[a-z0-9]+$/i;
 const MECHANICAL_SHARD_RE = /(?:[-_](?:part|chunk|slice|shard)\d*|[-_][a-z])\.(?:mjs|cjs|js|ts|tsx|jsx|py)$/i;
 
 const TEST_CHEAT_PATTERNS = [
-  { name: '跳过用例 (.skip / xit / xdescribe)', re: /\b(?:it|test|describe)\.skip\s*\(|\b(?:xit|xtest|xdescribe)\s*\(/ },
+  { name: '跳过用例 (.skip / xit / xdescribe / pytest.skip)', re: /\b(?:it|test|describe)\.skip\s*\(|\b(?:xit|xtest|xdescribe)\s*\(|@pytest\.mark\.skip\b|\bpytest\.skip\s*\(/ },
   { name: '独占用例 (.only 漏删导致其余测试全被跳过)', re: /\b(?:it|test|describe)\.only\s*\(/ },
   { name: '空壳待办用例 (test.todo / it.todo)', re: /\b(?:it|test)\.todo\s*\(/ },
-  { name: '恒真假断言 (expect(true).toBe(true) / assert(true))', re: /expect\(\s*true\s*\)\.toBe\(\s*true\s*\)|expect\(\s*1\s*\)\.toBe\(\s*1\s*\)|\bassert(?:\.ok)?\(\s*true\s*\)/ },
+  { name: '恒真假断言 (expect(true).toBe(true) / assert(true) / assert True)', re: /expect\(\s*true\s*\)\.toBe\(\s*true\s*\)|expect\(\s*1\s*\)\.toBe\(\s*1\s*\)|\bassert(?:\.ok)?\(\s*true\s*\)|^\s*assert\s+True\s*(?:#.*)?$/ },
   { name: '静态检查强行豁免 (eslint-disable / biome-ignore / @ts-ignore / # type: ignore)', re: /eslint-disable|biome-ignore|@ts-ignore|@ts-nocheck|#\s*type:\s*ignore|#\s*noqa\b/ }
 ];
 
 const CODE_SLOP_PATTERNS = [
   { name: '未完成占位符 (TODO / FIXME / XXX / HACK)', re: /(?:\/\/|#|\/\*)\s*(?:TODO|FIXME|XXX|HACK)\b/ },
-  { name: '空壳未实现异常 (Not implemented)', re: /throw\s+new\s+Error\(\s*['"`](?:not implemented|todo|unimplemented)/i },
-  { name: '残留调试断点 (debugger)', re: /^\s*debugger\s*;?\s*$/ },
-  { name: '空 catch 静默吞异常', re: /catch\s*(?:\([^)]*\))?\s*\{\s*\}/ },
+  { name: '空壳未实现异常 (Not implemented / NotImplementedError)', re: /throw\s+new\s+Error\(\s*['"`](?:not implemented|todo|unimplemented)|\braise\s+NotImplementedError\b/i },
+  { name: '残留调试断点 (debugger / breakpoint() / pdb)', re: /^\s*(?:debugger\s*;?|breakpoint\s*\(\s*\)|(?:import\s+pdb;\s*)?pdb\.set_trace\s*\(\s*\))\s*$/ },
+  { name: '空 catch 或裸 except pass 静默吞异常', re: /catch\s*(?:\([^)]*\))?\s*\{\s*\}|^\s*except(?:\s+Exception)?\s*:\s*pass\s*(?:#.*)?$/ },
   { name: 'AI 懒惰省略注释疑似静默删代码 (existing code / rest unchanged / 其余代码不变)', re: /(?:\/\/|#|\/\*)\s*(?:\.\.\.|…)?\s*(?:(?:existing|unchanged|remaining|previous|rest\s+of(?:\s+the)?)\s+(?:code|implementation|logic|methods?|functions?|file|body|lines?)|omitted\s+for\s+brevity|(?:其余|剩余|原有|上述|中间)(?:代码|逻辑|实现|内容|部分)\s*(?:保持不变|不变|省略|同上|略))/i }
 ];
 
 const CONFLICT_MARKER_RE = /^(?:<{7}\s|={7}\s*$|>{7}\s)/;
-const ASSERT_TOKEN_RE = /\b(?:expect\s*\(|assert(?:\.[a-zA-Z]+)?\s*\(|c\.check\s*\()/;
+const ASSERT_TOKEN_RE = /\b(?:expect\s*\(|assert(?:\.[a-zA-Z]+)?\s*\(|assert\s+\S|c\.check\s*\()/;
 const ALLOW_MARKER_RE = /(?:\/\/|#)\s*dg-allow\s*:(.*)$/;
 
 function loadActiveContractScopes(projectRoot) {
@@ -640,21 +640,74 @@ function runRedSelfTest() {
   return bad === 0 ? 0 : 1;
 }
 
+function hyFindComplexipyBin(root) {
+  const isWin = process.platform === 'win32';
+  const venvBins = isWin
+    ? [join(root, '.venv', 'Scripts', 'complexipy.exe'), join(root, 'venv', 'Scripts', 'complexipy.exe')]
+    : [join(root, '.venv', 'bin', 'complexipy'), join(root, 'venv', 'bin', 'complexipy')];
+  const hit = venvBins.find((p) => existsSync(p));
+  if (hit) return hit;
+  const w = spawnSync(isWin ? 'where.exe' : 'which', ['complexipy'], { encoding: 'utf8', windowsHide: true });
+  return w.status === 0 && (w.stdout || '').trim() ? w.stdout.trim().split(/\r?\n/)[0].trim() : null;
+}
+
+function hyTryRunPythonComplexipyAudit(root, budgets) {
+  const binCmd = hyFindComplexipyBin(root);
+  if (!binCmd) return { ran: false, offenders: [] };
+  const r = spawnSync(binCmd, ['.', '--max-complexity-allowed', String(budgets.maxCognitiveComplexity), '--output-format', 'json'], {
+    cwd: root, encoding: 'utf8', timeout: 60000, windowsHide: true
+  });
+  if (r.error || (r.status !== 0 && r.status !== 1)) return { ran: false, offenders: [] };
+  let parsed = null;
+  try { parsed = JSON.parse(r.stdout || '[]'); } catch (err) { void err; }
+  const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.functions) ? parsed.functions : []);
+  const offenders = rawList.filter((fn) => Number(fn?.complexity ?? fn?.cognitive_complexity ?? 0) > budgets.maxCognitiveComplexity);
+  return { ran: true, exitCode: r.status === 1 || offenders.length > 0 ? 1 : 0, offenders };
+}
+
 function runRepoFourDimAuditCli(root, argv) {
   const budgets = loadHygieneBudgets(root);
-  const report = auditRepository4D(root, budgets);
+  const stats = auditRepository4DWithStats(root, budgets);
+  const report = stats.items;
   const hardFiles = report.filter((r) => r.overMaxFns.length > 0 || r.golfingIssues.length > 0);
+  if (stats.scannedJsFiles === 0 && stats.detectedPyFiles > 0) {
+    const pyRes = hyTryRunPythonComplexipyAudit(root, budgets);
+    if (argv.includes('--json')) {
+      console.log(JSON.stringify({
+        status: pyRes.ran ? (pyRes.exitCode === 0 ? 'PASS_PYTHON_COMPLEXIPY' : 'FAIL_PYTHON_COMPLEXIPY') : 'SKIPPED_PYTHON_UNSCANNED',
+        budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
+        scannedJsFiles: 0, detectedPyFiles: stats.detectedPyFiles, pyOffenders: pyRes.offenders, hardViolationFiles: pyRes.offenders.length, items: []
+      }, null, 2));
+      return pyRes.ran ? pyRes.exitCode : 3;
+    }
+    if (!pyRes.ran) {
+      console.log(`RESULT: SKIPPED 未扫描到 JS/TS 文件（scanned=0），但检测到 ${stats.detectedPyFiles} 个 .py 文件且本机/项目 .venv 未装 complexipy——拒绝假 PASS（请安装 uv tool install complexipy 或通过 Python 治理流审计）`);
+      return 3;
+    }
+    console.log(pyRes.exitCode === 0
+      ? `RESULT: PASS 已通过 complexipy 审计 ${stats.detectedPyFiles} 个 Python 文件，全部函数认知复杂度 ≤${budgets.maxCognitiveComplexity}`
+      : `RESULT: FAIL complexipy 检出 ${pyRes.offenders.length} 个 Python 函数认知复杂度超过硬顶 ${budgets.maxCognitiveComplexity}`);
+    return pyRes.exitCode;
+  }
   if (argv.includes('--json')) {
-    console.log(JSON.stringify({ budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity }, hardViolationFiles: hardFiles.length, items: report }, null, 2));
+    console.log(JSON.stringify({
+      status: stats.scannedJsFiles === 0 ? 'SKIPPED_NO_FILES' : (hardFiles.length > 0 ? 'FAIL' : 'PASS'),
+      budgets: { warnCog: budgets.warnCognitiveComplexity, maxCog: budgets.maxCognitiveComplexity },
+      scannedJsFiles: stats.scannedJsFiles, detectedPyFiles: stats.detectedPyFiles, hardViolationFiles: hardFiles.length, items: report
+    }, null, 2));
     return hardFiles.length > 0 ? 1 : 0;
   }
-  console.log(`=== DoneGate 四维标准全仓扫描（认知复杂度预警 >${budgets.warnCognitiveComplexity} / 硬顶 >${budgets.maxCognitiveComplexity} + 反压行 C4g） ===`);
+  console.log(`=== DoneGate 四维标准全仓扫描（已扫 JS/TS ${stats.scannedJsFiles} 个文件，认知复杂度预警 >${budgets.warnCognitiveComplexity} / 硬顶 >${budgets.maxCognitiveComplexity} + 反压行 C4g） ===`);
   for (const r of report) {
     for (const f of r.overMaxFns) console.log(`  ✗ [超硬顶] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity} (嵌套=${f.maxNesting})`);
     for (const g of r.golfingIssues) console.log(`  ✗ [C4g压行] ${r.file}:L${g.line} (${g.kind} count=${g.count}) → ${g.preview}`);
     if (argv.includes('--verbose')) {
       for (const f of r.warnFns) console.log(`  ⚠ [软预警] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity}`);
     }
+  }
+  if (stats.scannedJsFiles === 0) {
+    console.log('RESULT: SKIPPED 仓库内未检出可扫描源码文件（0 files scanned）');
+    return 0;
   }
   console.log(hardFiles.length === 0
     ? `RESULT: PASS 全仓源码 100% 符合四维认知复杂度（≤${budgets.maxCognitiveComplexity}）与反压行标准（软预警文件 ${report.length} 个）`

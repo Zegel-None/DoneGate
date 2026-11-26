@@ -116,9 +116,20 @@ function isoEnvApplyExtraOverrides(env, extra) {
   }
 }
 
+function isoEnvApplyPassthrough(env, src, allowlist) {
+  if (!Array.isArray(allowlist)) return;
+  for (const rawKey of allowlist) {
+    const k = String(rawKey || '').trim();
+    if (k && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && src[k] !== undefined) {
+      env[k] = String(src[k]);
+    }
+  }
+}
+
 export function buildSanitizedEnv(baseEnv = process.env, extra = {}, opts = {}) {
   const src = baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env;
   const env = isoEnvCopyWhitelisted(src);
+  isoEnvApplyPassthrough(env, src, opts?.envPassthrough);
   const hasExplicitTmpOverride = Boolean(extra && typeof extra === 'object' && extra.TMPDIR !== undefined);
   if (!hasExplicitTmpOverride) isoEnvEnsureExecTmpDir(env, opts);
   isoEnvApplyExtraOverrides(env, extra);

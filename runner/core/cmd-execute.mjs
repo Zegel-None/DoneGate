@@ -10,6 +10,19 @@ import { buildSanitizedEnv, checkCommandBans, runIsolationProbes } from './isola
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 import { buildGate0ActionHint, buildGate2ActionHint, collectMaterialList, collectOrderedIncompleteContractGaps, gitAnchorInfo } from './cmd-lifecycle.mjs';
 
+function execRunPreFlightPlug(projectRoot, contract, sanitizedEnv) {
+  const plugCmd = typeof contract?.execution?.preFlightPlug === 'string' ? contract.execution.preFlightPlug.trim() : '';
+  if (!plugCmd) return { ok: true, ran: false };
+  const bans = checkCommandBans(plugCmd);
+  if (bans.length > 0) return { ok: false, exitCode: 2, code: 'PREFLIGHT_PLUG_BANNED', stderr: `preFlightPlug 触发禁令：${bans.join('；')}` };
+  const r = spawnSync(plugCmd, { cwd: projectRoot, shell: true, env: sanitizedEnv, encoding: 'utf8', timeout: 60000, windowsHide: true });
+  if (r.error || r.status !== 0) {
+    const detail = ((r.stderr || '') + '\n' + (r.stdout || '')).trim().slice(0, 600) || (r.error && r.error.message) || `exit=${r.status}`;
+    return { ok: false, exitCode: 3, code: 'PREFLIGHT_PLUG_FAILED', stderr: `前置护栏 preFlightPlug 未通过（退 3）：${plugCmd}\n${detail}` };
+  }
+  return { ok: true, ran: true, command: plugCmd };
+}
+
 export function cmdCheck(projectRoot, opts) {
   const id = opts.id;
   if (!id) return { exitCode: 3, stderr: '缺少契约标识' };
@@ -18,9 +31,10 @@ export function cmdCheck(projectRoot, opts) {
   if (!res.ok) return { exitCode: res.error === 'parse' ? 2 : 3, stderr: '读取契约失败：' + cPath };
   const contract = res.value;
 
+  const isExploreTrack = contract.track === 'explore';
   const anchor = gitAnchorInfo(projectRoot);
   const isDirtyRun = Boolean(anchor.isGit && (anchor.isDirty || !anchor.head));
-  if (!opts.allowDirty && isDirtyRun) {
+  if (!isExploreTrack && !opts.allowDirty && isDirtyRun) {
     return {
       exitCode: 3,
       stderr: '拒绝执行：工作区存在未提交改动或尚无提交（§8.2.2 脏树退 3，开发期调试可传 --allow-dirty）\n\n' +
@@ -32,7 +46,7 @@ export function cmdCheck(projectRoot, opts) {
         })
     };
   }
-  const debugDirtyRun = Boolean(opts.allowDirty && isDirtyRun);
+  const debugDirtyRun = Boolean((opts.allowDirty || isExploreTrack) && isDirtyRun);
 
   // §四：执行隔离声明与门 4 双探针验证（虚假隔离声称退 2）
   const isoRes = runIsolationProbes(projectRoot);
@@ -72,8 +86,8 @@ export function cmdCheck(projectRoot, opts) {
     }
   }
 
-  // 门 0 → 门 1 → 门 2 → §8.2.2 冻结绑定串联校验（可通过 --skip-gates 显式跳过）
-  if (!opts.skipGates) {
+  // 门 0 → 门 1 → 门 2 → §8.2.2 冻结绑定串联校验（探索态 track=explore 或 --skip-gates 免签字试跑，永不计入交付算数）
+  if (!opts.skipGates && !isExploreTrack) {
     const gapsList = collectOrderedIncompleteContractGaps(projectRoot);
     const g0 = evaluateGate0(projectRoot, id, gapsList);
     if (!g0.ok) {
@@ -128,11 +142,14 @@ export function cmdCheck(projectRoot, opts) {
 
   const thresholds = loadThresholds(projectRoot);
   const maxOutputChars = thresholds.maxOutputChars || 262144;
-  const sanitizedEnv = buildSanitizedEnv();
+  const sanitizedEnv = buildSanitizedEnv(process.env, {}, { cwd: projectRoot, envPassthrough: contract.execution?.envPassthrough });
+  const plugRes = execRunPreFlightPlug(projectRoot, contract, sanitizedEnv);
+  if (!plugRes.ok) return { exitCode: plugRes.exitCode, code: plugRes.code, stderr: plugRes.stderr };
   const materials = collectMaterialList(projectRoot, contract);
   const lines = [
     `隔离声明：${isoRes.isolationNotice}`,
-    ...(debugDirtyRun ? ['⚠ 调试运行（--allow-dirty）：工作区未干净提交，本次证据禁进门 4/复核包/通过数'] : [])
+    ...(isExploreTrack ? ['🔬 探索态试跑（track=explore · 允许高频演化 Schema/快照，永不计入交付通过；收敛后请执行 contract promote）'] : []),
+    ...(debugDirtyRun && !isExploreTrack ? ['⚠ 调试运行（--allow-dirty）：工作区未干净提交，本次证据禁进门 4/复核包/通过数'] : [])
   ];
   let bad = 0, unknown = 0;
   const compactErrors = [];
@@ -151,7 +168,8 @@ export function cmdCheck(projectRoot, opts) {
       worktreeHash: anchor.worktreeHash,
       isDirty: anchor.isDirty,
       debugDirtyRun,
-      gate4Eligible: !isDirtyRun,
+      track: isExploreTrack ? 'explore' : 'delivery',
+      gate4Eligible: !isDirtyRun && !isExploreTrack,
       isolation: isoRes.cfg.isolation,
       isolationNotice: isoRes.isolationNotice,
       startedAt: new Date().toISOString(),
@@ -161,9 +179,12 @@ export function cmdCheck(projectRoot, opts) {
     writeFileSync(join(evDir, 'start.json'), startRaw);
 
     if (o.kind === 'human') {
+      const evidenceFiles = opts.humanEvidence ? String(opts.humanEvidence).split(',').map((s) => s.trim()).filter(Boolean) : [];
       const reportObj = {
         exitCode: null,
         standard: o.expect?.standard || '',
+        operatorVisualCheck: Boolean(contract.execution?.operatorVisualCheck),
+        evidenceFiles,
         durationMs: 0,
         timedOut: false,
         isolationNotice: isoRes.isolationNotice,
@@ -197,7 +218,8 @@ export function cmdCheck(projectRoot, opts) {
       timedOut,
       isDirty: anchor.isDirty,
       debugDirtyRun,
-      gate4Eligible: !isDirtyRun,
+      track: isExploreTrack ? 'explore' : 'delivery',
+      gate4Eligible: !isDirtyRun && !isExploreTrack,
       isolationNotice: isoRes.isolationNotice,
       hashStart: sha256(startRaw)
     };

@@ -1,4 +1,5 @@
 // 项目看板多组件拓扑级过夜挂机总控编排器（Campaign Autopilot）：按组件依赖顺序自动选配/派生、分组件校验写入范围、共享 Worktree 汇总合回
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -98,8 +99,45 @@ export function stopCampaignAutopilot(projectRoot, { campaignId = null, by = '�
   return { ok: true, noop: false, campaign: stopped };
 }
 
+function campRunNodePreFlightPlug(cwd, nodeExec) {
+  if (!nodeExec || !nodeExec.preFlightPlug) return { ok: true };
+  const r = spawnSync(nodeExec.preFlightPlug, { cwd, shell: true, encoding: 'utf8', timeout: 60000, windowsHide: true });
+  if (r.error || r.status !== 0) {
+    const msg = ((r.stderr || '') + '\n' + (r.stdout || '')).trim().slice(0, 400) || (r.error && r.error.message) || `exit=${r.status}`;
+    return { ok: false, exitCode: 3, code: 'PREFLIGHT_PLUG_FAILED', reason: `前置护栏未通过 (${nodeExec.preFlightPlug})：${msg}` };
+  }
+  return { ok: true };
+}
+
 async function runSingleCampaignComponent(ctx, comp) {
-  const { root, hub, campaignId, workCwd, existing, bindingsByNode, spec, hooks } = ctx;
+  const { root, hub, campaignId, workCwd, existing, bindingsByNode, spec, hooks, executionPlan, approvedOperatorNodes } = ctx;
+  const nodeExec = executionPlan?.nodeExecutionModes?.[comp.id] || { sandbox: 'worktree', resourceLocks: [], preFlightPlug: null, requiresOperatorGate: false };
+  const effectiveCwd = nodeExec.sandbox === 'host-local' ? root : workCwd;
+  if (nodeExec.requiresOperatorGate && !approvedOperatorNodes.has(comp.id)) {
+    return {
+      binding: { mode: 'operator-gate', baseMacroName: '人工目视/真机确认闸门' },
+      subOut: {
+        ok: true,
+        suspended: true,
+        runId: `${campaignId}-${comp.id}-operator`,
+        pendingHumanGate: {
+          kind: 'operator-visual-check',
+          nodeId: comp.id,
+          title: comp.title || comp.id,
+          sandbox: nodeExec.sandbox,
+          resourceLocks: nodeExec.resourceLocks,
+          reason: `组件「${comp.title || comp.id}」声明了真机目视确认或人工判据（resourceLocks=${nodeExec.resourceLocks.join(',') || 'none'}），过夜阶段自动挂起等待人工实机确认后放行`
+        }
+      }
+    };
+  }
+  const plugChk = campRunNodePreFlightPlug(effectiveCwd, nodeExec);
+  if (!plugChk.ok) {
+    return {
+      binding: { mode: 'host-serial', baseMacroName: '前置护栏检查' },
+      subOut: { ok: false, exitCode: plugChk.exitCode, code: plugChk.code, reason: plugChk.reason, runId: `${campaignId}-${comp.id}-plug` }
+    };
+  }
   let binding = bindingsByNode[comp.id];
   if (!binding || !binding.pack || !Array.isArray(binding.pack.nodes)) {
     const assigned = assignComponentWorkflow(root, comp, { actorRole: 'super-agent' });
@@ -108,15 +146,15 @@ async function runSingleCampaignComponent(ctx, comp) {
     bindingsByNode[comp.id] = binding;
     hub.emit({ type: 'jit_workflow_updated', nodeId: comp.id, binding });
   }
-  hub.emit({ type: 'node_enter', nodeId: comp.id, title: comp.title, campaignId });
-  const baselineFiles = collectGitDiffStats(workCwd).files;
-  const isResumingHere = existing?.suspendedComponentId === comp.id && existing?.suspendedSubRunId;
+  hub.emit({ type: 'node_enter', nodeId: comp.id, title: comp.title, campaignId, sandbox: nodeExec.sandbox });
+  const baselineFiles = collectGitDiffStats(effectiveCwd).files;
+  const isResumingHere = existing?.suspendedComponentId === comp.id && existing?.suspendedSubRunId && existing?.pendingHumanGate?.kind !== 'operator-visual-check';
   const subRunId = isResumingHere ? existing.suspendedSubRunId : `${campaignId}-${comp.id}`;
   const ticket = {
     ticketId: subRunId,
     targetUri: `dg://sandbox/card/${encodeURIComponent(comp.id)}`,
     headline: `组件「${comp.title}」(${binding.baseMacroName || binding.mode})`,
-    worktreePath: workCwd,
+    worktreePath: effectiveCwd,
     mandate: { allowedWriteScopes: Array.isArray(comp.scopePaths) ? comp.scopePaths : [] }
   };
   const subHookMap = (hooks.componentHooks && hooks.componentHooks[comp.id]) || hooks;
@@ -128,7 +166,7 @@ async function runSingleCampaignComponent(ctx, comp) {
     baselineTouchedFiles: baselineFiles,
     runAgentStep: subHookMap.runAgentStep
   });
-  return { binding, subOut };
+  return { binding, subOut, sandboxUsed: nodeExec.sandbox, effectiveCwd };
 }
 
 export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, hooks = {}) {
@@ -151,10 +189,12 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
     hasSharedExternalState: spec.hasSharedExternalState
   });
 
-  const wtInfo = spec.useWorktreeSandbox !== false ? prepareAutopilotWorktree(root, campaignId) : { ok: false };
+  const allHostLocal = ordered.every((c) => executionPlan.nodeExecutionModes?.[c.id]?.sandbox === 'host-local');
+  const wtInfo = (spec.useWorktreeSandbox !== false && !allHostLocal) ? prepareAutopilotWorktree(root, campaignId) : { ok: false };
   const workCwd = wtInfo.ok ? wtInfo.worktreePath : root;
   const bindingsByNode = { ...(readSavedWorkbenchState(root).componentWorkflows || {}), ...(spec.componentWorkflows || {}) };
   const completedComponentIds = new Set(existing?.completedComponentIds || []);
+  const approvedOperatorNodes = new Set([...(existing?.approvedOperatorNodes || []), ...(spec.approvedOperatorNodes || [])]);
   const componentReports = Array.isArray(existing?.componentReports) ? [...existing.componentReports] : [];
   let totalCacheHits = Number(existing?.totalCacheHits || 0);
   let totalPassedGates = Number(existing?.totalPassedGates || 0);
@@ -163,22 +203,22 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
 
   for (const comp of ordered) {
     if (completedComponentIds.has(comp.id)) continue;
-    const step = await runSingleCampaignComponent({ root, hub, campaignId, workCwd, existing, bindingsByNode, spec, hooks }, comp);
+    const step = await runSingleCampaignComponent({ root, hub, campaignId, workCwd, existing, bindingsByNode, spec, hooks, executionPlan, approvedOperatorNodes }, comp);
     if (step.fatalAssign) return step.fatalAssign;
-    const { binding, subOut } = step;
+    const { binding, subOut, sandboxUsed } = step;
     totalCacheHits += Number(subOut.cacheHits || 0);
 
     if (subOut.suspended && subOut.pendingHumanGate) {
       const campState = saveCampaignState(root, {
-        campaignId, state: 'SUSPENDED_HUMAN_GATE', nodes: rawNodes, links: rawLinks, orderedIds,
-        completedComponentIds: [...completedComponentIds], componentReports,
+        campaignId, state: 'SUSPENDED_HUMAN_GATE', nodes: rawNodes, links: rawLinks, orderedIds, executionPlan,
+        completedComponentIds: [...completedComponentIds], approvedOperatorNodes: [...approvedOperatorNodes], componentReports,
         suspendedComponentId: comp.id, suspendedComponentTitle: comp.title,
         suspendedSubRunId: subOut.runId, pendingHumanGate: subOut.pendingHumanGate,
         sandboxWorktree: finalizeAutopilotWorktree(root, wtInfo, 'SUSPENDED', campaignId),
         totalCacheHits, totalPassedGates, totalGates
       });
       return {
-        ok: true, suspended: true, exitCode: 0, campaignId, state: campState.state,
+        ok: true, suspended: true, exitCode: 0, campaignId, state: campState.state, executionPlan,
         suspendedComponentId: comp.id, suspendedSubRunId: subOut.runId,
         pendingHumanGate: subOut.pendingHumanGate, sandboxWorktree: campState.sandboxWorktree, campaign: campState
       };
@@ -191,7 +231,7 @@ export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, ho
     });
     componentReports.push({
       nodeId: comp.id, title: comp.title, workflowName: binding.baseMacroName || binding.pack?.name || binding.mode,
-      mode: binding.mode, runId: subOut.runId, ok: Boolean(subOut.ok), exitCode: subOut.exitCode,
+      mode: binding.mode, sandboxUsed: sandboxUsed || 'worktree', runId: subOut.runId, ok: Boolean(subOut.ok), exitCode: subOut.exitCode,
       code: subOut.code || null, reason: subOut.reason || subOut.breaker?.reason || null
     });
 
@@ -248,16 +288,24 @@ export async function approveAndResumeCampaignAutopilot(projectRoot, opts = {}, 
   if (!camp || camp.state !== 'SUSPENDED_HUMAN_GATE') {
     return { ok: false, error: '未找到处于人工闸门挂起状态的项目级拓扑挂机单' };
   }
-  const app = approveAutopilotHumanGate(root, {
-    runId: camp.suspendedSubRunId,
-    nodeId: opts.nodeId || camp.pendingHumanGate?.nodeId || null,
-    by: opts.by || '业主',
-    note: opts.note || '项目拓扑挂机早间人工放行'
-  });
-  if (!app.ok) return app;
+  const approvedOperatorNodes = [...new Set(Array.isArray(camp.approvedOperatorNodes) ? camp.approvedOperatorNodes : [])];
+  if (camp.pendingHumanGate?.kind === 'operator-visual-check') {
+    if (camp.suspendedComponentId && !approvedOperatorNodes.includes(camp.suspendedComponentId)) {
+      approvedOperatorNodes.push(camp.suspendedComponentId);
+    }
+  } else {
+    const app = approveAutopilotHumanGate(root, {
+      runId: camp.suspendedSubRunId,
+      nodeId: opts.nodeId || camp.pendingHumanGate?.nodeId || null,
+      by: opts.by || '业主',
+      note: opts.note || '项目拓扑挂机早间人工放行'
+    });
+    if (!app.ok) return app;
+  }
   return executeProjectCampaignAutopilot(root, {
     campaignId: camp.campaignId,
     resumeCampaignId: camp.campaignId,
+    approvedOperatorNodes,
     useWorktreeSandbox: Boolean(camp.sandboxWorktree?.active),
     useFingerprintCache: opts.useFingerprintCache !== false,
     enforceDeps: opts.enforceDeps

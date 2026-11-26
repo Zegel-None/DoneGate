@@ -356,6 +356,58 @@
       "blindSpots": [
         "仅验证契约或测试声明的数学/状态不变量，无法自动推导未声明的业务语义或视觉体验"
       ]
+    },
+    {
+      "id": "complexipy@stage4",
+      "tool": "complexipy",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-py-cognitive-complexity",
+      "entry": "skill/adapters/complexipy-check.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.4.0 <5.0.0",
+      "blindSpots": [
+        "仅按 Campbell 2018 度量 Python 函数认知复杂度，不覆盖运行时逻辑与跨文件类型错误"
+      ]
+    },
+    {
+      "id": "pytest@stage4",
+      "tool": "pytest",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-py-tests-pass",
+      "entry": "skill/adapters/pytest-run.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=7.0.0 <12.0.0",
+      "blindSpots": [
+        "测试覆盖强度取决于用例与断言质量，需配合有牙实验或属性测试防假绿"
+      ]
+    },
+    {
+      "id": "ty@stage4",
+      "tool": "ty",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-py-ty-types",
+      "entry": "skill/adapters/ty-check.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.0.1 <5.0.0",
+      "blindSpots": [
+        "静态类型检查不覆盖动态 getattr 与 Windows COM 晚期绑定行为"
+      ]
+    },
+    {
+      "id": "import-linter@stage4",
+      "tool": "import-linter",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-py-import-boundaries",
+      "entry": "skill/adapters/import-linter.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=2.0.0 <5.0.0",
+      "blindSpots": [
+        "仅静态校验 Python 导入图与声明的分层契约，不覆盖运行时动态 importlib 调用"
+      ]
     }
   ]
 }

@@ -182,7 +182,7 @@ export function evaluateGate2(projectRoot, contract, opts = {}) {
         if (parts.length < 3) continue;
         const added = Number(parts[0]);
         const filePath = parts[2].trim();
-        if (Number.isFinite(added) && /\.(ts|tsx|js|mjs|cjs|jsx)$/i.test(filePath)) {
+        if (Number.isFinite(added) && /\.(ts|tsx|js|mjs|cjs|jsx|py|go|rs)$/i.test(filePath)) {
           codeAdded += added;
         }
       }

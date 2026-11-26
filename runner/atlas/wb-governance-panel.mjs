@@ -29,6 +29,8 @@ const WB_GOVERNANCE_PANEL_SCRIPT = String.raw`
 const dgGovUiState = {
   open: false,
   summary: (typeof ATLAS !== 'undefined' && ATLAS && ATLAS.workbench && ATLAS.workbench.governance) ? ATLAS.workbench.governance : null,
+  trustSuggestion: null,
+  templates: [],
   expandedNodeKey: '',
   busy: false
 };
@@ -61,17 +63,28 @@ function dgGovSyncFab() {
 async function dgGovRefreshSummary() {
   if (typeof fetchDoneGateApi !== 'function') return dgGovUiState.summary;
   try {
-    const r = await fetchDoneGateApi('/donegate/api/governance/summary', '/api/governance/summary');
-    if (r && r.ok) {
-      dgGovUiState.summary = await r.json();
-      dgGovSyncFab();
-      if (dgGovUiState.open) dgGovRenderModal();
+    const [rSum, rTrust, rTpl] = await Promise.all([
+      fetchDoneGateApi('/donegate/api/governance/summary'),
+      fetchDoneGateApi('/donegate/api/governance/trust-suggestions'),
+      fetchDoneGateApi('/donegate/api/governance/templates')
+    ]);
+    if (rSum && rSum.ok) dgGovUiState.summary = await rSum.json();
+    if (rTrust && rTrust.ok) {
+      const tj = await rTrust.json();
+      dgGovUiState.trustSuggestion = (tj && tj.suggestion) ? tj.suggestion : null;
     }
+    if (rTpl && rTpl.ok) {
+      const tpj = await rTpl.json();
+      dgGovUiState.templates = Array.isArray(tpj && tpj.templates) ? tpj.templates : [];
+    }
+    dgGovSyncFab();
+    if (dgGovUiState.open) dgGovRenderModal();
   } catch (err) {
     void err;
   }
   return dgGovUiState.summary;
 }
+window.dgGovRefreshSummary = dgGovRefreshSummary;
 
 function dgGovRenderNodeInspectorHtml(flow, node) {
   const fields = Array.isArray(node.configSchema) ? node.configSchema : [];
@@ -126,6 +139,24 @@ function dgGovRenderModal() {
       '</div>'
     );
   }
+  if (dgGovUiState.trustSuggestion) {
+    const ts = dgGovUiState.trustSuggestion;
+    banners.push(
+      '<div class="dg-gov-banner-info">' +
+      '<span>🧭 模型信任阶梯建议（' + dgGovEsc(ts.modelId || '当前模型') + '）：' + dgGovEsc(ts.message || '表现稳定，可松绑低风险推荐项') + '</span>' +
+      '<div style="display:flex;gap:6px"><button type="button" class="dg-gov-btn" data-gov-trust-dismiss="' + dgGovEsc(ts.modelId || '') + '">本次暂不</button></div>' +
+      '</div>'
+    );
+  }
+  const tplOpts = (dgGovUiState.templates || []).map((tp) => '<option value="' + dgGovEsc(tp.name) + '">' + dgGovEsc(tp.name) + '</option>').join('');
+  banners.push(
+    '<div class="dg-gov-banner-info">' +
+    '<span>📦 个人跨项目规则模板（已存 ' + (dgGovUiState.templates || []).length + ' 套）</span>' +
+    '<div style="display:flex;gap:6px;align-items:center">' +
+    (tplOpts ? '<select id="dg-gov-tpl-select" style="font-size:11.5px;padding:3px 6px">' + tplOpts + '</select><button type="button" class="dg-gov-btn" data-gov-tpl-apply="1">套用模板</button>' : '') +
+    '<button type="button" class="dg-gov-btn" data-gov-tpl-save="1">存为个人模板</button>' +
+    '</div></div>'
+  );
   const groupsHtml = (s.flows || []).map((flow) => {
     const rows = (flow.nodes || []).map((n) => {
       const nKey = flow.id + ':' + n.id;
@@ -159,7 +190,7 @@ function dgGovRenderModal() {
 
 async function dgGovPostApi(path, bodyObj) {
   if (typeof fetchDoneGateApi !== 'function') return null;
-  const r = await fetchDoneGateApi('/donegate/api' + path, '/api' + path, {
+  const r = await fetchDoneGateApi('/donegate/api' + path, undefined, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyObj)
@@ -217,6 +248,23 @@ if (typeof document !== 'undefined') {
     const cfm = t.closest('[data-gov-confirm-prop]');
     if (cfm) {
       dgGovPostApi('/governance/confirm', { proposalId: cfm.getAttribute('data-gov-confirm-prop'), confirmedByHuman: true });
+      return;
+    }
+    const td = t.closest('[data-gov-trust-dismiss]');
+    if (td) {
+      dgGovUiState.trustSuggestion = null;
+      dgGovRenderModal();
+      dgGovPostApi('/governance/trust-dismiss', { modelId: td.getAttribute('data-gov-trust-dismiss') || 'default' });
+      return;
+    }
+    if (t.closest('[data-gov-tpl-save]')) {
+      const name = (typeof window.prompt === 'function' ? window.prompt('输入个人规则模板名称：', 'my-default') : 'my-default');
+      if (name && name.trim()) dgGovPostApi('/governance/templates/save', { name: name.trim(), confirmedByHuman: true }).then(() => dgGovRefreshSummary());
+      return;
+    }
+    if (t.closest('[data-gov-tpl-apply]')) {
+      const sel = document.getElementById('dg-gov-tpl-select');
+      if (sel && sel.value) dgGovPostApi('/governance/templates/apply', { name: sel.value, confirmedByHuman: true }).then(() => dgGovRefreshSummary());
       return;
     }
     const sv = t.closest('[data-gov-save-cfg]');

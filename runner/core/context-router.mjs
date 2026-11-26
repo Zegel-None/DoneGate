@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
 import { buildNodeInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
+import { extractPythonImportTargets } from './python-imports.mjs';
 import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs';
 import { DEFAULT_SUBAGENT_BUDGET } from './project-loader.mjs';
 import { collectCodeFilesForCoverage } from './graph-edges.mjs';
@@ -161,6 +162,12 @@ function ctxRtrScanScopedImports(projectRoot, allScopedFiles, ownersOf, edgeCtx)
     if (srcOwners.length === 0) continue;
     const body = readMaybe(join(projectRoot, cf));
     if (body === null) continue;
+    if (cf.endsWith('.py')) {
+      for (const hit of extractPythonImportTargets(cf, body, allScopedFiles)) {
+        ctxRtrRecordCrossNodeEdge(cf, hit, srcOwners, ownersOf(hit), edgeCtx);
+      }
+      continue;
+    }
     const masked = maskCommentsAndStrings(body, extname(cf).toLowerCase());
     for (const m of body.matchAll(CTX_RTR_IMPORT_RE)) {
       if (masked[m.index] === ' ') continue;

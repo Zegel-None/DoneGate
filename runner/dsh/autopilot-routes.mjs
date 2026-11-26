@@ -52,6 +52,7 @@ export async function handleAutopilotSubRoute(req, res, cleanPath, root, readJso
       nodes: Array.isArray(body.nodes) ? body.nodes : null,
       links: Array.isArray(body.links) ? body.links : [],
       componentWorkflows: body.componentWorkflows || null,
+      hasSharedExternalState: body.hasSharedExternalState === true,
       useWorktreeSandbox: body.useWorktreeSandbox !== false,
       useFingerprintCache: body.useFingerprintCache !== false,
       enforceDeps: body.enforceDeps

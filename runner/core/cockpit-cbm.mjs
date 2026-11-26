@@ -169,7 +169,7 @@ export function queryCbmFileGraph(projectRoot, relFile) {
   const norm = String(relFile || '').replace(/\\/g, '/');
   if (!h || !norm) return null;
   const symRows = h.db.prepare(
-    "SELECT name, label, start_line, end_line, properties FROM nodes WHERE file_path = ? AND label IN ('Function', 'Variable') ORDER BY start_line ASC, id ASC"
+    "SELECT name, label, start_line, end_line, properties FROM nodes WHERE file_path = ? AND label IN ('Function', 'Method', 'Class', 'Variable') ORDER BY start_line ASC, id ASC"
   ).all(norm);
   const symbols = symRows.map((r) => {
     const p = parseJsonProps(r.properties);
@@ -277,7 +277,7 @@ export function queryCbmContractHubs(projectRoot, ownerMap, groupIds, isZeroCont
   const h = openCbmGraphHandle(projectRoot);
   if (!h) return { uniqueSymbolCount: 0, hubsByContract: {}, hubsByDomain: {} };
   const rows = h.db.prepare(
-    "SELECT t.id, t.file_path AS file, t.name AS symbol, t.properties AS props, s.file_path AS callerFile FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.label = 'Function' AND t.file_path != '' AND s.file_path != '' AND s.file_path != t.file_path"
+    "SELECT t.id, t.file_path AS file, t.name AS symbol, t.properties AS props, s.file_path AS callerFile FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.label IN ('Function', 'Method', 'Class') AND t.file_path != '' AND s.file_path != '' AND s.file_path != t.file_path"
   ).all();
   const byFn = new Map();
   for (const r of rows) {

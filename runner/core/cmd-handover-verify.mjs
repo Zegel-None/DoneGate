@@ -118,6 +118,9 @@ export function cmdVerifyPack(projectRoot, opts = {}) {
   const cRes = readJsonStrict(cPath);
   if (!cRes.ok) return { exitCode: 3, stderr: '契约读不出来：' + cPath };
   const contract = cRes.value;
+  if (contract.track === 'explore') {
+    return { exitCode: 2, code: 'EXPLORE_CONTRACT_NOT_DELIVERABLE', stderr: `拒绝打包：契约 ${id} 处于探索态（track=explore），严禁进入交付复核包；请收敛后执行 contract promote ${id} --by <裁方姓名>` };
+  }
   const obs = Array.isArray(contract.obligations) ? contract.obligations : [];
   if (obs.length === 0) return { exitCode: 3, stderr: '契约无判据，材料不全' };
 

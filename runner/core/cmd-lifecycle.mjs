@@ -97,13 +97,16 @@ export function cmdInit(projectRoot) {
   mkdirSync(join(projectRoot, 'decisions'), { recursive: true });
   mkdirSync(join(projectRoot, '.donegate', 'scratch'), { recursive: true });
 
+  const isPythonRepo = ['pyproject.toml', 'requirements.txt', 'setup.py'].some((f) => existsSync(join(projectRoot, f)));
+  const defaultSmokeCmd = isPythonRepo ? 'pytest --collect-only -q' : 'node -e "process.exit(0)"';
+
   writeFileSync(join(projectRoot, 'INTENT.md'), [
     '# 项目意图', '',
     '## 为什么做', '（请填写一句话说明为什么做）', '',
     '## 服务谁', '（请填写具体的人或角色，不写「用户」）', '',
     '## 什么算成功', '- （请填写至少一条可外部观察的成功判据）', '',
     '## 明确不做什么', '- （请填写至少一条明确不做的边界）', '',
-    '冒烟命令：node -e "process.exit(0)"', ''
+    `冒烟命令：${defaultSmokeCmd}`, ''
   ].join('\n'));
   writeFileSync(join(projectRoot, 'CONSTRAINTS.md'), [
     '# 约束', '',
@@ -133,21 +136,48 @@ export function cmdContractNew(projectRoot, opts) {
     return { exitCode: 1, stderr: '契约已存在，禁止重复创建：' + id };
   }
   mkdirSync(cDir, { recursive: true });
+  const isExplore = Boolean(opts.explore);
+  const ttlDays = Math.max(1, Number(opts.ttlDays) || 7);
+  const expiresAt = new Date(Date.now() + ttlDays * 86400000).toISOString();
+  const goldenSnapshots = opts.golden ? String(opts.golden).split(',').map((s) => s.trim()).filter(Boolean) : [];
   const contractObj = {
     id,
     title: opts.title || id,
-    why: opts.why || '待补充：三行以内说明为什么需要本契约。',
+    why: opts.why || (isExplore ? '探索期试错契约（使用 Golden Master / 快照验证，收敛后 promote 冻结）。' : '待补充：三行以内说明为什么需要本契约。'),
     scope: opts.scope ? opts.scope.split(',').map((s) => s.trim()).filter(Boolean) : [],
     owner: opts.owner || '业主',
     dependsOn: opts.dependsOn ? opts.dependsOn.split(',').map((s) => s.trim()).filter(Boolean) : [],
     provisional: true,
+    ...(isExplore ? { track: 'explore', exploreMeta: { ttlDays, createdAt: new Date().toISOString(), expiresAt, goldenSnapshots } } : {}),
     obligations: []
   };
   writeFileSync(cPath, JSON.stringify(contractObj, null, 2) + '\n');
   const prog = existsSync(join(projectRoot, 'INTENT.md'))
     ? '\n\n' + renderProgressBlock(projectRoot, { focusContractId: id, headline: `✅ [1-2] 已建模块「${contractObj.title}」 · 总进度 {{PCT}}` })
     : '';
-  return { exitCode: 0, stdout: `契约已创建：contracts/${id}/contract.json（provisional=true）${prog}`, path: cPath };
+  const modeTag = isExplore ? `track=explore, TTL=${ttlDays}天，不计交付算数` : 'provisional=true';
+  return { exitCode: 0, stdout: `契约已创建：contracts/${id}/contract.json（${modeTag}）${prog}`, path: cPath };
+}
+
+export function cmdContractPromote(projectRoot, opts) {
+  const id = opts.id;
+  if (!id) return { exitCode: 1, stderr: '缺少契约标识' };
+  const cPath = join(projectRoot, 'contracts', id, 'contract.json');
+  const res = readJsonStrict(cPath);
+  if (!res.ok) return { exitCode: res.error === 'parse' ? 2 : 3, stderr: '读取契约失败：' + cPath };
+  const contract = res.value;
+  if (contract.track !== 'explore') {
+    return { exitCode: 1, stderr: `契约 ${id} 不是探索态（track=${contract.track || 'delivery'}），无需 promote` };
+  }
+  if (!opts.by || !opts.by.trim() || isSelfWriterIdentity(opts.by)) {
+    return { exitCode: 1, stderr: 'G-10 晋升冻结必须由人类裁方签字（--by <裁方姓名>，禁 AI 代签）' };
+  }
+  contract.track = 'delivery';
+  contract.exploreMeta = { ...(contract.exploreMeta || {}), promotedAt: new Date().toISOString(), promotedBy: opts.by.trim() };
+  writeFileSync(cPath, JSON.stringify(contract, null, 2) + '\n');
+  const frz = cmdContractFreeze(projectRoot, { ...opts, forceBatch: true });
+  if (frz.exitCode !== 0) return frz;
+  return { ...frz, stdout: `🚀 探索契约 ${id} 已晋升为正式交付契约（track=delivery）\n${frz.stdout}` };
 }
 
 export function cmdContractFreeze(projectRoot, opts) {

@@ -10,7 +10,7 @@ export { maskCommentsAndStrings };
 
 const CODE_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
 const SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'];
-const FACADE_BASENAMES = new Set(['index.mjs', 'index.js', 'index.ts', 'index.tsx', 'contract.mjs', 'contract.js', 'contract.ts']);
+const FACADE_BASENAMES = new Set(['index.mjs', 'index.js', 'index.ts', 'index.tsx', 'contract.mjs', 'contract.js', 'contract.ts', '__init__.py']);
 function findBalancedEnd(masked, startIdx, openCh, closeCh) {
   let depth = 0;
   for (let i = startIdx; i < masked.length; i++) {
@@ -157,14 +157,41 @@ function extractJsTsExports(source) {
   return entries;
 }
 
+function pyShouldExportName(name, isNested) {
+  if (!name.startsWith('_')) return true;
+  return isNested && name.startsWith('__') && name.endsWith('__');
+}
+
+function pyFindHeaderColon(masked, startPos) {
+  let cursor = startPos;
+  while (cursor < masked.length && /[ \t]/.test(masked[cursor])) cursor++;
+  if (masked[cursor] === '(') {
+    const closeIdx = findBalancedEnd(masked, cursor, '(', ')');
+    if (closeIdx < 0) return -1;
+    cursor = closeIdx + 1;
+  }
+  return masked.indexOf(':', cursor);
+}
+
+function extractPythonExportsBalanced(source, masked) {
+  const entries = [];
+  for (const m of masked.matchAll(/^([ \t]*)(async\s+def|def|class)\s+([A-Za-z_][\w]*)/gm)) {
+    const indent = m[1] || '', isNested = indent.length > 0;
+    if (indent.length > 4 || !pyShouldExportName(m[3], isNested)) continue;
+    const colonIdx = pyFindHeaderColon(masked, m.index + m[0].length);
+    if (colonIdx < 0) continue;
+    const header = compactWs(source.slice(m.index + indent.length, colonIdx));
+    const sym = m[2] === 'class' ? m[3] : (isNested ? `.${m[3]}` : m[3]);
+    entries.push({ symbol: sym, doc: '', signature: `${isNested ? '  ' : ''}${header}: ...` });
+  }
+  return entries;
+}
+
 function extractPyOrGoExports(source, ext) {
   const masked = maskCommentsAndStrings(source, ext);
+  if (ext === '.py') return extractPythonExportsBalanced(source, masked);
   const entries = [];
-  if (ext === '.py') {
-    for (const m of masked.matchAll(/^(async\s+def|def|class)\s+([A-Za-z][\w]*)\s*(\([^)]*\))?\s*(?:->\s*([^:\n]+))?:/gm)) {
-      if (!m[2].startsWith('_')) entries.push({ symbol: m[2], doc: '', signature: `${compactWs(source.slice(m.index, source.indexOf(':', m.index)))}: ...` });
-    }
-  } else if (ext === '.go') {
+  if (ext === '.go') {
     for (const m of masked.matchAll(/^func\s+([A-Z][\w]*)\s*\(/gm)) {
       const openParen = m.index + m[0].length - 1, closeParen = findBalancedEnd(masked, openParen, '(', ')');
       if (closeParen < 0) continue;

@@ -1,12 +1,13 @@
 // 声明式默认治理工作流编译器（Base Preset + Project Overlay + Seam 插槽 + Coeffect 探针 + 提案确认）
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
 import {
   GOVERNANCE_OVERRIDES_REL,
-  gdFormatIntegrityBannerText
+  gdFormatIntegrityBannerText,
+  probeTreeSitterWasmCell
 } from '../core/contract.mjs';
 import { uleResolvePlaywrightModule } from './ui-live-evaluator.mjs';
 import { aosProbeOsSandbox } from './autopilot-os-sandbox.mjs';
@@ -16,7 +17,7 @@ export const GOVERNANCE_DEFAULTS_REL = 'workflows/defaults';
 export const GOVERNANCE_PROPOSALS_REL = '.donegate/workflows/proposals';
 
 export const GOVERNANCE_SEAM_CATALOG = Object.freeze({
-  'gate:lint-edit': ['builtin-lint-edit', 'adp-biome'],
+  'gate:lint-edit': ['builtin-lint-edit', 'adp-biome', 'adp-ruff'],
   'gate:commit-hygiene': ['builtin-commit-hygiene'],
   'gate:doc-budget': ['builtin-doc-budgets'],
   'gate:module-integrity': ['builtin-module-integrity'],
@@ -29,7 +30,12 @@ export const GOVERNANCE_SEAM_CATALOG = Object.freeze({
   'gate:ui-eval': ['builtin-ui-live-eval', 'adp-playwright'],
   'gate:judge': ['builtin-judge-consensus'],
   'gate:sandbox': ['builtin-os-sandbox', 'builtin-worktree'],
-  'gate:gc': ['builtin-autopilot-gc']
+  'gate:gc': ['builtin-autopilot-gc'],
+  'gate:py-lint': ['adp-ruff'],
+  'gate:py-complexity': ['adp-complexipy', 'adp-fuck-u-code'],
+  'gate:py-types': ['adp-ty', 'adp-pyright'],
+  'gate:py-test': ['adp-pytest'],
+  'gate:py-arch': ['adp-import-linter']
 });
 
 export function wfcAssertHumanAuthority(actorRole = 'human', confirmedByHuman = false) {
@@ -53,10 +59,43 @@ export function wfcAssertHumanAuthority(actorRole = 'human', confirmedByHuman = 
   return { ok: true, exitCode: 0 };
 }
 
+function wfcDirHasPyFile(dirPath) {
+  if (!existsSync(dirPath)) return false;
+  try {
+    return readdirSync(dirPath).some((name) => name.endsWith('.py'));
+  } catch (err) {
+    void err;
+    return false;
+  }
+}
+
+function wfcDetectPythonProject(root) {
+  if (['pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile'].some((f) => existsSync(join(root, f)))) return true;
+  return wfcDirHasPyFile(root) || wfcDirHasPyFile(join(root, 'src'));
+}
+
+function wfcProbeBinFast(root, binName) {
+  const isWin = process.platform === 'win32';
+  const exts = isWin ? ['.exe', '.cmd', '.bat'] : [''];
+  const venvDirs = isWin
+    ? [join(root, '.venv', 'Scripts'), join(root, 'venv', 'Scripts'), join(root, 'workflows', '.deps', '_shared', 'venv', 'Scripts')]
+    : [join(root, '.venv', 'bin'), join(root, 'venv', 'bin'), join(root, 'workflows', '.deps', '_shared', 'venv', 'bin')];
+  const pathDirs = String(process.env.PATH || '').split(delimiter).filter(Boolean);
+  for (const d of [...venvDirs, ...pathDirs]) {
+    for (const ext of exts) {
+      if (existsSync(join(d, binName + ext))) return true;
+    }
+  }
+  return false;
+}
+
 export function wfcProbeEnvCoeffects(projectRoot) {
   const root = resolve(projectRoot);
   const pw = uleResolvePlaywrightModule(root);
   const srt = aosProbeOsSandbox(root);
+  const hasPython = wfcDetectPythonProject(root);
+  const hasPyVenv = existsSync(join(root, '.venv')) || existsSync(join(root, 'venv'));
+  const tsCell = probeTreeSitterWasmCell(root);
   return {
     platform: process.platform,
     hasGit: existsSync(join(root, '.git')),
@@ -65,7 +104,15 @@ export function wfcProbeEnvCoeffects(projectRoot) {
     hasDecisions: existsSync(join(root, 'decisions')),
     hasSymbolsBaseline: existsSync(join(root, 'skill', 'symbols.baseline.json')),
     hasPlaywright: pw.available,
-    hasSrt: srt.readyForDefaultUse
+    hasSrt: srt.readyForDefaultUse,
+    hasPython,
+    hasPyVenv,
+    hasRuff: hasPython && wfcProbeBinFast(root, 'ruff'),
+    hasComplexipy: hasPython && wfcProbeBinFast(root, 'complexipy'),
+    hasPytest: hasPython && wfcProbeBinFast(root, 'pytest'),
+    hasPyTypeChecker: hasPython && (wfcProbeBinFast(root, 'ty') || wfcProbeBinFast(root, 'basedpyright') || wfcProbeBinFast(root, 'pyright')),
+    hasImportLinter: hasPython && (existsSync(join(root, '.importlinter')) || wfcProbeBinFast(root, 'lint-imports')),
+    hasTreeSitterWasm: tsCell.available
   };
 }
 

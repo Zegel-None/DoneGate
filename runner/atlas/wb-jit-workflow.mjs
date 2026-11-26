@@ -184,7 +184,7 @@ window.requestJitAssignNode = async function requestJitAssignNode(nodeId, prefer
   if (!node) return null;
   if (/^https?:$/i.test(location.protocol)) {
     try {
-      const r = await fetch('/donegate/api/jit/assign', {
+      const r = await fetch(withDshSessionUrl('/donegate/api/jit/assign'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': preferredMacroId ? 'human' : 'super-agent' },
         body: JSON.stringify({ nodeId: node.id, node, preferredMacroId: preferredMacroId || null })
@@ -221,7 +221,7 @@ window.requestJitAssignAllSandbox = async function requestJitAssignAllSandbox() 
   if (!nodes.length) return;
   if (/^https?:$/i.test(location.protocol)) {
     try {
-      const r = await fetch('/donegate/api/jit/assign', {
+      const r = await fetch(withDshSessionUrl('/donegate/api/jit/assign'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': 'super-agent' },
         body: JSON.stringify({ nodes, forceReassign: false })
@@ -249,7 +249,7 @@ window.requestJitMutateNode = async function requestJitMutateNode(nodeId, opts =
   if (/^https?:$/i.test(location.protocol)) {
     try {
       const endpoint = opts.humanApprovedFloorRemoval ? '/donegate/api/jit/approve-floor' : '/donegate/api/jit/mutate';
-      const r = await fetch(endpoint, {
+      const r = await fetch(withDshSessionUrl(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': opts.actorRole || 'super-agent' },
         body: JSON.stringify({
@@ -305,13 +305,13 @@ window.requestJitPromoteToMacro = async function requestJitPromoteToMacro(nodeId
       await window.requestJitAssignNode(node.id, wf.baseMacroId);
       const extraTpls = tunedTplIds.filter((id) => !baseTplIds.includes(id));
       if (wf.mode === 'jit-forked' || extraTpls.length) {
-        await fetch('/donegate/api/jit/mutate', {
+        await fetch(withDshSessionUrl('/donegate/api/jit/mutate'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': 'super-agent' },
           body: JSON.stringify({ nodeId: node.id, node, requirementText: wf.lastRequirement || '', addTplIds: extraTpls })
         });
       }
-      const r = await fetch('/donegate/api/jit/promote-macro', {
+      const r = await fetch(withDshSessionUrl('/donegate/api/jit/promote-macro'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DoneGate-Role': 'human' },
         body: JSON.stringify({ nodeId: node.id, name: macroName })

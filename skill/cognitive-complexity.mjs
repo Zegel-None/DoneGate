@@ -1,7 +1,7 @@
 // 四维门禁第四维：零依赖 JS/TS 词法认知复杂度（SonarSource Campbell 2018 规范）与反压行钻空子检测原语
 import { existsSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
-import { walkByExt } from './fs-walk.mjs';
+import { extname, join, relative, sep } from 'node:path';
+import { walk } from './fs-walk.mjs';
 
 const COG_KEYWORDS = new Set(['if', 'else', 'for', 'while', 'do', 'switch', 'catch', 'function', 'break', 'continue', 'return', 'async', 'class']);
 const REGEX_PREV_TOKENS = new Set(['', '=', '(', '[', ',', ':', '!', '&', '|', '?', ';', '{', '}', '~', '^', '+', '-', '*', '%', '<', '>', '=>', '&&', '||', '??', 'return']);
@@ -307,21 +307,48 @@ export function analyzeCodeComplexityAndGolfing(text) {
   return { functions: topFunctions, maxCognitive, golfingIssues };
 }
 
-export function auditRepository4D(projectRoot, budgets) {
-  const report = [];
-  for (const d of ['runner', 'skill']) {
-    const absDir = join(projectRoot, d);
+const AUDIT_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.venv', 'venv', '__pycache__', '.deps', 'dist', '_dist', 'build', 'coverage', 'vendor', 'tests', 'test', '__tests__'];
+const AUDIT_JS_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx']);
+
+function cogDiscoverAuditDirs(projectRoot) {
+  const selfDirs = ['runner', 'skill'].filter((d) => existsSync(join(projectRoot, d)));
+  if (selfDirs.length > 0) return { dirs: selfDirs, isDoneGateSelf: true };
+  const stdDirs = ['src', 'lib', 'app', 'packages'].filter((d) => existsSync(join(projectRoot, d)));
+  return { dirs: stdDirs.length > 0 ? stdDirs : ['.'], isDoneGateSelf: false };
+}
+
+function cogAuditSingleJsFile(projectRoot, absFile, budgets) {
+  const rel = relative(projectRoot, absFile).split(sep).join('/');
+  if (/(?:-fixtures\.mjs$|^skill\/pilot-|\.(?:test|spec)\.[a-z0-9]+$)/.test(rel)) return null;
+  const cx = analyzeCodeComplexityAndGolfing(readFileSync(absFile, 'utf8'));
+  const overMaxFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.maxCognitiveComplexity);
+  const warnFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.warnCognitiveComplexity && f.cognitiveComplexity <= budgets.maxCognitiveComplexity);
+  if (overMaxFns.length === 0 && warnFns.length === 0 && cx.golfingIssues.length === 0) return { scanned: true, item: null };
+  return { scanned: true, item: { file: rel, maxCognitive: cx.maxCognitive, overMaxFns, warnFns, golfingIssues: cx.golfingIssues } };
+}
+
+export function auditRepository4DWithStats(projectRoot, budgets) {
+  const { dirs, isDoneGateSelf } = cogDiscoverAuditDirs(projectRoot);
+  const items = [];
+  let scannedJsFiles = 0;
+  let detectedPyFiles = 0;
+  for (const d of dirs) {
+    const absDir = d === '.' ? projectRoot : join(projectRoot, d);
     if (!existsSync(absDir)) continue;
-    for (const absFile of walkByExt(absDir, ['.mjs'])) {
-      const rel = relative(projectRoot, absFile).split(sep).join('/');
-      if (/(?:-fixtures\.mjs$|^skill\/pilot-)/.test(rel)) continue;
-      const cx = analyzeCodeComplexityAndGolfing(readFileSync(absFile, 'utf8'));
-      const overMaxFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.maxCognitiveComplexity);
-      const warnFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.warnCognitiveComplexity && f.cognitiveComplexity <= budgets.maxCognitiveComplexity);
-      if (overMaxFns.length > 0 || warnFns.length > 0 || cx.golfingIssues.length > 0) {
-        report.push({ file: rel, maxCognitive: cx.maxCognitive, overMaxFns, warnFns, golfingIssues: cx.golfingIssues });
-      }
+    for (const absFile of walk(absDir, { skipDirs: AUDIT_SKIP_DIRS }).files) {
+      const ext = extname(absFile).toLowerCase();
+      if (ext === '.py') { detectedPyFiles++; continue; }
+      if (isDoneGateSelf ? ext !== '.mjs' : !AUDIT_JS_EXTS.has(ext)) continue;
+      const res = cogAuditSingleJsFile(projectRoot, absFile, budgets);
+      if (!res) continue;
+      scannedJsFiles++;
+      if (res.item) items.push(res.item);
     }
   }
-  return report.sort((a, b) => b.maxCognitive - a.maxCognitive);
+  items.sort((a, b) => b.maxCognitive - a.maxCognitive);
+  return { items, scannedJsFiles, detectedPyFiles, scannedRoots: dirs };
+}
+
+export function auditRepository4D(projectRoot, budgets) {
+  return auditRepository4DWithStats(projectRoot, budgets).items;
 }

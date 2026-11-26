@@ -11,6 +11,7 @@ import {
   renderPrototypeHtml, runUiAgentSelfPlayCheck
 } from './ui-board-engine.mjs';
 import { sendJson } from './http-utils.mjs';
+import { hagInjectSessionTokenHtml } from './host-auth-guard.mjs';
 import { runUiLiveEvaluation } from './ui-live-evaluator.mjs';
 
 function injectBridgeIntoHtml(rawHtml) {
@@ -56,7 +57,7 @@ async function uibrHandleProxyRoute(req, res) {
   return true;
 }
 
-async function uibrHandleGetRoutes(req, res, subPath, root) {
+async function uibrHandleGetRoutes(req, res, subPath, root, opts = {}) {
   if (subPath === '/uiboard/bridge.js' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(buildInjectedUiBridgeScript());
@@ -76,8 +77,11 @@ async function uibrHandleGetRoutes(req, res, subPath, root) {
     const editorMode = u.searchParams.get('editor') || undefined;
     const selfWorkbenchHtml = uibrBuildSelfWorkbenchHtml(root, editorMode);
     const proto = renderPrototypeHtml(root, { proposalId, editorMode, selfWorkbenchHtml });
+    const finalHtml = opts && opts._guardState?.requireAuth
+      ? hagInjectSessionTokenHtml(proto.html, opts._guardState.sessionToken)
+      : proto.html;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(proto.html);
+    res.end(finalHtml);
     return true;
   }
   if (subPath === '/uiboard/proxy' && req.method === 'GET') {
@@ -165,7 +169,7 @@ async function uibrHandleProvisionRoute(req, res, root, hub, readJsonBody, opts)
 
 export async function handleUiBoardSubRoute(req, res, subPath, rootDir, hub, readJsonBody, opts = {}) {
   const root = resolve(rootDir);
-  if (await uibrHandleGetRoutes(req, res, subPath, root)) return true;
+  if (await uibrHandleGetRoutes(req, res, subPath, root, opts)) return true;
   if (await uibrHandleDesignAndSelfPlayRoutes(req, res, subPath, root, hub, readJsonBody)) return true;
 
   if (subPath === '/uiboard/requirements' && req.method === 'POST') {

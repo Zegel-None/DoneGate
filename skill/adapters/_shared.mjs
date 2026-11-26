@@ -113,9 +113,24 @@ function adpShBuildFallbackList(spec, fallbackCandidates) {
   ];
 }
 
-// 跨平台解析可执行文件路径（显式路径 → PATH → 常见用户安装目录）
-function resolveExecutable(spec, fallbackCandidates = []) {
+function adpShBuildProjectVenvCandidates(spec, rootDir) {
+  if (!rootDir) return [];
+  const isWin = process.platform === 'win32';
+  const binNames = isWin ? [spec + '.exe', spec + '.cmd', spec + '.bat'] : [spec];
+  const venvDirs = isWin
+    ? [join(rootDir, '.venv', 'Scripts'), join(rootDir, 'venv', 'Scripts'), join(rootDir, 'workflows', '.deps', '_shared', 'venv', 'Scripts')]
+    : [join(rootDir, '.venv', 'bin'), join(rootDir, 'venv', 'bin'), join(rootDir, 'workflows', '.deps', '_shared', 'venv', 'bin')];
+  const out = [];
+  for (const d of venvDirs) for (const bn of binNames) out.push(join(d, bn));
+  return out;
+}
+
+// 跨平台解析可执行文件路径（显式路径 → 项目 .venv → PATH → 常见用户安装目录）
+export function resolveExecutable(spec, fallbackCandidates = [], rootDir = null) {
   if (/[\\/]/.test(spec)) return existsSync(spec) ? adpShBuildExecEntry(spec) : null;
+  for (const vc of adpShBuildProjectVenvCandidates(spec, rootDir)) {
+    if (vc && existsSync(vc)) return adpShBuildExecEntry(vc);
+  }
   const fromPath = adpShProbeSystemPath(spec);
   if (fromPath) return fromPath;
   for (const c of adpShBuildFallbackList(spec, fallbackCandidates)) {
@@ -180,7 +195,7 @@ export function runAdapter(spec) {
     }
     toolVer = arg('--tool-version', fallbackVer);
   } else {
-    const resolved = resolveExecutable(binSpec, typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : []);
+    const resolved = resolveExecutable(binSpec, typeof spec.binFallbacks === 'function' ? spec.binFallbacks(homedir()) : [], rootDir);
     if (!resolved) fail(3, `${defaultBin} 不可用 / ${defaultBin} 不在 PATH：${binSpec}`);
     runBin = (args, opts = {}) => {
       const baseOpts = {
