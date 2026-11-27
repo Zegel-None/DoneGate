@@ -20,7 +20,8 @@ import {
 import { cmdBrief, cmdZoom } from './cockpit/cockpit-commands.mjs';
 import { cmdLocate } from './cockpit/cockpit-locate.mjs';
 import { startCockpitMcp } from './cockpit/cockpit-mcp.mjs';
-import { buildDoneGateGovernanceArgv, DONEGATE_GOVERNANCE_MCP_TOOLS } from './cockpit/adapters/donegate-mcp-tools.mjs';
+import { buildDoneGateGovernanceArgv, buildDoneGateGovernanceMcpTools } from './cockpit/adapters/donegate-mcp-tools.mjs';
+import { cmdHarness } from './harnesses/index.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
@@ -28,11 +29,12 @@ const BOOLEAN_FLAGS = new Set([
   'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass', 'explore', 'discover',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
-  'stubs', 'decisions', 'full', 'skeleton', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human'
+  'stubs', 'decisions', 'full', 'skeleton', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human',
+  'require-root', 'governance-only', 'no-hooks', 'full-mcp'
 ]);
 
 const HELP_TEXT = [
-  'DoneGate V4 CLI（十二条命令 + 十个驾驶舱、治理流与微门禁快捷入口，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
+  'DoneGate V4 CLI（十二条命令 + 十一个驾驶舱、治理流、宿主插件与微门禁快捷入口，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
   '',
   '用法：node runner/donegate.mjs <命令> [参数] [--root <项目根>]',
   '  init [dir] [--discover]                         初始化项目骨架（--discover 自动扫描存量仓建探索态起步契约；已存在退 3）',
@@ -58,8 +60,9 @@ const HELP_TEXT = [
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
   '· impact <file-or-anchor...> [--budget <n>] [--json]   跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断多跳单测与 ADR 预警）',
-  '· mcp [--root <项目根>]   启动零依赖 stdio MCP 服务（暴露 dg_brief / dg_locate / dg_zoom / dg_impact / dg_status / dg_slice / dg_lint_edit / dg_check_node）',
+  '· mcp [--root <项目根>] [--require-root] [--governance-only]   启动零依赖 stdio MCP 服务（支持多工作区安全模式与纯治理 4 工具模式）',
   '· flow <list|plan|inspect|diff|run|reset> [flowId] [--staged] [--json]   声明式治理流查看、预演与一键运行（支持 workflow 别名）',
+  '· harness <list|status|install|uninstall> [dsh|antigravity|claude-code|codex] [--no-hooks] [--full-mcp] [--json]   可插拔 AI Harness 宿主适配器管理',
   '· preflight [--stamp-lease] [--expect-branch <b>] [--node <id> | --target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
@@ -280,6 +283,17 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   const cmd = pos[0];
   if (cmd === 'mcp') return { exitCode: 3, stderr: 'mcp 为常驻 stdio 服务，请通过命令行 `node runner/donegate.mjs mcp` 启动。' };
   if (cmd === 'flow' || cmd === 'workflow' || cmd === 'workflow-run') return dgCmdFlow(cmd, argv, root);
+  if (cmd === 'harness') {
+    return cmdHarness(root, {
+      sub: pos[1] || 'list',
+      targetId: pos[2] || '',
+      dir: flags.dir,
+      configRoot: flags['config-root'],
+      noHooks: Boolean(flags['no-hooks']),
+      fullMcp: Boolean(flags['full-mcp']),
+      json: Boolean(flags.json)
+    });
+  }
   if (cmd === 'init') return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root, { discover: Boolean(flags.discover) });
   const sub = pos[1];
   const routed = (cmd === 'contract' ? dgCmdContract(root, sub, pos, flags) : null)
@@ -299,10 +313,15 @@ async function runCliEntry(argv) {
       console.error(`项目根目录不存在：${root}`);
       return 3;
     }
+    const requireRoot = Boolean(flags['require-root']);
+    const governanceOnly = Boolean(flags['governance-only']);
     return startCockpitMcp({
       root,
       dispatchCommand,
-      extraTools: DONEGATE_GOVERNANCE_MCP_TOOLS,
+      serverName: governanceOnly ? 'donegate-governance' : 'donegate-cockpit',
+      requireRoot,
+      includeBaseTools: !governanceOnly,
+      extraTools: buildDoneGateGovernanceMcpTools({ requireRoot }),
       buildExtraArgv: buildDoneGateGovernanceArgv
     });
   }

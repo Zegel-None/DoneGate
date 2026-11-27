@@ -1,18 +1,27 @@
 // 驾驶舱零依赖 stdio MCP 服务（双帧缓冲传输 + JSON-RPC 2.0 生命周期，L5 donegate-cli）
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const posIntProp = (description) => ({ type: 'integer', minimum: 1, description });
+const optRootProp = { type: 'string', minLength: 1, description: '可选目标代码仓库根目录（相对或绝对路径，默认启动目录）' };
+const reqRootProp = { type: 'string', minLength: 1, description: '目标代码仓库根目录绝对路径（必填，多工作区安全模式）' };
 
-export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate') {
+export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate', opts = {}) {
   const p = String(toolPrefix ?? '');
+  const requireRoot = Boolean(opts?.requireRoot);
+  const rootField = requireRoot ? reqRootProp : optRootProp;
   const locateName = `${p}locate`;
   return [
     {
       name: `${p}brief`,
       description: `生成 ${brandName} Zoom-0 全局根视口（模块组、承重接口与图谱统计）。`,
-      inputSchema: { type: 'object', properties: { budget: posIntProp('可选 token 预算上限（正整数）') }, additionalProperties: false }
+      inputSchema: {
+        type: 'object',
+        properties: { budget: posIntProp('可选 token 预算上限（正整数）'), root: rootField },
+        ...(requireRoot ? { required: ['root'] } : {}),
+        additionalProperties: false
+      }
     },
     {
       name: locateName,
@@ -22,9 +31,10 @@ export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate') {
         properties: {
           query: { type: 'string', minLength: 1, description: '任务描述或关键词' },
           budget: posIntProp('可选 token 预算上限（正整数）'),
-          k: posIntProp('可选返回候选数量上限（正整数）')
+          k: posIntProp('可选返回候选数量上限（正整数）'),
+          root: rootField
         },
-        required: ['query'],
+        required: requireRoot ? ['query', 'root'] : ['query'],
         additionalProperties: false
       }
     },
@@ -37,9 +47,10 @@ export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate') {
           targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '组编号、文件[:起-止]或符号列表' },
           skeleton: { type: 'boolean', description: '仅输出文件骨架摘要' },
           source: { type: 'boolean', description: '直读源码切片（优先级高于 skeleton）' },
-          budget: posIntProp('可选 token 预算上限（正整数）')
+          budget: posIntProp('可选 token 预算上限（正整数）'),
+          root: rootField
         },
-        required: ['targets'],
+        required: requireRoot ? ['targets', 'root'] : ['targets'],
         additionalProperties: false
       }
     },
@@ -50,9 +61,10 @@ export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate') {
         type: 'object',
         properties: {
           targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '改动文件路径或锚点列表' },
-          budget: posIntProp('可选 token 预算上限（正整数）')
+          budget: posIntProp('可选 token 预算上限（正整数）'),
+          root: rootField
         },
-        required: ['targets'],
+        required: requireRoot ? ['targets', 'root'] : ['targets'],
         additionalProperties: false
       }
     }
@@ -139,8 +151,21 @@ function validatePosInt(val, name) {
   return { ok: true, value: val };
 }
 
+function resolveCallRoot(args, baseRoot, requireRoot = false) {
+  if (args.root === undefined) {
+    if (requireRoot) {
+      return { toolError: '参数错误：当前 MCP 服务启用了 --require-root（多工作区安全模式），调用时必须显式传入目标代码仓库路径 root。' };
+    }
+    return { ok: true, root: baseRoot };
+  }
+  if (typeof args.root !== 'string' || args.root.trim() === '') return { rpcError: 'root must be a non-empty string' };
+  const target = isAbsolute(args.root) ? resolve(args.root) : resolve(baseRoot, args.root);
+  if (!existsSync(target)) return { toolError: `参数错误：目标目录不存在：${target}` };
+  return { ok: true, root: target };
+}
+
 function buildLocateOrBriefArgv(baseCmd, rawName, args) {
-  const allowed = baseCmd === 'brief' ? ['budget'] : ['query', 'budget', 'k'];
+  const allowed = baseCmd === 'brief' ? ['budget', 'root'] : ['query', 'budget', 'k', 'root'];
   const badKey = findUnknownArgKey(args, allowed);
   if (badKey) return { rpcError: `Unknown argument for ${rawName}: ${badKey}` };
   const bCheck = validatePosInt(args.budget, 'budget');
@@ -172,7 +197,7 @@ function validateZoomAndTargets(baseCmd, args) {
 }
 
 function buildZoomOrImpactArgv(baseCmd, rawName, args) {
-  const allowed = baseCmd === 'zoom' ? ['targets', 'skeleton', 'source', 'budget'] : ['targets', 'budget'];
+  const allowed = baseCmd === 'zoom' ? ['targets', 'skeleton', 'source', 'budget', 'root'] : ['targets', 'budget', 'root'];
   const badKey = findUnknownArgKey(args, allowed);
   if (badKey) return { rpcError: `Unknown argument for ${rawName}: ${badKey}` };
   const tCheck = validateZoomAndTargets(baseCmd, args);
@@ -202,12 +227,12 @@ function resolveBaseToolCmd(rawName, toolPrefix) {
   return ['brief', 'locate', 'zoom', 'impact'].includes(stripped) ? stripped : null;
 }
 
-function handleToolCall(params, root, dispatchCommand, cfg) {
+function handleToolCall(params, baseRoot, dispatchCommand, cfg) {
   if (!isPlainObject(params) || typeof params.name !== 'string') return { rpcError: 'Invalid tools/call params' };
   const args = params.arguments === undefined ? {} : params.arguments;
   if (!isPlainObject(args)) return { rpcError: 'arguments must be an object' };
   const { name } = params;
-  const baseCmd = resolveBaseToolCmd(name, cfg.toolPrefix);
+  const baseCmd = cfg.includeBaseTools ? resolveBaseToolCmd(name, cfg.toolPrefix) : null;
   let built = null;
   if (baseCmd === 'brief' || baseCmd === 'locate') built = buildLocateOrBriefArgv(baseCmd, name, args);
   else if (baseCmd === 'zoom' || baseCmd === 'impact') built = buildZoomOrImpactArgv(baseCmd, name, args);
@@ -215,8 +240,11 @@ function handleToolCall(params, root, dispatchCommand, cfg) {
   if (!built) built = { rpcError: `Unknown tool: ${name}` };
   if (built.rpcError) return { rpcError: built.rpcError };
   if (built.toolError) return { result: { isError: true, content: [{ type: 'text', text: built.toolError }] } };
+  const rootCheck = resolveCallRoot(args, baseRoot, cfg.requireRoot);
+  if (rootCheck.rpcError) return { rpcError: rootCheck.rpcError };
+  if (rootCheck.toolError) return { result: { isError: true, content: [{ type: 'text', text: rootCheck.toolError }] } };
   try {
-    return { result: formatDispatchResult(dispatchCommand(built.argv, root)) };
+    return { result: formatDispatchResult(dispatchCommand(built.argv, rootCheck.root)) };
   } catch (err) {
     return { result: { isError: true, content: [{ type: 'text', text: err?.message || String(err) }] } };
   }
@@ -250,14 +278,17 @@ export function createMcpDispatcher({
   serverName = 'donegate-cockpit',
   toolPrefix = 'dg_',
   brandName = 'DoneGate',
+  requireRoot = false,
+  includeBaseTools = true,
   extraTools = [],
   buildExtraArgv = null
 } = {}) {
   if (typeof dispatchCommand !== 'function') throw new TypeError('startCockpitMcp requires dispatchCommand function');
   const resolvedRoot = resolve(root);
-  const baseTools = toolPrefix === 'dg_' && brandName === 'DoneGate' ? MCP_TOOLS : buildMcpTools(toolPrefix, brandName);
+  const useDefault = !requireRoot && toolPrefix === 'dg_' && brandName === 'DoneGate';
+  const baseTools = includeBaseTools ? (useDefault ? MCP_TOOLS : buildMcpTools(toolPrefix, brandName, { requireRoot })) : [];
   const tools = Array.isArray(extraTools) && extraTools.length > 0 ? [...baseTools, ...extraTools] : baseTools;
-  const cfg = { serverName, toolPrefix, tools, buildExtraArgv };
+  const cfg = { serverName, toolPrefix, requireRoot: Boolean(requireRoot), includeBaseTools: Boolean(includeBaseTools), tools, buildExtraArgv };
   return (msg) => dispatchRpcMessage(msg, resolvedRoot, dispatchCommand, cfg);
 }
 
@@ -297,13 +328,17 @@ export function startCockpitMcp({
   serverName = 'donegate-cockpit',
   toolPrefix = 'dg_',
   brandName = 'DoneGate',
+  requireRoot = false,
+  includeBaseTools = true,
   extraTools = [],
   buildExtraArgv = null,
   stdin = process.stdin,
   stdout = process.stdout,
   stderr = process.stderr
 } = {}) {
-  const dispatchRpc = createMcpDispatcher({ root, dispatchCommand, serverName, toolPrefix, brandName, extraTools, buildExtraArgv });
+  const dispatchRpc = createMcpDispatcher({
+    root, dispatchCommand, serverName, toolPrefix, brandName, requireRoot, includeBaseTools, extraTools, buildExtraArgv
+  });
   const resolvedRoot = resolve(root);
   if (!existsSync(resolvedRoot)) throw new Error(`项目根目录不存在：${resolvedRoot}`);
   const state = { rxBuf: Buffer.alloc(0), replyMode: 'ndjson', pipeClosed: false, stdout, stderr, dispatchRpc };
