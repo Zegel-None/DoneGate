@@ -15,6 +15,7 @@ export {
 } from './context-router.mjs';
 export { adviseCapsuleModularitySplit } from './capsule-shard-advisor.mjs';
 export { cmdSlice, diffAgainstFrozenStub, freezeNodeStubBaseline, parseFocusPatterns, parseLexicalTerms } from './hermetic-capsule.mjs';
+export { collectOtherContractsFrozenTests, extractReferencedTestFiles, snapshotFrozenTests, verifyFrozenTestIntegrity } from './heldout-test-guard.mjs';
 export { cmdCheckNode, collectGitNodeChanges } from './node-micro-gate.mjs';
 export { collectMultiHopTestsFromReverseAdj, irInferMultiHopTests } from './impact-multihop.mjs';
 export { analyzeImpactRadar, cmdImpact } from './impact-radar.mjs';

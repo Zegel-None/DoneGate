@@ -230,10 +230,8 @@ function gc2CheckIntentReviewAge(projectRoot, fails) {
 export function evaluateGate2(projectRoot, contract, opts = {}) {
   const errs = validateContractSchema(contract, { full: true });
   if (errs.length > 0) return { ok: false, exitCode: 2, fails: errs };
-  if (opts.baseRef || opts.heldOutDir || Array.isArray(opts.touchedFiles)) {
-    const hv = verifyHeldOutContract(projectRoot, contract, opts);
-    if (!hv.ok) return { ok: false, exitCode: hv.exitCode, code: hv.code, fails: hv.fails };
-  }
+  const hv = verifyHeldOutContract(projectRoot, contract, opts);
+  if (!hv.ok) return { ok: false, exitCode: hv.exitCode, code: hv.code, fails: hv.fails };
   const st = evalStageGate(projectRoot);
   if (st.exitCode === 1) return { ok: false, exitCode: 1, fails: [st.line] };
   const stage = st.exitCode === 0 ? st.stage : 'T1a';

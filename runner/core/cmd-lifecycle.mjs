@@ -13,6 +13,7 @@ import {
   lcCheckFreezeBatchQuota, lcExecuteContractSignoff,
   lcSealObligationsAndWrite, lcValidateObligationsForFreeze
 } from './contract-freeze.mjs';
+import { snapshotFrozenTests } from './heldout-test-guard.mjs';
 import { detectRepoStackAndSmoke, discoverExistingRepoStarterContracts } from './init-discover.mjs';
 
 export function gitAnchorInfo(projectRoot) {
@@ -235,6 +236,7 @@ export function cmdContractFreeze(projectRoot, opts) {
 
   const criteriaHashes = lcSealObligationsAndWrite(cPath, contract, obs, by);
   const anchor = gitAnchorInfo(projectRoot);
+  const { frozenTestHashes, frozenScriptHashes } = snapshotFrozenTests(projectRoot, id, obs);
   const materials = collectMaterialList(projectRoot, contract);
   const preExistingCode = materials.map((m) => m.path).filter((p) => /\.(mjs|cjs|js|ts|tsx|jsx|py|go)$/i.test(p));
   const legacyNotice = preExistingCode.length > 0 && !opts.legacy
@@ -243,7 +245,10 @@ export function cmdContractFreeze(projectRoot, opts) {
   const app = appendChainEntry(projectRoot, {
     kind: 'freeze', contractId: id, signedBy: by.trim(), freezeCommit: anchor.head,
     legacyMigration: Boolean(opts.legacy), preExistingCodeCount: preExistingCode.length,
-    criteriaHashes, materialFingerprint: materialFingerprintOf(materials)
+    criteriaHashes,
+    ...(Object.keys(frozenTestHashes).length > 0 ? { frozenTestHashes } : {}),
+    ...(frozenScriptHashes ? { frozenScriptHashes } : {}),
+    materialFingerprint: materialFingerprintOf(materials)
   });
   if (!app.ok) return { exitCode: app.exitCode || 2, stderr: app.reason };
   const frozenList = obs.map((o) => `  ${o.id}  frozenHash=${o.frozenHash.slice(0, 12)}`).join('\n');

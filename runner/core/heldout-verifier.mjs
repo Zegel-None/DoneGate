@@ -1,9 +1,10 @@
-// Base-Branch / 只读镜像 Held-Out 判据防篡改校核器与结构化自首单（ConfessionReport，<= 180 行）
+// Base-Branch / 只读镜像 Held-Out 判据防篡改校核器与结构化自首单（ConfessionReport，<= 200 行）
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { frozenHashOf, sha256Short } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { collectOtherContractsFrozenTests, verifyFrozenTestIntegrity } from './heldout-test-guard.mjs';
 
 const HV_PROTECTED_GATE_RE = /^(?:\.githooks\/|skill\/check-[^/]+\.mjs$|skill\/(?:hash|schema-lite)\.mjs$|runner\/core\/[^/]+\.mjs$)/;
 const HV_VALID_RISKS = new Set(['low', 'medium', 'high']);
@@ -108,13 +109,37 @@ function hvCompareContractMetadata(baseContract, curContract, fails) {
   }
 }
 
-export function verifyHeldOutContract(projectRoot, contract, opts = {}) {
-  const cid = contract?.id || opts.contractId || '';
-  if (!cid) return { ok: true, checked: false, reason: 'missing-id', fails: [] };
+function hvCheckForeignFrozenTests(projectRoot, contract, touchedFiles = []) {
+  if (!Array.isArray(touchedFiles) || touchedFiles.length === 0) return [];
+  const foreignMap = collectOtherContractsFrozenTests(projectRoot, contract);
+  if (foreignMap.size === 0) return [];
+  const hits = [];
+  for (const raw of touchedFiles) {
+    const rel = String(raw || '').replace(/\\/g, '/').replace(/^\.\//, '');
+    const ownerId = foreignMap.get(rel);
+    if (ownerId) hits.push(`HELDOUT_FOREIGN_TEST_TOUCHED: 契约 ${contract?.id || '?'} 严禁跨契约修改其他已冻结契约 (${ownerId}) 锁定的测试文件 ${rel}`);
+  }
+  return hits;
+}
+
+function hvRunWorkspaceTamperGuards(projectRoot, cid, contract, opts) {
   const gateTamper = hvCheckProtectedGateFiles(cid, opts.touchedFiles);
   if (gateTamper.length > 0) {
     return { ok: false, checked: true, exitCode: 2, code: 'HELDOUT_GATE_TAMPERED', fails: gateTamper };
   }
+  const foreignHits = hvCheckForeignFrozenTests(projectRoot, contract, opts.touchedFiles);
+  if (foreignHits.length > 0) {
+    return { ok: false, checked: true, exitCode: 2, code: 'HELDOUT_FOREIGN_TEST_TOUCHED', fails: foreignHits };
+  }
+  const testGuard = verifyFrozenTestIntegrity(projectRoot, contract);
+  return testGuard.ok ? null : testGuard;
+}
+
+export function verifyHeldOutContract(projectRoot, contract, opts = {}) {
+  const cid = contract?.id || opts.contractId || '';
+  if (!cid) return { ok: true, checked: false, reason: 'missing-id', fails: [] };
+  const guardFail = hvRunWorkspaceTamperGuards(projectRoot, cid, contract, opts);
+  if (guardFail) return guardFail;
   const held = hvLoadHeldOutContract(projectRoot, cid, opts);
   if (!held.available) return { ok: true, checked: false, reason: held.reason, fails: [] };
   if (held.corrupt || !held.contract) {

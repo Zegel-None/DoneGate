@@ -44,14 +44,72 @@ export function buildPreCommitScript(projectRoot, dgRoot = DG_ROOT, pathApi = pa
     'set -e',
     `DG_SKILL="${shDq(skillPrefix)}"`,
     `DG_RUNNER="${shDq(runnerPrefix)}"`,
+    'DG_VERIFIED_TREE=$(git write-tree 2>/dev/null || true)',
     'unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_PREFIX',
+    'dg_stamp_verified_tree() {',
+    '  if [ -n "$DG_VERIFIED_TREE" ]; then',
+    '    mkdir -p .donegate',
+    '    printf \'{"tree":"%s","at":"%s"}\\n\' "$DG_VERIFIED_TREE" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >> .donegate/verified-trees.jsonl',
+    '  fi',
+    '}',
     'if [ -f ".donegate/workflows/overrides/dg-pre-commit.overlay.json" ] && [ -f "$DG_RUNNER" ]; then',
     '  node "$DG_RUNNER" flow run dg-pre-commit --staged --root .',
     '  unset GIT_INDEX_FILE',
+    '  dg_stamp_verified_tree',
     '  exit 0',
     'fi',
     'node "$DG_SKILL/check-commit-hygiene.mjs" --staged --root .',
     'unset GIT_INDEX_FILE',
+    'if [ -f "skill/check-escapes.mjs" ] && [ -f "escapes.jsonl" ]; then',
+    '  node "skill/check-escapes.mjs" --self-check --project .',
+    'elif [ -f "INTENT.md" ]; then',
+    '  node "$DG_SKILL/check-escapes.mjs" --project .',
+    'fi',
+    'dg_stamp_verified_tree',
+    ''
+  ].join('\n');
+}
+
+export function buildPrePushScript(projectRoot, dgRoot = DG_ROOT, pathApi = path) {
+  const skillPrefix = resolveSkillPrefix(projectRoot, dgRoot, pathApi);
+  const shDq = (s) => String(s).replace(/([\\"$`])/g, '\\$1');
+
+  return [
+    '#!/bin/sh',
+    '# DoneGate 推送前漏网补扫钩子（push-sweep：核对 verified-trees.jsonl 逐笔拦截 --no-verify 绕过的脏提交）',
+    'set -e',
+    `DG_SKILL="${shDq(skillPrefix)}"`,
+    'ZERO_SHA="0000000000000000000000000000000000000000"',
+    'UNVERIFIED_COMMITS=""',
+    'while read local_ref local_sha remote_ref remote_sha; do',
+    '  [ -z "$local_sha" ] || [ "$local_sha" = "$ZERO_SHA" ] && continue',
+    '  if [ "$remote_sha" = "$ZERO_SHA" ]; then',
+    '    COMMITS=$(git rev-list -n 1 "$local_sha" 2>/dev/null || true)',
+    '  else',
+    '    COMMITS=$(git rev-list "${remote_sha}..${local_sha}" 2>/dev/null || true)',
+    '  fi',
+    '  for c in $COMMITS; do',
+    '    t=$(git rev-parse "${c}^{tree}" 2>/dev/null || true)',
+    '    if [ -z "$t" ] || [ ! -f ".donegate/verified-trees.jsonl" ] || ! grep -q "\\"$t\\"" ".donegate/verified-trees.jsonl" 2>/dev/null; then',
+    '      UNVERIFIED_COMMITS="$UNVERIFIED_COMMITS $c"',
+    '    fi',
+    '  done',
+    'done',
+    '[ -z "$UNVERIFIED_COMMITS" ] && exit 0',
+    'unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_PREFIX GIT_INDEX_FILE',
+    'echo "[DoneGate push-sweep] 检测到未经 pre-commit 验真的提交，正在逐笔执行推送前补扫..."',
+    'for c in $UNVERIFIED_COMMITS; do',
+    '  if git rev-parse --verify "${c}~1" >/dev/null 2>&1; then',
+    '    node "$DG_SKILL/check-commit-hygiene.mjs" --range "${c}~1..${c}" --root .',
+    '  else',
+    '    node "$DG_SKILL/check-commit-hygiene.mjs" --audit-repo --root .',
+    '  fi',
+    '  t=$(git rev-parse "${c}^{tree}" 2>/dev/null || true)',
+    '  if [ -n "$t" ]; then',
+    '    mkdir -p .donegate',
+    '    printf \'{"tree":"%s","at":"%s"}\\n\' "$t" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >> .donegate/verified-trees.jsonl',
+    '  fi',
+    'done',
     'if [ -f "skill/check-escapes.mjs" ] && [ -f "escapes.jsonl" ]; then',
     '  node "skill/check-escapes.mjs" --self-check --project .',
     'elif [ -f "INTENT.md" ]; then',
@@ -123,8 +181,10 @@ export function installGitHooks(projectRoot) {
   const hooksDir = join(projectRoot, '.githooks');
   mkdirSync(hooksDir, { recursive: true });
   const hookPath = join(hooksDir, 'pre-commit');
+  const prePushPath = join(hooksDir, 'pre-push');
   writeFileSync(hookPath, buildPreCommitScript(projectRoot), 'utf8');
-  try { chmodSync(hookPath, 0o755); } catch { /* win32 noop */ }
+  writeFileSync(prePushPath, buildPrePushScript(projectRoot), 'utf8');
+  try { chmodSync(hookPath, 0o755); chmodSync(prePushPath, 0o755); } catch { /* win32 noop */ }
 
   let activated = false;
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -132,7 +192,7 @@ export function installGitHooks(projectRoot) {
     const cfg = spawnSync('git', ['-C', projectRoot, 'config', 'core.hooksPath', '.githooks'], { encoding: 'utf8' });
     activated = cfg.status === 0;
   }
-  return { hookPath, activated };
+  return { hookPath, prePushPath, activated };
 }
 
 function ihRunGit(cwd, args, env) {
@@ -185,7 +245,22 @@ function ihTestSlopAndCleanCommits(tmp, gitEnv, check) {
   writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() {\n  return 2;\n}\n');
   ihRunGit(tmp, ['add', 'src/a.mjs'], gitEnv);
   const rPass = ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'clean small commit'], gitEnv);
-  check('正样本：修掉空壳后的小步干净 git commit 顺畅放行', rPass.status === 0, rPass.stderr);
+  check('正样本：修掉空壳后的小步干净 git commit 顺畅放行并记录 verified-trees.jsonl', rPass.status === 0 && existsSync(join(tmp, '.donegate/verified-trees.jsonl')), rPass.stderr);
+
+  const bareRemote = join(tmp, '.donegate', 'bare-remote.git');
+  ihRunGit(tmp, ['init', '--bare', '-q', bareRemote], gitEnv);
+  ihRunGit(tmp, ['remote', 'add', 'origin', bareRemote], gitEnv);
+  const branchName = (ihRunGit(tmp, ['rev-parse', '--abbrev-ref', 'HEAD'], gitEnv).stdout || 'main').trim();
+  const rCleanPush = ihRunGit(tmp, ['push', '-q', 'origin', branchName], gitEnv);
+  check('正样本：已通过 pre-commit 验真的提交在 pre-push 秒级放行', rCleanPush.status === 0, rCleanPush.stderr);
+
+  writeFileSync(join(tmp, 'src/a.mjs'), 'export function a() { // TO' + 'DO: 绕过提交\n  return 9;\n}\n');
+  ihRunGit(tmp, ['add', 'src/a.mjs'], gitEnv);
+  ihRunGit(tmp, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'sneaky bypass', '--no-verify'], gitEnv);
+  const rPushBlocked = ihRunGit(tmp, ['push', 'origin', branchName], gitEnv);
+  const pushErr = (rPushBlocked.stderr || '') + (rPushBlocked.stdout || '');
+  check('必红样本：用 --no-verify 绕过 pre-commit 的脏提交在 git push 时被 pre-push 补扫拦截', rPushBlocked.status !== 0 && /push-sweep/.test(pushErr), pushErr);
+  ihRunGit(tmp, ['reset', '--hard', 'HEAD~1'], gitEnv);
 }
 
 function ihTestWorktreeIsolation(tmp, gitEnv, check) {

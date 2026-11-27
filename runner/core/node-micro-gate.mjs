@@ -7,6 +7,7 @@ import { buildNodeInterfaceStub } from './ast-stub.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes, resolveSubagentBudgetProfile } from './context-router.mjs';
 import { diffAgainstFrozenStub, freezeNodeStubBaseline } from './hermetic-capsule.mjs';
 import { loadThresholds } from './gates.mjs';
+import { collectOtherContractsFrozenTests } from './heldout-test-guard.mjs';
 import { hvBuildConfessionReport, verifyHeldOutContract } from './heldout-verifier.mjs';
 import { buildSanitizedEnv, checkCommandBans } from './isolation.mjs';
 
@@ -106,19 +107,23 @@ function buildCompactPassReceiptJson(receipt) {
   return out;
 }
 
+function nmgCollectCrossScopeFiles(projectRoot, id, contract, gitState, opts) {
+  if (!gitState.isGit || opts.skipScopeCheck) return [];
+  const foreignTests = collectOtherContractsFrozenTests(projectRoot, contract);
+  return gitState.touchedFiles.filter((f) => {
+    if (f.startsWith(`contracts/${id}/`)) return false;
+    if (foreignTests.has(f)) return true;
+    if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$/i.test(f)) return false;
+    return !fileBelongsToScopes(f, contract.scope || []);
+  });
+}
+
 function evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts) {
   const fails = [];
   const crossScopeAllowed = Boolean(opts.allowCrossScope);
-  let crossScopeFiles = [];
-  if (gitState.isGit && !opts.skipScopeCheck) {
-    crossScopeFiles = gitState.touchedFiles.filter((f) => {
-      if (f.startsWith(`contracts/${id}/`)) return false;
-      if (/(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$/i.test(f)) return false;
-      return !fileBelongsToScopes(f, contract.scope || []);
-    });
-    if (crossScopeFiles.length > 0 && !crossScopeAllowed) {
-      fails.push(`越界修改非本卡 scope 文件：${crossScopeFiles.join(', ')}`);
-    }
+  const crossScopeFiles = nmgCollectCrossScopeFiles(projectRoot, id, contract, gitState, opts);
+  if (crossScopeFiles.length > 0 && !crossScopeAllowed) {
+    fails.push(`越界修改非本卡 scope 文件：${crossScopeFiles.join(', ')}`);
   }
   let stubDiff = diffAgainstFrozenStub(projectRoot, id, currentStub);
   if (opts.allowStubChange && (!stubDiff.hasFrozenBaseline || stubDiff.stubChanged || stubDiff.breakingChanges.length > 0)) {

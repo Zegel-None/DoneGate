@@ -60,7 +60,7 @@ const HELP_TEXT = [
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
   '· impact <file-or-anchor...> [--budget <n>] [--json]   跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断多跳单测与 ADR 预警）',
-  '· mcp [--root <项目根>] [--require-root] [--governance-only]   启动零依赖 stdio MCP 服务（支持多工作区安全模式与纯治理 4 工具模式）',
+  '· mcp [--root <项目根>] [--require-root] [--governance-only]   启动零依赖 stdio MCP 服务（含 dg_status / dg_slice / dg_lint_edit / dg_check_node）',
   '· flow <list|plan|inspect|diff|run|reset> [flowId] [--staged] [--json]   声明式治理流查看、预演与一键运行（支持 workflow 别名）',
   '· harness <list|status|install|uninstall> [dsh|antigravity|claude-code|codex] [--no-hooks] [--full-mcp] [--json]   可插拔 AI Harness 宿主适配器管理',
   '· preflight [--stamp-lease] [--expect-branch <b>] [--node <id> | --target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'

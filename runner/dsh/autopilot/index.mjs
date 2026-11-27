@@ -26,5 +26,8 @@ export {
   wfcCreateProposal, wfcListDefaultWorkflows, wfcListPendingProposals,
   wfcProbeEnvCoeffects, wfcResetProjectOverlay, wfcSaveProjectOverlay
 } from './workflow-compiler.mjs';
-export { tlComputeRestrainedSuggestions, tlDismissSuggestion, tlLoadTrustLedger } from './trust-ladder.mjs';
+export {
+  tlComputeRestrainedSuggestions, tlDismissSuggestion,
+  tlLoadTrustLedger, tlRecordEscapeRelapse, tlRecordRuleOutcomes
+} from './trust-ladder.mjs';
 export { gtApplyPersonalTemplate, gtListPersonalTemplates, gtSavePersonalTemplate } from './governance-templates.mjs';

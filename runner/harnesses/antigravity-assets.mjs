@@ -1,6 +1,7 @@
-// Antigravity 原生插件清单、MCP 配置、随身质检钩子脚本与规则模板（零外部依赖，<= 250 行）
+// Antigravity 原生插件清单、MCP 配置、随身质检钩子脚本与规则模板（零外部依赖，<= 265 行）
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const toPosix = (p) => String(p || '').replace(/\\/g, '/');
 
@@ -51,6 +52,14 @@ export function buildAntigravityMcpConfig({ donegateRoot, fullMcp = false } = {}
 export function buildAntigravityHooksJson() {
   return {
     'donegate-edit-guard': {
+      PreToolUse: [
+        {
+          matcher: 'run_command',
+          hooks: [
+            { type: 'command', command: 'node hooks/donegate-guard.mjs', timeout: 10 }
+          ]
+        }
+      ],
       PostToolUse: [
         {
           matcher: 'edit_file|write_file',
@@ -94,16 +103,19 @@ export function buildAntigravityRulesMd({ fullMcp = false } = {}) {
 
 export function buildAntigravityGuardScript({ donegateRoot } = {}) {
   const lintScript = JSON.stringify(toPosix(resolve(donegateRoot, 'skill', 'lint-edit.mjs')));
+  const cmdGuardUrl = JSON.stringify(pathToFileURL(resolve(donegateRoot, 'runner', 'shared', 'command-guard-rules.mjs')).href);
+  const turnStateUrl = JSON.stringify(pathToFileURL(resolve(donegateRoot, 'runner', 'shared', 'turn-diff-state.mjs')).href);
   return [
-    '// DoneGate Antigravity 随身质检钩子（仅对含 INTENT.md + contracts/ 的 DoneGate 项目生效，普通项目零开销静默放行）',
+    '// DoneGate Antigravity 随身质检与防绕过钩子（仅对含 INTENT.md + contracts/ 的 DoneGate 项目生效，普通项目静默放行）',
     "import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';",
     "import { dirname, join, relative, resolve } from 'node:path';",
     "import { spawnSync } from 'node:child_process';",
+    `import { auditAgentShellCommand } from ${cmdGuardUrl};`,
+    `import { captureTurnBaseline, computeTurnDelta, consumeStopStrike, finishTurnCleanly, recordFileVerified } from ${turnStateUrl};`,
     '',
     `const LINT_SCRIPT = ${lintScript};`,
     'const CODE_RE = /\\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i;',
     'const ALERT_REL = join(".donegate", "scratch", "agy-lint-alert.json");',
-    '',
     'const isDoneGateRoot = (d) => Boolean(d && existsSync(join(d, "INTENT.md")) && existsSync(join(d, "contracts")));',
     '',
     'function findRootUp(startPath) {',
@@ -140,9 +152,14 @@ export function buildAntigravityGuardScript({ donegateRoot } = {}) {
     '  if (!existsSync(p)) return null;',
     '  try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }',
     '}',
-    '',
     'function clearAlert(root) {',
     '  try { rmSync(join(root, ALERT_REL), { force: true }); } catch (err) { void err; }',
+    '}',
+    '',
+    'function handlePreToolUse(payload) {',
+    '  const cmdLine = payload?.toolCall?.args?.CommandLine || payload?.toolCall?.args?.command || "";',
+    '  const audit = auditAgentShellCommand(cmdLine);',
+    '  return audit.allowed ? { decision: "allow" } : { decision: "deny", reason: `[DoneGate 防绕过硬拦截] ${audit.reason}` };',
     '}',
     '',
     'function handlePostToolUse(root, payload) {',
@@ -152,6 +169,7 @@ export function buildAntigravityGuardScript({ donegateRoot } = {}) {
     '  if (!rel || rel.startsWith("..") || !existsSync(LINT_SCRIPT)) return {};',
     '  const r = spawnSync(process.execPath, [LINT_SCRIPT, rel, "--root", root], { cwd: root, encoding: "utf8", timeout: 10000, windowsHide: true });',
     '  if (r.status === 0) {',
+    '    recordFileVerified(root, payload?.conversationId || "default", rel);',
     '    const cur = readAlert(root);',
     '    if (cur && cur.file === rel) clearAlert(root);',
     '    return {};',
@@ -164,6 +182,7 @@ export function buildAntigravityGuardScript({ donegateRoot } = {}) {
     '}',
     '',
     'function handlePreInvocation(root, payload) {',
+    '  captureTurnBaseline(root, payload?.conversationId || "default");',
     '  const alert = readAlert(root);',
     '  if (!alert || (Date.now() - Number(alert.at || 0)) > 300000) return {};',
     '  if (alert.conversationId && payload?.conversationId && alert.conversationId !== payload.conversationId) return {};',
@@ -174,20 +193,37 @@ export function buildAntigravityGuardScript({ donegateRoot } = {}) {
     '}',
     '',
     'function handleStop(root, payload) {',
-    '  if (payload?.terminationReason !== "NO_TOOL_CALL" || payload?.continuationActive) return { decision: "allow" };',
+    '  if (payload?.terminationReason !== "NO_TOOL_CALL" || !existsSync(LINT_SCRIPT)) return { decision: "allow" };',
+    '  const convId = payload?.conversationId || "default";',
+    '  const delta = computeTurnDelta(root, convId);',
     '  const alert = readAlert(root);',
-    '  if (!alert || (Date.now() - Number(alert.at || 0)) > 300000) return { decision: "allow" };',
-    '  clearAlert(root);',
-    '  return { decision: "continue", reason: `[DoneGate 随身质检拦截] 文件 ${alert.file} 仍有未修复的 lint-edit 违规，请先修绿再结束本轮：\\n${alert.summary}` };',
+    '  const pendingSet = new Set(delta.unverifiedFiles);',
+    '  if (alert && alert.file && (Date.now() - Number(alert.at || 0)) <= 300000 && existsSync(join(root, alert.file))) pendingSet.add(alert.file);',
+    '  const filesToLint = [...pendingSet];',
+    '  if (filesToLint.length === 0) { finishTurnCleanly(root, convId, []); return { decision: "allow" }; }',
+    '  const r = spawnSync(process.execPath, [LINT_SCRIPT, ...filesToLint, "--root", root], { cwd: root, encoding: "utf8", timeout: 12000, windowsHide: true });',
+    '  if (r.status === 0) {',
+    '    clearAlert(root);',
+    '    finishTurnCleanly(root, convId, filesToLint);',
+    '    return { decision: "allow" };',
+    '  }',
+    '  const summary = ((r.stdout || "") + "\\n" + (r.stderr || "")).trim().slice(0, 1200);',
+    '  const strike = consumeStopStrike(root, convId, filesToLint, 3);',
+    '  if (!strike.shouldBlock) {',
+    '    clearAlert(root);',
+    '    return { decision: "allow" };',
+    '  }',
+    '  return { decision: "continue", reason: `[DoneGate 随身质检拦截 (${strike.strike}/${strike.maxStrikes})] 本轮变更文件 (${filesToLint.join(", ")}) 仍有 lint-edit 违规，请先修绿再收尾：\\n${summary}` };',
     '}',
     '',
     'let payload = {};',
     'try { payload = JSON.parse(readFileSync(0, "utf8") || "{}"); } catch { payload = {}; }',
     'const ev = String(payload?.hookEventName || "");',
     'const root = findWorkspaceDoneGateRoot(payload);',
-    'let out = ev === "Stop" ? { decision: "allow" } : {};',
+    'let out = (ev === "Stop" || ev === "PreToolUse") ? { decision: "allow" } : {};',
     'if (root) {',
-    '  if (ev === "PostToolUse") out = handlePostToolUse(root, payload);',
+    '  if (ev === "PreToolUse") out = handlePreToolUse(payload);',
+    '  else if (ev === "PostToolUse") out = handlePostToolUse(root, payload);',
     '  else if (ev === "PreInvocation") out = handlePreInvocation(root, payload);',
     '  else if (ev === "Stop") out = handleStop(root, payload);',
     '}',

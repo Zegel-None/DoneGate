@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// DoneGate 声明式治理工作流 CLI 引擎（donegate flow list|plan|inspect|dump|diff|run|reset，<= 200 行）
-import { resolve } from 'node:path';
+// DoneGate 声明式治理工作流 CLI 引擎（donegate flow list|plan|inspect|dump|diff|run|reset，<= 215 行）
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   wfcCompileWorkflow,
   wfcListDefaultWorkflows,
   wfcResetProjectOverlay
 } from './workflow-compiler.mjs';
+import { tlRecordRuleOutcomes } from './trust-ladder.mjs';
 import { executeBrickGateNode } from './brick-exec.mjs';
 import { buildWorkflowDepEnv } from '../deps/index.mjs';
 import { hagSanitizeSubagentEnv } from '../../shared/subagent-env.mjs';
@@ -60,31 +62,69 @@ function gfcHandleList(root, flags) {
 }
 
 function gfcFormatResultLine(r) {
+  if (r.observedWarn) {
+    return `  👁 [观察期告警] ${r.title} (${r.nodeId}) -> raw exit ${r.rawExitCode} (仅统计采纳率，不阻断)`;
+  }
   let icon = '✗';
   if (r.exitCode === 0) icon = r.skipped ? '↷' : '✓';
   const note = r.skipped && r.reason ? ` [${r.reason}]` : '';
   return `  ${icon} ${r.title} (${r.nodeId}) -> exit ${r.exitCode}${note}`;
 }
 
+function gfcClassifyNodePlanStatus(node) {
+  if (node.bypassed) return 'bypassed';
+  if (node.envSkipped) return 'env-skipped';
+  if (node.isHumanGate) return 'human-gate';
+  return node.exec ? 'active' : 'non-exec';
+}
+
 function gfcHandlePlan(root, flowId, flags) {
   const comp = wfcCompileWorkflow(root, flowId);
   if (!comp.ok) return { exitCode: comp.exitCode, stderr: comp.reason };
-  const plan = comp.effectivePack.nodes.map((node) => {
-    const status = node.bypassed
-      ? 'bypassed'
-      : (node.envSkipped ? 'env-skipped' : (node.isHumanGate ? 'human-gate' : (node.exec ? 'active' : 'non-exec')));
-    return { id: node.id, title: node.title, tier: node.tier || 'recommended', status, kind: node.exec?.kind || 'none' };
-  });
+  const plan = comp.effectivePack.nodes.map((node) => ({
+    id: node.id,
+    title: node.title,
+    tier: node.tier || 'recommended',
+    mode: node.mode || 'enforce',
+    status: gfcClassifyNodePlanStatus(node),
+    kind: node.exec?.kind || 'none'
+  }));
   const payload = { ok: true, flowId: comp.flowId, name: comp.effectivePack.name, workflowHash: comp.workflowHash, disclosureBanner: comp.disclosureBanner, plan };
   if (flags.json) return { exitCode: 0, stdout: JSON.stringify(payload, null, 2), ...payload };
   const badge = { active: '▶', 'env-skipped': '↷', bypassed: '⏸', 'human-gate': '👤', 'non-exec': '·' };
   const lines = [
     `=== DoneGate 治理流预演：${comp.effectivePack.name} (${comp.flowId} · hash=${comp.workflowHash.slice(0, 12)}) ===`,
     ...(comp.disclosureBanner ? [comp.disclosureBanner] : []),
-    ...plan.map((n) => `  ${badge[n.status] || '·'} [${n.tier}] ${n.title} (${n.id}) · ${n.status}`),
+    ...plan.map((n) => `  ${badge[n.status] || '·'} [${n.tier}${n.mode === 'observe' ? '·observe' : ''}] ${n.title} (${n.id}) · ${n.status}`),
     `汇总：共 ${plan.length} 节点（激活 ${plan.filter((n) => n.status === 'active').length} / 环境跳过 ${plan.filter((n) => n.status === 'env-skipped').length} / 关闭 ${plan.filter((n) => n.status === 'bypassed').length}）`
   ];
   return { exitCode: 0, stdout: lines.join('\n'), ...payload };
+}
+
+function gfcSkippedReasonLabel(node) {
+  if (node.bypassed) return '用户已关闭';
+  return node.envSkipped ? '按环境跳过' : '非自动脚本节点';
+}
+
+function gfcExecuteActiveNode(root, node, flags, cleanEnv) {
+  const execNode = (flags.staged && node.id === 'pc-commit-hygiene')
+    ? { ...node, exec: { ...node.exec, args: ['--staged'] } }
+    : node;
+  const r = executeBrickGateNode(root, root, execNode, cleanEnv);
+  const mode = node.mode || 'enforce';
+  const observedWarn = mode === 'observe' && !r.skipped && r.exitCode !== 0;
+  return {
+    nodeId: node.id,
+    title: node.title,
+    tier: node.tier || 'recommended',
+    mode,
+    skipped: Boolean(r.skipped),
+    observedWarn,
+    rawExitCode: r.exitCode,
+    exitCode: observedWarn ? 0 : r.exitCode,
+    durationMs: r.durationMs,
+    diagSummary: r.diagSummary.slice(0, 240)
+  };
 }
 
 function gfcHandleRun(root, flowId, flags) {
@@ -92,38 +132,30 @@ function gfcHandleRun(root, flowId, flags) {
   if (!comp.ok) return { exitCode: comp.exitCode, stderr: comp.reason };
   const cleanEnv = hagSanitizeSubagentEnv(buildWorkflowDepEnv(root, comp.flowId));
   const results = [];
+  const outcomes = [];
   let worstExit = 0;
 
   for (const node of comp.effectivePack.nodes) {
     if (node.bypassed || node.envSkipped || node.isHumanGate || !node.exec) {
-      results.push({
-        nodeId: node.id,
-        title: node.title,
-        skipped: true,
-        reason: node.bypassed ? '用户已关闭' : (node.envSkipped ? '按环境跳过' : '非自动脚本节点'),
-        exitCode: 0
-      });
+      results.push({ nodeId: node.id, title: node.title, mode: node.mode || 'enforce', skipped: true, reason: gfcSkippedReasonLabel(node), exitCode: 0 });
       continue;
     }
-    const execNode = (flags.staged && node.id === 'pc-commit-hygiene')
-      ? { ...node, exec: { ...node.exec, args: ['--staged'] } }
-      : node;
-    const r = executeBrickGateNode(root, root, execNode, cleanEnv);
-    results.push({ nodeId: node.id, title: node.title, skipped: Boolean(r.skipped), exitCode: r.exitCode, durationMs: r.durationMs, diagSummary: r.diagSummary.slice(0, 240) });
-    if (r.exitCode !== 0 && (worstExit === 0 || r.exitCode === 2)) {
-      worstExit = r.exitCode;
-      if (r.exitCode === 2) break;
+    const item = gfcExecuteActiveNode(root, node, flags, cleanEnv);
+    results.push(item);
+    if (!item.skipped) {
+      outcomes.push({ nodeId: item.nodeId, title: item.title, tier: item.tier, mode: item.mode, passed: item.rawExitCode === 0 });
+    }
+    if (item.exitCode !== 0 && (worstExit === 0 || item.exitCode === 2)) {
+      worstExit = item.exitCode;
+      if (item.exitCode === 2) break;
     }
   }
+  if (outcomes.length > 0 && (existsSync(join(root, '.donegate')) || existsSync(join(root, 'INTENT.md')))) {
+    const modelId = typeof flags.model === 'string' ? flags.model : (process.env.DONEGATE_MODEL_ID || 'default');
+    tlRecordRuleOutcomes(root, { modelId, flowId: comp.flowId, outcomes });
+  }
 
-  const payload = {
-    ok: worstExit === 0,
-    exitCode: worstExit,
-    flowId: comp.flowId,
-    workflowHash: comp.workflowHash,
-    disclosureBanner: comp.disclosureBanner,
-    results
-  };
+  const payload = { ok: worstExit === 0, exitCode: worstExit, flowId: comp.flowId, workflowHash: comp.workflowHash, disclosureBanner: comp.disclosureBanner, results };
   if (flags.json) return { exitCode: worstExit, stdout: JSON.stringify(payload, null, 2), ...payload };
 
   const lines = [

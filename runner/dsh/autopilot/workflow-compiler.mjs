@@ -1,6 +1,7 @@
 // 声明式默认治理工作流编译器（Base Preset + Project Overlay + Seam 插槽 + Coeffect 探针 + 提案确认）
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../../skill/hash.mjs';
 import { readJsonStrict } from '../../../skill/io.mjs';
@@ -132,6 +133,38 @@ function wfcProbeBinFast(root, binName) {
   return false;
 }
 
+const WFC_DIFF_CODE_RE = /\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i;
+const WFC_DIFF_TEST_RE = /(?:^|\/)(?:tests?|__tests__|spec)\/|(?:\.(?:test|spec)|[-_]fixtures?|-self-test)\.[a-z0-9]+$|(?:^|\/)test_[^/]+\.py$|_test\.(?:go|rs)$/i;
+const WFC_DIFF_CONTRACT_RE = /^(?:contracts\/|INTENT\.md$|CONSTRAINTS\.md$|decisions\/)/;
+const WFC_DIFF_HOOK_SCRIPT_RE = /^(?:\.githooks\/|skill\/|scripts\/)|\.(?:sh|bash|cmd|ps1)$/i;
+const WFC_DIFF_DEPS_CFG_RE = /(?:^|\/)(?:package\.json|package-lock\.json|pnpm-lock\.yaml|pyproject\.toml|requirements[^/]*\.txt|Cargo\.toml|go\.mod|thresholds\.json|\.dependency-cruiser\.[a-z]+)$/i;
+
+function wfcProbeGitDiffCoeffects(root) {
+  const empty = {
+    diffFileCount: 0, diffHasCode: false, diffTouchesTests: false,
+    diffTouchesContracts: false, diffTouchesHooksOrScripts: false, diffTouchesDepsOrConfig: false
+  };
+  if (!existsSync(join(root, '.git'))) return empty;
+  const st = spawnSync('git', ['-C', root, '-c', 'core.quotepath=false', 'status', '--porcelain', '-uall'], {
+    encoding: 'utf8', windowsHide: true, timeout: 5000
+  });
+  if (st.status !== 0 || !(st.stdout || '').trim()) return empty;
+  const files = [];
+  for (const line of st.stdout.split(/\r?\n/)) {
+    if (line.length < 4) continue;
+    const raw = line.slice(3).split(' -> ').pop().trim().replace(/^"(.*)"$/, '$1').replace(/\\/g, '/');
+    if (raw && !raw.startsWith('.donegate/')) files.push(raw);
+  }
+  return {
+    diffFileCount: files.length,
+    diffHasCode: files.some((f) => WFC_DIFF_CODE_RE.test(f)),
+    diffTouchesTests: files.some((f) => WFC_DIFF_TEST_RE.test(f)),
+    diffTouchesContracts: files.some((f) => WFC_DIFF_CONTRACT_RE.test(f)),
+    diffTouchesHooksOrScripts: files.some((f) => WFC_DIFF_HOOK_SCRIPT_RE.test(f)),
+    diffTouchesDepsOrConfig: files.some((f) => WFC_DIFF_DEPS_CFG_RE.test(f))
+  };
+}
+
 export function wfcProbeEnvCoeffects(projectRoot) {
   const root = resolve(projectRoot);
   const pw = uleResolvePlaywrightModule(root);
@@ -163,7 +196,8 @@ export function wfcProbeEnvCoeffects(projectRoot) {
     hasPytest: hasPython && wfcProbeBinFast(root, 'pytest'),
     hasPyTypeChecker: hasPython && (wfcProbeBinFast(root, 'ty') || wfcProbeBinFast(root, 'basedpyright') || wfcProbeBinFast(root, 'pyright')),
     hasImportLinter: hasPython && existsSync(join(root, '.importlinter')) && wfcProbeBinFast(root, 'lint-imports'),
-    hasTreeSitterWasm: tsCell.available
+    hasTreeSitterWasm: tsCell.available,
+    ...wfcProbeGitDiffCoeffects(root)
   };
 }
 
@@ -218,11 +252,23 @@ function wfcCheckNodeCoeffects(node, coeffects) {
   };
 }
 
+function wfcApplyNodeModePatch(node, overlay, overrideDiff) {
+  const patchedMode = overlay?.patchMode?.[node.id] || overlay?.toggleNodes?.[node.id]?.mode;
+  if (patchedMode !== 'observe' && patchedMode !== 'enforce') return;
+  if (patchedMode === 'observe' && node.tier === 'integrity') return;
+  if (patchedMode !== node.mode) {
+    node.mode = patchedMode;
+    overrideDiff.push({ kind: 'mode', nodeId: node.id, title: node.title, mode: patchedMode });
+  }
+}
+
 function wfcApplyNodeOverlay(baseNode, overlay, coeffects, overrideDiff) {
+  const tier = baseNode.tier || 'recommended';
   const node = {
     ...baseNode,
     config: { ...(baseNode.config || {}) },
-    tier: baseNode.tier || 'recommended'
+    tier,
+    mode: (baseNode.mode === 'observe' && tier !== 'integrity') ? 'observe' : 'enforce'
   };
   const tog = overlay?.toggleNodes?.[node.id];
   if (tog && typeof tog.bypassed === 'boolean') {
@@ -230,6 +276,7 @@ function wfcApplyNodeOverlay(baseNode, overlay, coeffects, overrideDiff) {
     node.bypassReason = tog.reason || '';
     overrideDiff.push({ kind: 'toggle', nodeId: node.id, title: node.title, bypassed: tog.bypassed, reason: tog.reason || '' });
   }
+  wfcApplyNodeModePatch(node, overlay, overrideDiff);
   const cfgPatch = overlay?.patchConfig?.[node.id];
   if (cfgPatch && typeof cfgPatch === 'object') {
     node.config = { ...node.config, ...cfgPatch };
@@ -249,12 +296,22 @@ function wfcApplyNodeOverlay(baseNode, overlay, coeffects, overrideDiff) {
   return node;
 }
 
-function wfcAppendInsertedNodes(effectiveNodes, overlay, overrideDiff) {
+function wfcAppendInsertedNodes(effectiveNodes, overlay, coeffects, overrideDiff) {
   const extras = Array.isArray(overlay?.insertNodes) ? overlay.insertNodes : [];
   for (const extra of extras) {
     if (!extra || !extra.id || effectiveNodes.some((x) => x.id === extra.id)) continue;
-    effectiveNodes.push({ ...extra, tier: extra.tier || 'optional', insertedByOverlay: true });
-    overrideDiff.push({ kind: 'insert', nodeId: extra.id, title: extra.title || extra.id });
+    const tier = extra.tier || 'optional';
+    const mode = (extra.mode === 'observe' && tier !== 'integrity') ? 'observe' : 'enforce';
+    const co = wfcCheckNodeCoeffects(extra, coeffects);
+    effectiveNodes.push({
+      ...extra,
+      tier,
+      mode,
+      coeffectState: co,
+      ...(co.skippedByEnv ? { envSkipped: true } : {}),
+      insertedByOverlay: true
+    });
+    overrideDiff.push({ kind: 'insert', nodeId: extra.id, title: extra.title || extra.id, mode });
   }
 }
 
@@ -285,6 +342,7 @@ function wfcComputeWorkflowHash(baseDoc, effectiveNodes, effectiveLinks) {
     nodes: effectiveNodes.map((n) => ({
       id: n.id,
       tier: n.tier,
+      mode: n.mode || 'enforce',
       bypassed: Boolean(n.bypassed),
       activeBrick: n.activeBrick || n.tplId || '',
       config: n.config || {}
@@ -305,7 +363,7 @@ export function wfcCompileWorkflow(projectRoot, flowIdOrDoc, opts = {}) {
   const coeffects = opts.coeffects || wfcProbeEnvCoeffects(root);
   const overrideDiff = [];
   const effectiveNodes = baseDoc.nodes.map((n) => wfcApplyNodeOverlay(n, overlay, coeffects, overrideDiff));
-  wfcAppendInsertedNodes(effectiveNodes, overlay, overrideDiff);
+  wfcAppendInsertedNodes(effectiveNodes, overlay, coeffects, overrideDiff);
 
   const newOfficialNodes = wfcCollectNewOfficialNodes(baseDoc, overlay);
   const disabledIntegrityRules = wfcCollectDisabledIntegrityRules(baseDoc.id, effectiveNodes, overlay);
@@ -383,6 +441,7 @@ export function wfcSaveProjectOverlay(projectRoot, flowId, patch = {}, opts = {}
     confirmedByHuman: true,
     seenNodeIds: baseDoc.nodes.map((n) => n.id),
     toggleNodes: wfcNormalizeToggleNodes(baseDoc, { ...(prev.toggleNodes || {}), ...(patch.toggleNodes || {}) }, nowIso),
+    patchMode: { ...(prev.patchMode || {}), ...(patch.patchMode || {}) },
     patchConfig: { ...(prev.patchConfig || {}), ...(patch.patchConfig || {}) },
     swapBrick: { ...(prev.swapBrick || {}), ...(patch.swapBrick || {}) },
     insertNodes: Array.isArray(patch.insertNodes) ? wfcSanitizeInsertNodes(patch.insertNodes) : wfcSanitizeInsertNodes(prev.insertNodes || []),
@@ -410,6 +469,7 @@ export function wfcCreateProposal(projectRoot, flowId, patch = {}, opts = {}) {
     ...prev,
     flowId: baseDoc.id,
     toggleNodes: wfcNormalizeToggleNodes(baseDoc, { ...(prev.toggleNodes || {}), ...(safePatch.toggleNodes || {}) }, nowIso),
+    patchMode: { ...(prev.patchMode || {}), ...(safePatch.patchMode || {}) },
     patchConfig: { ...(prev.patchConfig || {}), ...(safePatch.patchConfig || {}) },
     swapBrick: { ...(prev.swapBrick || {}), ...(safePatch.swapBrick || {}) },
     insertNodes: Array.isArray(safePatch.insertNodes) ? safePatch.insertNodes : wfcSanitizeInsertNodes(prev.insertNodes || []),

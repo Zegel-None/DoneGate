@@ -1,4 +1,4 @@
-// 零开局选档 · 模型信任阶梯（按模型实绩克制建议撤枷锁，换弱模型或漏网复发提醒系回安全带，<= 190 行）
+// 零开局选档 · 模型信任阶梯与观察期采纳率度量（按实绩建议减负、观察期规则晋升/修剪与安全带回系提醒，<= 265 行）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../../skill/io.mjs';
@@ -6,6 +6,10 @@ import { wfcCompileWorkflow, wfcListDefaultWorkflows } from './workflow-compiler
 
 export const TRUST_LADDER_DEFAULT_STREAK = 8;
 export const TRUST_LADDER_MAX_SUGGESTIONS = 1;
+export const OBSERVE_MIN_PROMOTE_FIRES = 3;
+export const OBSERVE_PROMOTE_FIX_RATE = 0.75;
+export const OBSERVE_MIN_PRUNE_FIRES = 5;
+export const OBSERVE_PRUNE_MAX_FIX_RATE = 0.2;
 const TL_LEDGER_REL = '.donegate/trust-ledger.json';
 
 function tlKey(modelId, flowId, nodeId) {
@@ -26,11 +30,59 @@ export function tlLoadTrustLedger(projectRoot) {
 
 export function tlSaveTrustLedger(projectRoot, ledger) {
   const root = resolve(projectRoot);
-  const dir = join(root, '.donegate');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(root, '.donegate'), { recursive: true });
   const next = { ...ledger, schema: 'donegate-trust-ledger/v1', updatedAt: new Date().toISOString() };
   writeFileSync(join(root, TL_LEDGER_REL), JSON.stringify(next, null, 2) + '\n', 'utf8');
   return next;
+}
+
+function tlCreateDefaultRecord(cleanModel, flowId, item, now) {
+  return {
+    modelId: cleanModel,
+    flowId,
+    nodeId: item.nodeId,
+    title: String(item.title || item.nodeId),
+    tier: item.tier || 'recommended',
+    mode: item.mode || 'enforce',
+    cleanStreak: 0,
+    totalRuns: 0,
+    catches: 0,
+    warnFired: 0,
+    warnFixed: 0,
+    warnIgnored: 0,
+    pendingWarn: false,
+    escapeRelapses: 0,
+    dismissed: false,
+    lastAt: now
+  };
+}
+
+function tlUpdateRecordCounters(rec, passed, isObserve) {
+  if (passed) {
+    if (rec.pendingWarn) {
+      rec.warnFixed = Number(rec.warnFixed || 0) + 1;
+      rec.pendingWarn = false;
+    }
+    rec.cleanStreak = Number(rec.cleanStreak || 0) + 1;
+    return;
+  }
+  rec.cleanStreak = 0;
+  if (!isObserve) {
+    rec.catches = Number(rec.catches || 0) + 1;
+    return;
+  }
+  if (rec.pendingWarn) rec.warnIgnored = Number(rec.warnIgnored || 0) + 1;
+  rec.warnFired = Number(rec.warnFired || 0) + 1;
+  rec.pendingWarn = true;
+}
+
+function tlApplySingleOutcome(rec, item, now) {
+  rec.totalRuns = Number(rec.totalRuns || 0) + 1;
+  rec.lastAt = now;
+  if (item.title) rec.title = String(item.title);
+  if (item.tier) rec.tier = item.tier;
+  if (item.mode) rec.mode = item.mode;
+  tlUpdateRecordCounters(rec, Boolean(item.passed), item.mode === 'observe');
 }
 
 export function tlRecordRuleOutcomes(projectRoot, { modelId = 'default', flowId = '', outcomes = [] } = {}) {
@@ -41,31 +93,11 @@ export function tlRecordRuleOutcomes(projectRoot, { modelId = 'default', flowId 
 
   for (const item of Array.isArray(outcomes) ? outcomes : []) {
     if (!item || !item.nodeId || item.skipped) continue;
-    const k = tlKey(cleanModel, flowId || item.flowId || 'default', item.nodeId);
-    const prev = ledger.records[k] || {
-      modelId: cleanModel,
-      flowId: flowId || item.flowId || 'default',
-      nodeId: item.nodeId,
-      title: String(item.title || item.nodeId),
-      tier: item.tier || 'recommended',
-      cleanStreak: 0,
-      totalRuns: 0,
-      catches: 0,
-      escapeRelapses: 0,
-      dismissed: false,
-      lastAt: now
-    };
-    prev.totalRuns += 1;
-    prev.lastAt = now;
-    if (item.title) prev.title = String(item.title);
-    if (item.tier) prev.tier = item.tier;
-    if (item.passed) {
-      prev.cleanStreak += 1;
-    } else {
-      prev.cleanStreak = 0;
-      prev.catches += 1;
-    }
-    ledger.records[k] = prev;
+    const effFlowId = flowId || item.flowId || 'default';
+    const k = tlKey(cleanModel, effFlowId, item.nodeId);
+    const rec = ledger.records[k] || tlCreateDefaultRecord(cleanModel, effFlowId, item, now);
+    tlApplySingleOutcome(rec, item, now);
+    ledger.records[k] = rec;
   }
   return tlSaveTrustLedger(projectRoot, ledger);
 }
@@ -118,7 +150,7 @@ function tlEvalBypassedCandidate(comp, node, rec, targetModel, minStreak) {
 }
 
 function tlEvalRelaxCandidate(comp, node, rec, targetModel, minStreak) {
-  if (node.tier === 'integrity' || !rec || rec.dismissed) return null;
+  if (node.tier === 'integrity' || node.mode === 'observe' || !rec || rec.dismissed) return null;
   if (rec.cleanStreak < minStreak || Number(rec.escapeRelapses || 0) !== 0) return null;
   return {
     kind: 'relax',
@@ -133,9 +165,47 @@ function tlEvalRelaxCandidate(comp, node, rec, targetModel, minStreak) {
   };
 }
 
+function tlEvalObserveCandidate(comp, node, rec, targetModel) {
+  if (node.mode !== 'observe' || !rec || rec.dismissed) return null;
+  const fired = Number(rec.warnFired || 0);
+  if (fired < OBSERVE_MIN_PROMOTE_FIRES) return null;
+  const fixed = Number(rec.warnFixed || 0);
+  const fixRate = Number((fixed / fired).toFixed(4));
+  if (fired >= OBSERVE_MIN_PROMOTE_FIRES && fixRate >= OBSERVE_PROMOTE_FIX_RATE) {
+    return {
+      kind: 'promote-enforce',
+      modelId: targetModel,
+      flowId: comp.flowId,
+      flowName: comp.effectivePack.name,
+      nodeId: node.id,
+      title: node.title,
+      warnFired: fired,
+      warnFixed: fixed,
+      fixRate,
+      reason: `观察期规则「${node.title}」已触发 ${fired} 次且真实修复采纳率达 ${Math.round(fixRate * 100)}%，建议晋升为正式阻断 (enforce)`
+    };
+  }
+  if (fired >= OBSERVE_MIN_PRUNE_FIRES && fixRate < OBSERVE_PRUNE_MAX_FIX_RATE) {
+    return {
+      kind: 'prune-noisy',
+      modelId: targetModel,
+      flowId: comp.flowId,
+      flowName: comp.effectivePack.name,
+      nodeId: node.id,
+      title: node.title,
+      warnFired: fired,
+      warnFixed: fixed,
+      fixRate,
+      reason: `观察期规则「${node.title}」已触发 ${fired} 次但采纳率仅 ${Math.round(fixRate * 100)}%（疑似高误报），建议直接关闭修剪`
+    };
+  }
+  return null;
+}
+
 function tlScanFlowCandidates(comp, ledger, targetModel, minStreak) {
   const relaxCands = [];
   const reenableCands = [];
+  const observeDecisions = [];
   for (const node of comp.effectivePack.nodes || []) {
     const rec = ledger.records[tlKey(targetModel, comp.flowId, node.id)] || null;
     if (node.bypassed === true) {
@@ -143,10 +213,12 @@ function tlScanFlowCandidates(comp, ledger, targetModel, minStreak) {
       if (cand) reenableCands.push(cand);
       continue;
     }
+    const obsDec = tlEvalObserveCandidate(comp, node, rec, targetModel);
+    if (obsDec) observeDecisions.push(obsDec);
     const relax = tlEvalRelaxCandidate(comp, node, rec, targetModel, minStreak);
     if (relax) relaxCands.push(relax);
   }
-  return { relaxCands, reenableCands };
+  return { relaxCands, reenableCands, observeDecisions };
 }
 
 export function tlComputeRestrainedSuggestions(projectRoot, opts = {}) {
@@ -156,17 +228,19 @@ export function tlComputeRestrainedSuggestions(projectRoot, opts = {}) {
   const minStreak = Number(opts.minStreak || TRUST_LADDER_DEFAULT_STREAK);
   const maxSuggestions = Number(opts.maxSuggestions || TRUST_LADDER_MAX_SUGGESTIONS);
   if (!targetModel) {
-    return { ok: true, modelId: null, minStreak, suggestions: [], reenableAlerts: [] };
+    return { ok: true, modelId: null, minStreak, suggestions: [], reenableAlerts: [], observeDecisions: [] };
   }
 
   const allRelax = [];
   const allReenable = [];
+  const allObserve = [];
   for (const wf of wfcListDefaultWorkflows(root)) {
     const comp = wfcCompileWorkflow(root, wf);
     if (!comp.ok) continue;
-    const { relaxCands, reenableCands } = tlScanFlowCandidates(comp, ledger, targetModel, minStreak);
+    const { relaxCands, reenableCands, observeDecisions } = tlScanFlowCandidates(comp, ledger, targetModel, minStreak);
     allRelax.push(...relaxCands);
     allReenable.push(...reenableCands);
+    allObserve.push(...observeDecisions);
   }
   allRelax.sort((a, b) => b.cleanStreak - a.cleanStreak);
   return {
@@ -174,6 +248,7 @@ export function tlComputeRestrainedSuggestions(projectRoot, opts = {}) {
     modelId: targetModel,
     minStreak,
     suggestions: allRelax.slice(0, Math.max(1, maxSuggestions)),
-    reenableAlerts: allReenable.slice(0, 3)
+    reenableAlerts: allReenable.slice(0, 3),
+    observeDecisions: allObserve
   };
 }
