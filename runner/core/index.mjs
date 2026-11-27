@@ -17,7 +17,7 @@ export { cmdSlice, diffAgainstFrozenStub, freezeNodeStubBaseline, parseFocusPatt
 export { cmdCheckNode, collectGitNodeChanges } from './node-micro-gate.mjs';
 export { collectMultiHopTestsFromReverseAdj, irInferMultiHopTests } from './impact-multihop.mjs';
 export { analyzeImpactRadar, cmdImpact } from './impact-radar.mjs';
-export { CK_SKIP_DIRS, listRootRegularFiles, runWithSingleflightCache } from './cockpit-cache.mjs';
+export { CK_SKIP_DIRS, discoverRepoScanDirs, listRootRegularFiles, runWithSingleflightCache } from './cockpit-cache.mjs';
 export {
   getCbmGraphSummary, kneedleElbowCount, openCbmGraphHandle, queryCbmContractHubs,
   queryCbmFileGraph, queryCbmImpactGraph, queryCbmSymbolTrace, resolveCbmBinary

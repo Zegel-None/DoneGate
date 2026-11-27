@@ -8,8 +8,12 @@ import { readJsonStrict } from '../../skill/io.mjs';
 
 export const CK_CACHE_SCHEMA = 'cockpit-idx-v9';
 export const CK_SCAN_DIRS = ['runner', 'skill', 'workflows', 'bricks', 'tools', 'contracts', 'decisions'];
-export const CK_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', 'dist', '_dist', 'coverage', 'reports'];
-const CK_ROOT_FILE_RE = /\.(?:mjs|cjs|js|ts|json|jsonl|cmd|yml|yaml)$/i;
+export const CK_SKIP_DIRS = [
+  'node_modules', '.git', '.donegate', '.cockpit', '.dsh', '.deps', '.venv', 'venv',
+  '__pycache__', '.pytest_cache', '.mypy_cache', 'target', 'build', 'dist', '_dist', '.next', 'vendor', 'coverage', 'reports'
+];
+const CK_SKIP_SET = new Set(CK_SKIP_DIRS);
+const CK_ROOT_FILE_RE = /\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|toml|json|jsonl|cmd|sh|yml|yaml)$/i;
 const CK_WAIT_SLICE = new Int32Array(new SharedArrayBuffer(4));
 
 export function listRootRegularFiles(root) {
@@ -18,6 +22,16 @@ export function listRootRegularFiles(root) {
     if (ent.isFile() && !ent.name.startsWith('.git') && CK_ROOT_FILE_RE.test(ent.name)) out.push(ent.name);
   }
   return out.sort();
+}
+
+export function discoverRepoScanDirs(root, skipSet = CK_SKIP_SET) {
+  if (!existsSync(root)) return [];
+  const dirs = [];
+  for (const ent of readdirSync(root, { withFileTypes: true })) {
+    if (!ent.isDirectory() || ent.name.startsWith('.') || skipSet.has(ent.name)) continue;
+    dirs.push(ent.name);
+  }
+  return dirs.sort();
 }
 
 function resolveGitCommonAndGitDir(root) {
@@ -58,7 +72,7 @@ export function readGitHeadTokenFast(root, fallback = 'uncommitted') {
   }
 }
 
-export function computeQuickRepoFingerprint(root, fallbackHead = '') {
+export function computeQuickRepoFingerprint(root, fallbackHead = '', namespace = '') {
   const headToken = readGitHeadTokenFast(root, fallbackHead || 'uncommitted');
   let count = 0, maxMtime = 0, totalSize = 0;
   const bump = (abs) => {
@@ -73,12 +87,14 @@ export function computeQuickRepoFingerprint(root, fallbackHead = '') {
     const p = join(root, cfg);
     if (existsSync(p)) bump(p);
   }
-  for (const d of [...CK_SCAN_DIRS, 'tests']) {
+  const scanDirs = new Set([...CK_SCAN_DIRS, ...discoverRepoScanDirs(root), 'tests']);
+  for (const d of scanDirs) {
     const absD = join(root, d);
     if (!existsSync(absD)) continue;
     for (const f of walk(absD, { skipDirs: CK_SKIP_DIRS }).files) bump(f);
   }
-  return sha256(`${CK_CACHE_SCHEMA}|${root}|${headToken}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
+  const nsTag = namespace ? `|ns:${namespace}` : '';
+  return sha256(`${CK_CACHE_SCHEMA}${nsTag}|${root}|${headToken}|${count}|${maxMtime}|${totalSize}`).slice(0, 24);
 }
 
 function tryReadValidCache(cacheFile, root) {
@@ -124,9 +140,9 @@ function persistBuiltCache(cacheFile, computeFn) {
   return built;
 }
 
-export function runWithSingleflightCache(root, fallbackHead, computeFn) {
-  const cacheDir = process.env.DONEGATE_COCKPIT_CACHE_DIR || tmpdir();
-  const cacheFile = join(cacheDir, `dg-${CK_CACHE_SCHEMA}-${computeQuickRepoFingerprint(root, fallbackHead)}.json`);
+export function runWithSingleflightCache(root, fallbackHead, computeFn, namespace = '') {
+  const cacheDir = process.env.COCKPIT_CACHE_DIR || process.env.DONEGATE_COCKPIT_CACHE_DIR || tmpdir();
+  const cacheFile = join(cacheDir, `dg-${CK_CACHE_SCHEMA}-${computeQuickRepoFingerprint(root, fallbackHead, namespace)}.json`);
   const lockPath = `${cacheFile}.lock`;
   for (;;) {
     const hit = tryReadValidCache(cacheFile, root);

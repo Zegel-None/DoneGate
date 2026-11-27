@@ -3,14 +3,22 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { walk } from '../../skill/fs-walk.mjs';
 import { extractFileInterfaceStub } from './ast-stub.mjs';
+import { discoverRepoScanDirs } from './cockpit-cache.mjs';
 import { queryCbmImpactGraph } from './cockpit-cbm.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes } from './context-router.mjs';
 import { finalizeCliTextView, parseBudgetOption } from './view-budget.mjs';
-import { formatMultiHopSectionLines, IR_TEST_RE, irInferMultiHopTests } from './impact-multihop.mjs';
+import { formatMultiHopSectionLines, irInferMultiHopTests } from './impact-multihop.mjs';
 
-const IR_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
-const IR_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', 'dist', '_dist', 'coverage', 'reports'];
-const IR_TEXT_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.json', '.cmd']);
+const IR_DG_SCAN_DIRS = ['runner', 'skill', 'tests', 'workflows', 'bricks'];
+const IR_SKIP_DIRS = [
+  'node_modules', '.git', '.donegate', '.cockpit', '.dsh', '.deps', '.venv', 'venv',
+  '__pycache__', '.pytest_cache', 'target', 'build', 'dist', '_dist', '.next', 'vendor', 'coverage', 'reports'
+];
+const IR_TEXT_EXTS = new Set([
+  '.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.rb', '.php', '.c', '.cpp', '.h',
+  '.json', '.toml', '.yml', '.yaml', '.cmd', '.sh'
+]);
+const IR_ANY_TEST_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$|^runner\/self-test\.mjs$|(^|\/)test_[^/]+\.py$|_test\.(?:py|go|rs)$/i;
 const IR_GENERIC_ANCHORS = new Set([
   'app', 'root', 'main', 'title', 'name', 'id', 'list', 'body', 'header', 'footer',
   'icon', 'btn', 'card', 'modal', 'light', 'dark', 'true', 'false', 'index', 'contract', 'shared'
@@ -39,18 +47,30 @@ function irScanDomAndRouteAnchors(raw, addAnchor) {
   }
 }
 
+function irExtractPolyglotExports(raw, relPath, addAnchor) {
+  if (/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(relPath)) {
+    for (const ex of extractFileInterfaceStub(raw, relPath).exports) {
+      if (ex.symbol && !ex.symbol.startsWith('reexport:')) addAnchor(ex.symbol, 'export');
+    }
+    return;
+  }
+  if (/\.py$/i.test(relPath)) {
+    for (const m of raw.matchAll(/^(?:async\s+def|def|class)\s+([A-Za-z][A-Za-z0-9_]*)\b/gm)) addAnchor(m[1], 'export');
+    return;
+  }
+  if (/\.(?:go|rs)$/i.test(relPath)) {
+    for (const m of raw.matchAll(/^(?:pub\s+(?:async\s+)?fn|func)\s+([A-Za-z][A-Za-z0-9_]*)\b/gm)) addAnchor(m[1], 'export');
+  }
+}
+
 function irExtractAnchorsFromFile(raw, relPath) {
   const anchors = new Map();
   const addAnchor = (token, kind) => {
     if (irIsSpecificAnchor(token) && !anchors.has(token)) anchors.set(token, kind);
   };
   const baseName = basename(relPath);
-  if (/\.(json|jsonl|cmd)$/i.test(baseName)) addAnchor(baseName, 'config-file');
-  if (/\.(mjs|cjs|js|ts|tsx|jsx)$/i.test(relPath)) {
-    for (const ex of extractFileInterfaceStub(raw, relPath).exports) {
-      if (ex.symbol && !ex.symbol.startsWith('reexport:')) addAnchor(ex.symbol, 'export');
-    }
-  }
+  if (/\.(json|jsonl|toml|yml|yaml|cmd|sh)$/i.test(baseName)) addAnchor(baseName, 'config-file');
+  irExtractPolyglotExports(raw, relPath, addAnchor);
   irScanDomAndRouteAnchors(raw, addAnchor);
   const stem = baseName.replace(/\.[a-z0-9]+$/i, '');
   if (stem && !IR_GENERIC_ANCHORS.has(stem.toLowerCase())) addAnchor(stem, 'module-stem');
@@ -93,9 +113,15 @@ function irResolveSearchAnchors(root, rawTargets) {
   return { selfFiles, anchors: [...anchorMap.values()] };
 }
 
-function irCollectRepoCandidateFiles(root, selfFiles) {
+function irResolveScanDirs(root, opts) {
+  if (Array.isArray(opts?.scanDirs) && opts.scanDirs.length > 0) return opts.scanDirs;
+  if (opts?.adapterId !== 'generic' && existsSync(join(root, 'runner/donegate.mjs'))) return IR_DG_SCAN_DIRS;
+  return discoverRepoScanDirs(root);
+}
+
+function irCollectRepoCandidateFiles(root, selfFiles, opts) {
   const out = [];
-  for (const d of IR_SCAN_DIRS) {
+  for (const d of irResolveScanDirs(root, opts)) {
     const absDir = join(root, d);
     if (!existsSync(absDir)) continue;
     for (const f of walk(absDir, { skipDirs: IR_SKIP_DIRS }).files) {
@@ -103,9 +129,12 @@ function irCollectRepoCandidateFiles(root, selfFiles) {
       if (!selfFiles.has(rel) && IR_TEXT_EXTS.has(extname(rel).toLowerCase())) out.push({ abs: f, rel });
     }
   }
-  for (const rc of ['install-dsh-web.cmd']) {
+  const rootExtras = opts?.adapterId === 'generic'
+    ? readdirSync(root).filter((n) => !n.startsWith('.') && IR_TEXT_EXTS.has(extname(n).toLowerCase()))
+    : ['install-dsh-web.cmd'];
+  for (const rc of rootExtras) {
     const p = join(root, rc);
-    if (!selfFiles.has(rc) && existsSync(p)) out.push({ abs: p, rel: rc });
+    if (!selfFiles.has(rc) && existsSync(p) && statSync(p).isFile()) out.push({ abs: p, rel: rc });
   }
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }
@@ -171,16 +200,16 @@ function irInferTransitiveTests(candidates, affectedProdFiles, directTestSet) {
   const stemAnchors = prodStems.map((s) => ({ token: s, kind: '1hop-module' }));
   const inferred = [];
   for (const { abs, rel } of candidates) {
-    if (!IR_TEST_RE.test(rel) || directTestSet.has(rel)) continue;
+    if (!IR_ANY_TEST_RE.test(rel) || directTestSet.has(rel)) continue;
     const hits = irFindAnchorHitsInText(readFileSync(abs, 'utf8'), stemAnchors);
     if (hits.length > 0) inferred.push({ file: rel, hitCount: hits.length, hits });
   }
   return inferred;
 }
 
-function irScanAffectedAdrs(root, selfFiles, affectedProdFiles, allContracts) {
+function irScanAffectedAdrs(root, selfFiles, affectedProdFiles, allContracts, isGeneric) {
   const adrDir = join(root, 'decisions');
-  if (!existsSync(adrDir)) return [];
+  if (isGeneric || !existsSync(adrDir)) return [];
   const pathTerms = [...selfFiles, ...affectedProdFiles.map((p) => p.file)];
   const matched = [];
   for (const f of readdirSync(adrDir).filter((x) => x.endsWith('.md')).sort()) {
@@ -194,23 +223,29 @@ function irScanAffectedAdrs(root, selfFiles, affectedProdFiles, allContracts) {
 
 function irCollectTestCommands(affectedTests, transitiveTests, multiHopTests) {
   const allRecFiles = [...new Set([...affectedTests, ...transitiveTests, ...multiHopTests].map((t) => t.file))];
-  const vitestTargets = allRecFiles.filter((f) => /\.test\.[a-z0-9]+$/i.test(f));
+  const vitestTargets = allRecFiles.filter((f) => /\.(?:test|spec)\.(?:mjs|cjs|js|ts|tsx|jsx)$/i.test(f));
+  const pytestTargets = allRecFiles.filter((f) => /\.py$/i.test(f));
+  const goTargets = [...new Set(allRecFiles.filter((f) => /_test\.go$/i.test(f)).map((f) => `./${f.split('/').slice(0, -1).join('/')}`))];
   const fixtureTargets = allRecFiles.filter((f) => /-fixtures\.mjs$|^runner\/self-test\.mjs$/i.test(f));
   return {
     suggestedVitestCommand: vitestTargets.length > 0 ? `npx vitest run ${vitestTargets.join(' ')}` : null,
+    suggestedPytestCommand: pytestTargets.length > 0 ? `pytest ${pytestTargets.join(' ')}` : null,
+    suggestedGoTestCommand: goTargets.length > 0 ? `go test ${goTargets.join(' ')}` : null,
     suggestedFixtureCommands: fixtureTargets.map((f) => `node ${f}`)
   };
 }
 
-export function analyzeImpactRadar(projectRoot, rawTargets = []) {
-  const t0 = Date.now(), root = resolve(projectRoot);
+export function analyzeImpactRadar(projectRoot, rawTargets = [], opts = {}) {
+  const t0 = Date.now(), root = resolve(projectRoot), isGeneric = opts?.adapterId === 'generic';
+  const cliPrefix = opts?.cliPrefix || (isGeneric ? 'zoom-cockpit' : 'donegate');
   if (!existsSync(root) || rawTargets.length === 0) {
-    return { exitCode: 3, error: '用法：donegate impact <file-or-anchor...> [--json]' };
+    return { exitCode: 3, error: `用法：${cliPrefix} impact <file-or-anchor...> [--json]` };
   }
   const { selfFiles, anchors } = irResolveSearchAnchors(root, rawTargets);
-  const graph = discoverHermeticGraph(root), nodes = graph.ok ? graph.nodes : [];
+  const graph = isGeneric ? { ok: false, nodes: [] } : discoverHermeticGraph(root);
+  const nodes = graph.ok ? graph.nodes : [];
   const selfContracts = new Set([...selfFiles].flatMap((sf) => irResolveOwners(sf, nodes)));
-  const candidates = irCollectRepoCandidateFiles(root, selfFiles);
+  const candidates = irCollectRepoCandidateFiles(root, selfFiles, opts);
   const cbmByFile = irMergeCbmHitsByFile(queryCbmImpactGraph(root, selfFiles, rawTargets));
 
   const affectedTests = [], affectedProdFiles = [], crossContractSet = new Set();
@@ -219,7 +254,7 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
     const cbmHits = (cbmByFile.get(rel) || []).filter((ch) => !textHits.some((th) => th.token === ch.token));
     const hits = [...textHits, ...cbmHits];
     if (hits.length === 0) continue;
-    if (IR_TEST_RE.test(rel)) {
+    if (IR_ANY_TEST_RE.test(rel)) {
       affectedTests.push({ file: rel, hitCount: hits.length, hits });
       continue;
     }
@@ -232,7 +267,7 @@ export function analyzeImpactRadar(projectRoot, rawTargets = []) {
   const transitiveTests = irInferTransitiveTests(candidates, affectedProdFiles, directTestSet);
   const rawMultiHop = irInferMultiHopTests(root, selfFiles, { maxHops: 3 });
   const multiHopTests = rawMultiHop.filter((t) => !(t.hops === 1 && directTestSet.has(t.file)));
-  const affectedAdrs = irScanAffectedAdrs(root, selfFiles, affectedProdFiles, new Set([...selfContracts, ...crossContractSet]));
+  const affectedAdrs = irScanAffectedAdrs(root, selfFiles, affectedProdFiles, new Set([...selfContracts, ...crossContractSet]), isGeneric);
 
   return {
     exitCode: 0, durationMs: Date.now() - t0, targets: [...rawTargets], extractedAnchorCount: anchors.length,
@@ -246,26 +281,31 @@ function irFormatHitList(hits) {
   return hits.map((h) => `${h.token}@L${h.line}`).join(', ');
 }
 
-function irAppendImpactProdAndAdrs(lines, res, startSec) {
+function irAppendImpactProdAndAdrs(lines, res, startSec, isGeneric) {
   let sec = startSec;
   lines.push(`\n${++sec}. 波及生产与配置模块（${res.affectedProdFiles.length} 个，完整无截断）：`);
   if (res.affectedProdFiles.length === 0) lines.push('   （未检出跨文件生产引用）');
   for (const p of res.affectedProdFiles) {
-    lines.push(`   · ${p.file} (${p.owners.join(',') || '共享'}) [${irFormatHitList(p.hits)}]`);
+    const ownerTag = isGeneric ? '' : ` (${p.owners.join(',') || '共享'})`;
+    lines.push(`   · ${p.file}${ownerTag} [${irFormatHitList(p.hits)}]`);
   }
   if (res.affectedAdrs?.length > 0) {
     lines.push(`\n${++sec}. 关联历史架构决策 ADR 预警（${res.affectedAdrs.length} 篇）：`);
     for (const a of res.affectedAdrs) lines.push(`   · ${a.file} (命中依据: ${a.matchedBy})`);
   }
-  if (res.suggestedVitestCommand) lines.push(`\n建议提交前联跑单测：${res.suggestedVitestCommand}`);
+  for (const cmd of [res.suggestedVitestCommand, res.suggestedPytestCommand, res.suggestedGoTestCommand].filter(Boolean)) {
+    lines.push(`\n建议提交前联跑单测：${cmd}`);
+  }
   for (const fc of res.suggestedFixtureCommands) lines.push(`建议提交前联跑夹具：${fc}`);
 }
 
-function irFormatImpactReportText(res) {
-  const lines = [
-    `=== DoneGate 跨文件契约、CBM 图谱与 UI 锚点影响面雷达（提取锚点 ${res.extractedAnchorCount} 个，耗时 ${res.durationMs}ms） ===`,
-    `本卡归属契约：${res.selfContracts.join(', ') || '（字面量锚点查询）'} | 跨卡波及契约：${res.crossContractIds.join(', ') || '无'}`
-  ];
+function irFormatImpactReportText(res, opts = {}) {
+  const isGeneric = opts?.adapterId === 'generic';
+  const title = opts?.reportTitle || (isGeneric ? '跨文件符号、CBM 图谱与路由影响面雷达' : 'DoneGate 跨文件契约、CBM 图谱与 UI 锚点影响面雷达');
+  const lines = [`=== ${title}（提取锚点 ${res.extractedAnchorCount} 个，耗时 ${res.durationMs}ms） ===`];
+  if (!isGeneric) {
+    lines.push(`本卡归属契约：${res.selfContracts.join(', ') || '（字面量锚点查询）'} | 跨卡波及契约：${res.crossContractIds.join(', ') || '无'}`);
+  }
   let sec = 0;
   lines.push(`\n${++sec}. 直连引用单测与夹具（${res.affectedTests.length} 个，完整无截断）：`);
   if (res.affectedTests.length === 0) lines.push('   （未检出字面量直连单测）');
@@ -275,18 +315,19 @@ function irFormatImpactReportText(res) {
     for (const t of res.transitiveTests) lines.push(`   · ${t.file} [${irFormatHitList(t.hits)}]`);
   }
   if (res.multiHopTests?.length > 0) lines.push('', ...formatMultiHopSectionLines(res.multiHopTests, ++sec));
-  irAppendImpactProdAndAdrs(lines, res, sec);
+  irAppendImpactProdAndAdrs(lines, res, sec, isGeneric);
   return lines.join('\n');
 }
 
 export function cmdImpact(projectRoot, opts = {}) {
   const budgetOpt = parseBudgetOption(opts.budget);
   if (!budgetOpt.ok) return { exitCode: 3, stderr: budgetOpt.stderr };
-  const res = analyzeImpactRadar(projectRoot, Array.isArray(opts.targets) ? opts.targets : []);
+  const res = analyzeImpactRadar(projectRoot, Array.isArray(opts.targets) ? opts.targets : [], opts);
   if (res.exitCode !== 0) return { exitCode: res.exitCode, stderr: res.error };
   if (opts.json) return { exitCode: 0, impact: res, stdout: JSON.stringify(res, null, 2) };
-  const expandHint = `node runner/donegate.mjs impact ${(opts.targets || []).join(' ')}`.trim();
-  const view = finalizeCliTextView(irFormatImpactReportText(res), budgetOpt.value, expandHint);
+  const cliPrefix = opts?.cliPrefix || 'node runner/donegate.mjs';
+  const expandHint = `${cliPrefix} impact ${(opts.targets || []).join(' ')}`.trim();
+  const view = finalizeCliTextView(irFormatImpactReportText(res, opts), budgetOpt.value, expandHint);
   if (!view.ok) return { exitCode: view.exitCode, stderr: view.stderr };
   return { exitCode: 0, impact: res, stdout: view.stdout };
 }

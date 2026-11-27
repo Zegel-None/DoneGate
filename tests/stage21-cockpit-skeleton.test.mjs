@@ -216,7 +216,7 @@ describe('Stage 21 · Agentless 式文件骨架视图 (zoom --skeleton)', () => 
     const nestedSymZoom = dispatchCommand(['zoom', 'depthOf', '--skeleton'], REPO_ROOT);
     expect(nestedSymZoom.exitCode).toBe(0);
     expect(nestedSymZoom.stdout).toContain('↳ 命中嵌套符号 depthOf');
-    expect(nestedSymZoom.stdout).toContain('▶ L62: function ckcComputeContractLayers');
+    expect(nestedSymZoom.stdout).toMatch(/▶ L\d+: function ckcComputeContractLayers/);
   });
 
   it('⑤ 回归防护：越界 startLine 不崩溃、无分号 export * 不吞行、行尾块注释与多行 import 注释不误提取', () => {

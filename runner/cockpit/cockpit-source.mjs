@@ -45,7 +45,7 @@ function formatContractOwnerSummary(graphNodes, owners) {
   }).join('；');
 }
 
-function csFormatOwnershipLine(graphNodes, relFile, owners, hasContracts) {
+function csFormatOwnershipLine(graphNodes, relFile, owners, hasContracts, sharedGovLabel) {
   if (!hasContracts) {
     return `契约归属: 零契约公开/轻量模式（改完执行 node runner/donegate.mjs lint-edit ${relFile}）`;
   }
@@ -53,7 +53,7 @@ function csFormatOwnershipLine(graphNodes, relFile, owners, hasContracts) {
     return `契约归属: ${formatContractOwnerSummary(graphNodes, owners)}`;
   }
   if (isSharedGovernanceFile(relFile)) {
-    return '契约归属: SHARED_GOVERNANCE_GLOBS 公共治理白名单（提交单卡验收加 --allow-cross-scope）';
+    return `契约归属: ${sharedGovLabel || '公共治理白名单'}（提交单卡验收加 --allow-cross-scope）`;
   }
   return '契约归属: 契约外根级配置或单测文件（tests/** 免计生产行数配额）';
 }
@@ -101,9 +101,13 @@ function csAppendContractAdrLines(lines, boundAdrs, compactContractAdrs, seenAdr
 }
 
 export function formatPathGovernanceLines(idx, relFile, hasContracts, compactContractAdrs = false, seenAdrFiles = null) {
+  if (idx?.adapterId === 'generic') {
+    const dir = relFile.includes('/') ? `${relFile.slice(0, relFile.indexOf('/'))}/` : '根目录';
+    return [`模块目录: ${dir}（通用代码仓库模式）`];
+  }
   const graphNodes = idx.graph?.nodes || [];
   const owners = resolveFileContractOwners(graphNodes, relFile);
-  const lines = [csFormatOwnershipLine(graphNodes, relFile, owners, hasContracts)];
+  const lines = [csFormatOwnershipLine(graphNodes, relFile, owners, hasContracts, idx?.sharedGovLabel)];
 
   if (!idx.hasDecisionsDir) return lines;
   const boundAdrs = matchPathBoundAdrs(idx.adrs, relFile, owners);
@@ -165,13 +169,14 @@ export function renderBoundedSourceSlice(idx, rawTarget, hasContracts, seenAdrFi
 }
 
 function csAppendSymbolDefinitions(out, idx, definitions, hasContracts, tagOwners) {
+  const cli = idx?.cliPrefix || 'node runner/donegate.mjs';
   const seenGovFiles = new Set();
   for (const d of definitions) {
     const loc = d.file ? `${d.file}:L${d.startLine}-L${d.endLine}` : d.name;
     out.push(`  · [${d.label}] ${d.name}${d.signature || ''} @ ${loc}${tagOwners(d.file)}`);
     if (!d.file) continue;
     if (d.startLine > 0) {
-      out.push(`    末步直读源码: node runner/donegate.mjs zoom ${d.file}:${d.startLine}-${Math.max(d.startLine, d.endLine)} --source`);
+      out.push(`    末步直读源码: ${cli} zoom ${d.file}:${d.startLine}-${Math.max(d.startLine, d.endLine)} --source`);
     }
     if (seenGovFiles.has(d.file)) continue;
     seenGovFiles.add(d.file);
@@ -190,11 +195,12 @@ function csComputeCompressionPct(rawTokens, skelTokens) {
 }
 
 function csBuildFileSkeletonBlock(idx, fileInfo, hasContracts, highlightLines, headerTitle, notes) {
+  const cli = idx?.cliPrefix || 'node runner/donegate.mjs';
   const skel = buildFileSkeleton(idx.root, fileInfo.file, { highlightLines });
   const title = headerTitle || fileInfo.file;
   const header = `=== [Zoom-2 文件骨架视图] ${title} (共 ${fileInfo.totalLines} 行) ===`;
   const gov = formatPathGovernanceLines(idx, fileInfo.file, hasContracts, true);
-  const srcHint = `末步直读源码: node runner/donegate.mjs zoom ${fileInfo.file}:1-${fileInfo.totalLines} --source`;
+  const srcHint = `末步直读源码: ${cli} zoom ${fileInfo.file}:1-${fileInfo.totalLines} --source`;
   if (!skel) {
     return {
       text: [header, ...gov, ...(notes || []), '--- 骨架摘要 ---', '（当前未检测到 CBM 图谱，无法提取符号骨架）', srcHint].join('\n'),

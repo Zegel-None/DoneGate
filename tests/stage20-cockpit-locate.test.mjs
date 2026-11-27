@@ -84,6 +84,7 @@ describe('Stage 20 · 任务直达定位命令 (donegate locate)', () => {
     expect(inlineRes.exitCode).toBe(0);
     const inlineFiles = JSON.parse(inlineRes.stdout).results.map((r) => r.file);
     const inlineGold = new Set([
+      'runner/cockpit/adapters/donegate-brief.mjs',
       'runner/cockpit/cockpit-commands.mjs',
       'runner/core/context-router.mjs',
       'runner/core/ast-stub.mjs'

@@ -8,7 +8,8 @@ export {
 };
 
 export function buildZoomExpandHint(targets = [], opts = {}) {
-  const parts = ['node runner/donegate.mjs zoom', ...(Array.isArray(targets) ? targets : [])];
+  const cliPrefix = opts?.cliPrefix || 'node runner/donegate.mjs';
+  const parts = [`${cliPrefix} zoom`, ...(Array.isArray(targets) ? targets : [])];
   if (opts?.stubs) parts.push('--stubs');
   if (opts?.decisions) parts.push('--decisions');
   if (opts?.full) parts.push('--full');

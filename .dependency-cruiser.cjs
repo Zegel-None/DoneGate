@@ -84,6 +84,13 @@ module.exports = {
       comment: 'L4 工作台（runner/atlas/）禁止反向依赖 DSH 宿主层、dsh 顶层门面、驾驶舱视图或 CLI 总入口',
       from: { path: '^runner/atlas/' },
       to: { path: '^runner/(cockpit|donegate\\.mjs|dsh/(host|index\\.mjs|contract\\.mjs))' }
+    },
+    {
+      name: 'cockpit-core-must-stay-host-agnostic',
+      severity: 'error',
+      comment: '通用变焦驾驶舱内核（runner/cockpit/ 除 adapters/ 与索引门面外）禁止直接依赖 DoneGate 工作台、DSH 或提交预算模块',
+      from: { path: '^runner/cockpit/(?!adapters/|cockpit-index\\.mjs$)' },
+      to: { path: '^(runner/(atlas|dsh)/|skill/commit-hygiene-metrics\\.mjs$)' }
     }
   ],
   options: {

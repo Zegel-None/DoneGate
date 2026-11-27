@@ -5,55 +5,61 @@ import { resolve } from 'node:path';
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const posIntProp = (description) => ({ type: 'integer', minimum: 1, description });
 
-export const MCP_TOOLS = [
-  {
-    name: 'dg_brief',
-    description: '生成 DoneGate 主控 Zoom-0 全局根视口（业务域、承重接口与图谱统计）。',
-    inputSchema: { type: 'object', properties: { budget: posIntProp('可选 token 预算上限（正整数）') }, additionalProperties: false }
-  },
-  {
-    name: 'dg_locate',
-    description: '按任务语义从 CBM 图谱排序定位相关文件与骨架摘要。定位代码时先用 dg_locate，而不是 grep。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', minLength: 1, description: '任务描述或关键词' },
-        budget: posIntProp('可选 token 预算上限（正整数）'),
-        k: posIntProp('可选返回候选数量上限（正整数）')
-      },
-      required: ['query'],
-      additionalProperties: false
+export function buildMcpTools(toolPrefix = 'dg_', brandName = 'DoneGate') {
+  const p = String(toolPrefix ?? '');
+  const locateName = `${p}locate`;
+  return [
+    {
+      name: `${p}brief`,
+      description: `生成 ${brandName} Zoom-0 全局根视口（模块组、承重接口与图谱统计）。`,
+      inputSchema: { type: 'object', properties: { budget: posIntProp('可选 token 预算上限（正整数）') }, additionalProperties: false }
+    },
+    {
+      name: locateName,
+      description: `按任务语义从 CBM 图谱排序定位相关文件与骨架摘要。定位代码时先用 ${locateName}，而不是 grep。`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', minLength: 1, description: '任务描述或关键词' },
+          budget: posIntProp('可选 token 预算上限（正整数）'),
+          k: posIntProp('可选返回候选数量上限（正整数）')
+        },
+        required: ['query'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: `${p}zoom`,
+      description: '图谱下钻查看目录组、文件骨架、双向调用链或源码切片（若 source 与 skeleton 同为 true，source 优先）。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '组编号、文件[:起-止]或符号列表' },
+          skeleton: { type: 'boolean', description: '仅输出文件骨架摘要' },
+          source: { type: 'boolean', description: '直读源码切片（优先级高于 skeleton）' },
+          budget: posIntProp('可选 token 预算上限（正整数）')
+        },
+        required: ['targets'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: `${p}impact`,
+      description: '分析文件或符号改动的多跳影响面、调用方及关联测试命令。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '改动文件路径或锚点列表' },
+          budget: posIntProp('可选 token 预算上限（正整数）')
+        },
+        required: ['targets'],
+        additionalProperties: false
+      }
     }
-  },
-  {
-    name: 'dg_zoom',
-    description: '图谱下钻查看域、契约、文件骨架、双向调用链或源码切片（若 source 与 skeleton 同为 true，source 优先）。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '域、契约、文件[:起-止]或符号列表' },
-        skeleton: { type: 'boolean', description: '仅输出文件骨架摘要' },
-        source: { type: 'boolean', description: '直读源码切片（优先级高于 skeleton）' },
-        budget: posIntProp('可选 token 预算上限（正整数）')
-      },
-      required: ['targets'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'dg_impact',
-    description: '分析文件或符号改动的多跳影响面、调用方及关联测试命令。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        targets: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 }, description: '改动文件路径或锚点列表' },
-        budget: posIntProp('可选 token 预算上限（正整数）')
-      },
-      required: ['targets'],
-      additionalProperties: false
-    }
-  }
-];
+  ];
+}
+
+export const MCP_TOOLS = buildMcpTools('dg_', 'DoneGate');
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const jsonRpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id === undefined ? null : id, error: { code, message } });
@@ -133,13 +139,13 @@ function validatePosInt(val, name) {
   return { ok: true, value: val };
 }
 
-function buildLocateOrBriefArgv(name, args) {
-  const allowed = name === 'dg_brief' ? ['budget'] : ['query', 'budget', 'k'];
+function buildLocateOrBriefArgv(baseCmd, rawName, args) {
+  const allowed = baseCmd === 'brief' ? ['budget'] : ['query', 'budget', 'k'];
   const badKey = findUnknownArgKey(args, allowed);
-  if (badKey) return { rpcError: `Unknown argument for ${name}: ${badKey}` };
+  if (badKey) return { rpcError: `Unknown argument for ${rawName}: ${badKey}` };
   const bCheck = validatePosInt(args.budget, 'budget');
   if (!bCheck.ok) return bCheck;
-  if (name === 'dg_brief') return { ok: true, argv: ['brief', ...(bCheck.value ? ['--budget', String(bCheck.value)] : [])] };
+  if (baseCmd === 'brief') return { ok: true, argv: ['brief', ...(bCheck.value ? ['--budget', String(bCheck.value)] : [])] };
   if (typeof args.query !== 'string') return { rpcError: 'query must be a string' };
   const kCheck = validatePosInt(args.k, 'k');
   if (!kCheck.ok) return kCheck;
@@ -151,11 +157,11 @@ function buildLocateOrBriefArgv(name, args) {
   return { ok: true, argv };
 }
 
-function validateZoomAndTargets(name, args) {
+function validateZoomAndTargets(baseCmd, args) {
   if (!Array.isArray(args.targets) || args.targets.some((t) => typeof t !== 'string')) {
     return { rpcError: 'targets must be an array of strings' };
   }
-  if (name === 'dg_zoom') {
+  if (baseCmd === 'zoom') {
     if (args.skeleton !== undefined && typeof args.skeleton !== 'boolean') return { rpcError: 'skeleton must be boolean' };
     if (args.source !== undefined && typeof args.source !== 'boolean') return { rpcError: 'source must be boolean' };
   }
@@ -165,16 +171,16 @@ function validateZoomAndTargets(name, args) {
   return { ok: true };
 }
 
-function buildZoomOrImpactArgv(name, args) {
-  const allowed = name === 'dg_zoom' ? ['targets', 'skeleton', 'source', 'budget'] : ['targets', 'budget'];
+function buildZoomOrImpactArgv(baseCmd, rawName, args) {
+  const allowed = baseCmd === 'zoom' ? ['targets', 'skeleton', 'source', 'budget'] : ['targets', 'budget'];
   const badKey = findUnknownArgKey(args, allowed);
-  if (badKey) return { rpcError: `Unknown argument for ${name}: ${badKey}` };
-  const tCheck = validateZoomAndTargets(name, args);
+  if (badKey) return { rpcError: `Unknown argument for ${rawName}: ${badKey}` };
+  const tCheck = validateZoomAndTargets(baseCmd, args);
   if (!tCheck.ok) return tCheck;
   const bCheck = validatePosInt(args.budget, 'budget');
   if (!bCheck.ok) return bCheck;
-  const argv = [name === 'dg_zoom' ? 'zoom' : 'impact'];
-  if (name === 'dg_zoom') {
+  const argv = [baseCmd];
+  if (baseCmd === 'zoom') {
     if (args.source) argv.push('--source');
     else if (args.skeleton) argv.push('--skeleton');
   }
@@ -190,15 +196,22 @@ function formatDispatchResult(res) {
   return { content: [{ type: 'text', text }], ...(res.exitCode !== 0 ? { isError: true } : {}) };
 }
 
-function handleToolCall(params, root, dispatchCommand) {
+function resolveBaseToolCmd(rawName, toolPrefix) {
+  if (toolPrefix && !rawName.startsWith(toolPrefix)) return null;
+  const stripped = toolPrefix ? rawName.slice(toolPrefix.length) : rawName;
+  return ['brief', 'locate', 'zoom', 'impact'].includes(stripped) ? stripped : null;
+}
+
+function handleToolCall(params, root, dispatchCommand, toolPrefix) {
   if (!isPlainObject(params) || typeof params.name !== 'string') return { rpcError: 'Invalid tools/call params' };
   const args = params.arguments === undefined ? {} : params.arguments;
   if (!isPlainObject(args)) return { rpcError: 'arguments must be an object' };
   const { name } = params;
-  const built = (name === 'dg_brief' || name === 'dg_locate')
-    ? buildLocateOrBriefArgv(name, args)
-    : (name === 'dg_zoom' || name === 'dg_impact')
-      ? buildZoomOrImpactArgv(name, args)
+  const baseCmd = resolveBaseToolCmd(name, toolPrefix);
+  const built = (baseCmd === 'brief' || baseCmd === 'locate')
+    ? buildLocateOrBriefArgv(baseCmd, name, args)
+    : (baseCmd === 'zoom' || baseCmd === 'impact')
+      ? buildZoomOrImpactArgv(baseCmd, name, args)
       : { rpcError: `Unknown tool: ${name}` };
   if (built.rpcError) return { rpcError: built.rpcError };
   if (built.toolError) return { result: { isError: true, content: [{ type: 'text', text: built.toolError }] } };
@@ -209,32 +222,39 @@ function handleToolCall(params, root, dispatchCommand) {
   }
 }
 
-function buildInitializeResult(params) {
+function buildInitializeResult(params, serverName) {
   const reqVer = isPlainObject(params) ? params.protocolVersion : undefined;
   const protocolVersion = SUPPORTED_VERSIONS.includes(reqVer) ? reqVer : '2024-11-05';
-  return { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'donegate-cockpit', version: '1.0.0' } };
+  return { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: serverName, version: '1.0.0' } };
 }
 
-function dispatchRpcMessage(msg, resolvedRoot, dispatchCommand) {
+function dispatchRpcMessage(msg, resolvedRoot, dispatchCommand, cfg) {
   if (!isPlainObject(msg) || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string' || msg.method === '') {
     return jsonRpcError(isPlainObject(msg) && Object.hasOwn(msg, 'id') ? msg.id : null, -32600, 'Invalid Request');
   }
   if (!Object.hasOwn(msg, 'id') || msg.id === undefined) return null;
   const { id, method, params } = msg;
-  if (method === 'initialize') return { jsonrpc: '2.0', id, result: buildInitializeResult(params) };
+  if (method === 'initialize') return { jsonrpc: '2.0', id, result: buildInitializeResult(params, cfg.serverName) };
   if (method === 'ping') return { jsonrpc: '2.0', id, result: {} };
-  if (method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } };
+  if (method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: cfg.tools } };
   if (method === 'tools/call') {
-    const out = handleToolCall(params, resolvedRoot, dispatchCommand);
+    const out = handleToolCall(params, resolvedRoot, dispatchCommand, cfg.toolPrefix);
     return out.rpcError ? jsonRpcError(id, -32602, out.rpcError) : { jsonrpc: '2.0', id, result: out.result };
   }
   return jsonRpcError(id, -32601, `Method not found: ${method}`);
 }
 
-export function createMcpDispatcher({ root = process.cwd(), dispatchCommand } = {}) {
+export function createMcpDispatcher({
+  root = process.cwd(),
+  dispatchCommand,
+  serverName = 'donegate-cockpit',
+  toolPrefix = 'dg_',
+  brandName = 'DoneGate'
+} = {}) {
   if (typeof dispatchCommand !== 'function') throw new TypeError('startCockpitMcp requires dispatchCommand function');
   const resolvedRoot = resolve(root);
-  return (msg) => dispatchRpcMessage(msg, resolvedRoot, dispatchCommand);
+  const cfg = { serverName, toolPrefix, tools: toolPrefix === 'dg_' && brandName === 'DoneGate' ? MCP_TOOLS : buildMcpTools(toolPrefix, brandName) };
+  return (msg) => dispatchRpcMessage(msg, resolvedRoot, dispatchCommand, cfg);
 }
 
 function writeMcpReply(state, payload, mode) {
@@ -270,11 +290,14 @@ function drainMcpBuffer(state, isEof) {
 export function startCockpitMcp({
   root = process.cwd(),
   dispatchCommand,
+  serverName = 'donegate-cockpit',
+  toolPrefix = 'dg_',
+  brandName = 'DoneGate',
   stdin = process.stdin,
   stdout = process.stdout,
   stderr = process.stderr
 } = {}) {
-  const dispatchRpc = createMcpDispatcher({ root, dispatchCommand });
+  const dispatchRpc = createMcpDispatcher({ root, dispatchCommand, serverName, toolPrefix, brandName });
   const resolvedRoot = resolve(root);
   if (!existsSync(resolvedRoot)) throw new Error(`项目根目录不存在：${resolvedRoot}`);
   const state = { rxBuf: Buffer.alloc(0), replyMode: 'ndjson', pipeClosed: false, stdout, stderr, dispatchRpc };

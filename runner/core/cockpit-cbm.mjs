@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { sha256 } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -28,14 +28,15 @@ function loadDatabaseSyncCtor() {
 }
 
 export function resolveCbmBinary(projectRoot) {
-  const envBin = process.env.DONEGATE_CBM_BIN;
+  const envBin = process.env.COCKPIT_CBM_BIN || process.env.DONEGATE_CBM_BIN;
   if (envBin && existsSync(envBin)) return envBin;
   const exe = process.platform === 'win32' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
-  if (projectRoot) {
-    const sharedBin = join(resolve(projectRoot), 'workflows', '.deps', '_shared', '.bin', exe);
-    if (existsSync(sharedBin)) return sharedBin;
-  }
-  for (const dir of (process.env.PATH || '').split(delimiter).filter(Boolean)) {
+  const extraDirs = [
+    ...(projectRoot ? [join(resolve(projectRoot), '.cockpit', 'bin'), join(resolve(projectRoot), 'workflows', '.deps', '_shared', '.bin')] : []),
+    join(homedir(), '.cache', 'zoom-cockpit', 'bin'),
+    ...(process.env.PATH || '').split(delimiter).filter(Boolean)
+  ];
+  for (const dir of extraDirs) {
     const cand = join(dir, exe);
     if (existsSync(cand)) return cand;
   }

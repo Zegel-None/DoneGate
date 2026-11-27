@@ -5,6 +5,7 @@ import {
   buildFileSkeleton, discoverHermeticGraph, estimateTokens, explainRank, isSharedGovernanceFile,
   loadRankGraph, openCbmGraphHandle, personalizedPageRank, scoreSeeds
 } from '../core/index.mjs';
+import { resolveCockpitAdapter } from './cockpit-index.mjs';
 import { resolveFileContractOwners } from './cockpit-source.mjs';
 
 const LOCATE_CONTRACT_CACHE = new Map();
@@ -41,7 +42,11 @@ function clLoadContractNodes(rootDir, cacheKey) {
   return nodes;
 }
 
-function clResolveContractInfo(nodes, file) {
+function clResolveContractInfo(nodes, file, isGeneric) {
+  if (isGeneric) {
+    const label = file.includes('/') ? file.slice(0, file.indexOf('/')) : 'root';
+    return { ownerIds: [], contract: label };
+  }
   const ownerIds = resolveFileContractOwners(nodes, file);
   let contract = ownerIds.join(',');
   if (!contract) {
@@ -74,8 +79,8 @@ function clFormatReason(graph, seeds, file) {
   return '图谱关联传播';
 }
 
-function clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok) {
-  const { ownerIds, contract } = clResolveContractInfo(nodes, item.file);
+function clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok, isGeneric) {
+  const { ownerIds, contract } = clResolveContractInfo(nodes, item.file, isGeneric);
   return {
     file: item.file,
     score: item.score,
@@ -94,15 +99,25 @@ function clFormatCandidateBlock(rankNum, cand) {
   ].join('\n');
 }
 
-function clBuildFooterLines(top1) {
+function clBuildFooterLines(top1, adapter) {
+  const cli = adapter?.cliPrefix || 'node runner/donegate.mjs';
+  if (adapter?.id === 'generic') {
+    return [
+      '',
+      '下一步：',
+      `  1) ${cli} zoom ${top1.file} --skeleton`,
+      `  2) ${cli} impact ${top1.file}`,
+      `  3) ${cli} zoom ${top1.file} --source`
+    ];
+  }
   const third = top1.ownerIds.length > 0
-    ? `node runner/donegate.mjs slice ${top1.ownerIds[0]}`
-    : `node runner/donegate.mjs zoom ${top1.file}`;
+    ? `${cli} slice ${top1.ownerIds[0]}`
+    : `${cli} zoom ${top1.file}`;
   return [
     '',
     '下一步：',
-    `  1) node runner/donegate.mjs zoom ${top1.file} --skeleton`,
-    `  2) node runner/donegate.mjs impact ${top1.file}`,
+    `  1) ${cli} zoom ${top1.file} --skeleton`,
+    `  2) ${cli} impact ${top1.file}`,
     `  3) ${third}`
   ];
 }
@@ -184,9 +199,11 @@ function clRankCandidates(graph, seeds, alpha, k) {
 }
 
 export function cmdLocate(projectRoot, opts = {}) {
+  const adapter = resolveCockpitAdapter(opts.adapter);
+  const isGeneric = adapter.id === 'generic';
   const query = String(opts.query || '').trim();
   if (!query) {
-    return { exitCode: 3, stderr: '用法：node runner/donegate.mjs locate "<任务描述>" [--budget <tok>] [--k <n>] [--json]' };
+    return { exitCode: 3, stderr: `用法：${adapter.cliPrefix} locate "<任务描述>" [--budget <tok>] [--k <n>] [--json]` };
   }
   const budgetOpt = clParsePosInt(opts.budget, 4000, 'budget');
   if (!budgetOpt.ok) return { exitCode: 3, stderr: budgetOpt.stderr };
@@ -205,13 +222,13 @@ export function cmdLocate(projectRoot, opts = {}) {
 
   const h = openCbmGraphHandle(projectRoot);
   const rootDir = h?.root || projectRoot;
-  const nodes = clLoadContractNodes(rootDir, h ? `${h.root}|${h.fp}` : rootDir);
+  const nodes = isGeneric ? [] : clLoadContractNodes(rootDir, h ? `${h.root}|${h.fp}` : rootDir);
   const skelMaxTok = clResolveSkeletonBudget(budgetOpt.value);
-  const candidates = ranked.topSlice.map((item) => clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok));
+  const candidates = ranked.topSlice.map((item) => clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok, isGeneric));
   const singleLineQuery = query.replace(/[\r\n\t]+/g, ' ').trim();
   const safeQuery = singleLineQuery.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const header = clBuildHeader(safeQuery, seeds.size, candidates.length, ranked.total, budgetOpt.value);
-  const footerLines = clBuildFooterLines(candidates[0]);
+  const footerLines = clBuildFooterLines(candidates[0], adapter);
   const packed = clPackCandidates(candidates, header, safeQuery, budgetOpt.value, footerLines);
   if (packed.kept.length === 0) {
     const minNeeded = clCalcMinBudget(candidates, safeQuery, seeds.size, ranked.total, footerLines, packed.minNeeded, projectRoot, skelMaxTok);
