@@ -1,5 +1,4 @@
 // 默认治理工作流同源 HTTP 子路由（/donegate/api/governance/*：极简开关清单、参数微调、AI 提案对比确认与一键还原）
-import { resolve } from 'node:path';
 import { sendJson } from './http-utils.mjs';
 import {
   GOVERNANCE_SEAM_CATALOG,

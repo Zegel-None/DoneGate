@@ -17,6 +17,7 @@ import {
   wfcCreateProposal,
   wfcListDefaultWorkflows,
   wfcListPendingProposals,
+  wfcProbeEnvCoeffects,
   wfcResetProjectOverlay,
   wfcSaveProjectOverlay
 } from '../runner/dsh/autopilot/workflow-compiler.mjs';
@@ -164,6 +165,12 @@ describe('stage11: governance workflow compiler, human sovereignty disclosure & 
     const runEdit = cmdGovernanceFlow(REPO_ROOT, ['run', 'dg-on-edit', '--json']);
     expect(runEdit.exitCode).toBe(0);
     expect(runEdit.ok).toBe(true);
+    const editFlowCompiled = wfcCompileWorkflow(REPO_ROOT, 'dg-on-edit');
+    expect(editFlowCompiled.effectivePack.nodes.map((n) => n.id)).toContain('edit-js-oxlint');
+    const preCommitCompiled = wfcCompileWorkflow(REPO_ROOT, 'dg-pre-commit');
+    expect(preCommitCompiled.effectivePack.nodes.map((n) => n.id)).toEqual(
+      expect.arrayContaining(['pc-arch-depcruise', 'pc-shellcheck'])
+    );
 
     // Bare external user workspace (no contracts/decisions/symbols baseline) still compiles & runs cleanly
     const bare = mkdtempSync(join(tmpdir(), 'dg-s11-bare-'));
@@ -176,6 +183,19 @@ describe('stage11: governance workflow compiler, human sovereignty disclosure & 
       expect(bareCheck.exitCode).toBe(0);
       const comp = JSON.parse(bareCheck.stdout);
       expect(comp.effectivePack.nodes.find((n) => n.id === 'pc-symbols-gate')?.envSkipped).toBe(true);
+      expect(comp.effectivePack.nodes.find((n) => n.id === 'pc-arch-depcruise')?.envSkipped).toBe(true);
+      expect(comp.effectivePack.nodes.find((n) => n.id === 'pc-shellcheck')?.envSkipped).toBe(true);
+
+      // Shared pool npm-cells/oxlint + .dependency-cruiser.cjs auto-discovery
+      writeFileSync(join(bare, 'package.json'), '{"name":"demo"}');
+      writeFileSync(join(bare, '.dependency-cruiser.cjs'), 'module.exports = {};');
+      const fakeOxlintBin = join(bare, 'workflows', '.deps', '_shared', 'npm-cells', 'oxlint', 'node_modules', '.bin');
+      mkdirSync(fakeOxlintBin, { recursive: true });
+      writeFileSync(join(fakeOxlintBin, process.platform === 'win32' ? 'oxlint.cmd' : 'oxlint'), 'echo ok');
+      const probed = wfcProbeEnvCoeffects(bare);
+      expect(probed.hasJsOrTs).toBe(true);
+      expect(probed.hasOxlint).toBe(true);
+      expect(probed.hasDepcruiseConfig).toBe(true);
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }

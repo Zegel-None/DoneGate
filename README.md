@@ -2,9 +2,9 @@
 
 **简体中文（默认）** | [English](README.en.md)
 
-> **专为不懂写代码的 Vibecoder 打造的「AI 工程监理 + 可视化产品指挥台」**
+> **面向长周期 AI 协作开发者与零编程基础创作者（Vibecoder）的「确定性 AI 工程监理核 + 可视化产品指挥台」**
 >
-> 你只管用大白话提想法、看界面、做选择题、拍板签收；把**「防 AI 嘴硬假交工、防改崩老功能、防代码变屎山、防半夜挂机翻车」**全部交给完结门的机器硬门禁。
+> **双层清晰边界**：底层无头判定核（`runner/core/`）严格遵循 `INTENT.md`——**不做代码生成、不听 AI 自夸，只认冻结判据与机器实测证据**；外层 DSH 可视化工作台与沙箱挂机台则让你用大白话提想法、看界面、做选择题、拍板签收，把**「防 AI 嘴硬假交工、防改崩老功能、防代码变屎山、防半夜挂机翻车」**全部交给完结门的机器硬门禁。
 
 ## 一、为什么 Vibecoding 总是「前三天爽上天，第四天火葬场」？
 
@@ -82,7 +82,7 @@
 2. **第二步 · 在「UI 看板」捏界面、试手感**：点左侧栏 **「UI 看板」**，像玩换装游戏一样秒切不同视觉风格；切到 **✏️ 编辑模式**，直接用鼠标点网页上不顺眼的按钮或双击改文字，需求会自动变成蓝色引用胶囊塞进输入框，再也不用费劲描述「右上角往下数第三个框」。
 3. **第三步 · 在「项目看板」看全局进度**：点左侧栏 **「项目」**，你的软件不再是一堆天书代码，而是一张清晰的业务流程图。小项目直接平铺展示；项目变大后自动聚合成业务大卡片，点卡片上的 **「⊞ 原地展开」** 就能像放大地图一样看清内部步骤，想看底层文件关联时再点顶栏 **「🔬 代码透视图」**。
 4. **第四步 · 点「跑检查」看人话体检单**：每次 AI 说改完了，点一下顶栏 **「跑检查」**。没过关的卡片会亮红灯并直接用大白话写出原因，点卡片上的 **「🔧 派主对话修」**（或顶部横幅 **「🔧 一键汇总派主对话修」**），就能把报错连同精确位置一键甩给主对话返工。
-5. **第五步 · 睡前点「🌙 挂机」，早起看简报签收**：有多个模块要推进时，点顶栏 **「🌙 挂机」**。AI 会在隔离沙箱里按顺序逐个模块写代码、跑验收——全部达标才合进你的正式项目；遇到拿不准的产品决定会自动停下等你早上拍板，绝不擅自乱改。
+5. **第五步 · 睡前点「🌙 挂机」，早起看简报签收**：有多个模块要推进时，点顶栏 **「🌙 挂机」**。挂机编排器会在隔离沙箱（Git Worktree）里调度你的 AI Agent 按顺序逐个模块施工、由完结门硬门禁逐项跑验收——全部达标才合进你的正式项目；遇到拿不准的产品决定会自动停下等你早上拍板，绝不擅自乱改。
 
 ## 四、给进阶玩家与 AI 代理看的底层硬核机制
 
@@ -91,10 +91,11 @@
 - **零依赖防篡改判定核（`runner/`）**：纯 Node.js 标准库实现，只认冻结判据、SHA-256 证据哈希链与四值退出码（`0=通过 / 1=判否 / 2=环境事故 / 3=无法判断`）。外部扫描器一律只交原始观测数据，无权越俎代庖替裁判下结论。
 - **零魔法数字自适应分层（`runner/atlas/modularity-hierarchy.mjs`）**：拒绝一刀切硬凑固定卡片数，采用 Newman-Girvan 模块度增益判据（$\Delta Q > 0$）结合有向无环凸性约束做非均衡递归聚合——简单线性项目 100% 平铺零套娃，复杂内聚子系统自动成组并支持拓扑鱼眼原地展开（参考 [C4 Model](https://c4model.com/diagrams)、[IcePanel Flows](https://docs.icepanel.io/visual-storytelling/flows) 与 [Zooming User Interface](https://en.wikipedia.org/wiki/Zooming_user_interface)）。
 - **密封契约切片与 400k 五段式派工预算（`donegate slice` / `check-node`）**：按百万窗口模型注意力黄金甜点（`1M × 40% = 400,000 Tokens`，亦支持小窗口按比例缩放）切出密封施工胶囊——0-Hop 本卡源码与测试 `160k` + 1-Hop 只读接口存根 `48k`，2-Hop 以外无关代码物理屏蔽；子智能体完工跑 `check-node --receipt` 秒级拦截越界改文件与私改接口，仅回传 500-Token 回执即可销毁子上下文。
+- **图谱变焦导航与量化评测棘轮（`donegate locate` / `zoom --skeleton`）**：结合 CBM 文件级入度阻尼加权图个性化 PageRank（PPR）、Agentless 骨架视图与统一 `--budget` 成本自报；在全仓 142 题导航基准（`node tools/cockpit-nav-eval.mjs --only grep,fts,locate --k 10`（私有仓））上，`locate` 全集 Recall@5 达 `77.5%`（较 `grep` 基线 `59.2%` 高 `+18.3` 个百分点，零词汇重叠隐藏依赖题 `64.7%` vs `grep` `5.9%`），每题平均输出 `1015.4 tok`（较 `grep` 的 `1560.4 tok` 节省 `34.9%`）。
 - **独立工具舱共享依赖池（`workflows/.deps/_shared/npm-cells/`）**：每款外部 CLI 工具（如 Storybook、Lighthouse CI、Playwright、Gitleaks）按确定性精确版本隔离安装进各自的 `npm-cells/<id>/` 独立舱室并生成跨目录 `NODE_PATH` 启动器，彻底根绝跨大版本依赖打架（如 Vite 6 vs 8）与 `npm` 互删顽疾。
-- **严格单向无环六层架构与全仓零复杂度超标（v1.0.0）**：全仓拆分为 `L0 → L7` 严格单向无环分层架构（`runner/shared/` → `runner/core/` → `runner/dsh/{deps,uiboard,autopilot}/` （私有仓）→ `runner/atlas/` → `runner/cockpit/` & `runner/dsh/host/`），全跨层严格走公共门面、全仓源码认知复杂度 100% ≤ 25；内置 Python 一等公民支持、OpenSpec 双轨探索态（`contract new --explore` / `promote`）与独占资源混合串并行挂机调度。
+- **严格单向无环分层金字塔与全仓零复杂度超标（v1.0.0）**：`runner/` 运行时强制锁死 `L0 → L5` 六层边界，全仓含门禁与出包层展开为 `L0 → L7` 八层单向无环分层架构（`runner/shared/` → `runner/core/` → `runner/dsh/{deps,uiboard,autopilot}/` （私有仓）→ `runner/atlas/` → `runner/cockpit/` & `runner/dsh/host/` → `skill/`），全跨层严格走公共门面、全仓源码认知复杂度 100% ≤ 25；内置 Python 一等公民支持、OpenSpec 双轨探索态（`contract new --explore` / `promote`）与独占资源混合串并行挂机调度。
 - **双层子智能体人机隔离锁（`runner/dsh/host/subagent-isolation.mjs`）**：前端在 `conversation.composer` 注册只读隔离槽位、后端宿主拦截人类直发 `subagents.prompt` RPC，同时 100% 保留主控 Super Agent `send_message` 续调与人类紧急停止按钮，防止手工插话绕过契约门禁。
-- **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 31 个真实适配器链路；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
+- **普适六形态工坊与漏网免疫闭环（`donegate-forge/` + `skill/check-escapes.mjs`）**：支持将任意开源工具按 `skill/17-适配器协议.md` 接入 33 个真实适配器链路（含 `oxlint`、`shellcheck`、`depcruise` 等默认治理流门禁）；一旦出现「门禁全绿仍漏过 Bug」，通过 `node skill/check-escapes.mjs --report-template` 一键生成脱敏 Issue，修成新门禁让所有人永久免疫。
 
 ## 五、仓库目录速览与手工自检命令
 
@@ -105,32 +106,36 @@
 | `donegate/` · `donegate-judge/` · `donegate-forge/` | 三套核心技能：写方立约施工、双盲独立冷酷裁判、外部开源工具扩展工坊 |
 | `runner/shared/` · `runner/core/` | L0 零依赖共享原语底座 + L1 纯无头防篡改判定核（12 令、密封切片、影响雷达与 CBM 图谱桥） |
 | `runner/atlas/` · `runner/dsh/{deps,uiboard,autopilot,host}/` （私有仓）| 无限画布工作台（项目看板 / 工作流 / UI 看板）、四域解耦 DSH Web 插件与 Git Worktree 过夜挂机引擎 |
-| `runner/donegate.mjs` · `runner/cockpit/` | L5 CLI 组合根与三级变焦驾驶舱（`brief` / `zoom` / `impact` / `lint-edit` / `slice`） |
-| `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 31 个外部确定性工具适配器 |
+| `runner/donegate.mjs` · `runner/cockpit/` | L5 CLI 组合根、三级变焦驾驶舱与零依赖 MCP 服务（`brief` / `locate` / `zoom` / `impact` / `lint-edit` / `slice` / `mcp` / `flow`） |
+| `workflows/` · `bricks/` · `skill/adapters/` | 预置工作流清单、工具能力台账与 33 个外部确定性工具适配器 |
 
 若你想在本地随时重跑全套工程健康自检，在仓库根目录执行：
 
 ```powershell
 node skill/verify-install.mjs              # 复核本机安装状态与 6 道真机验真门禁
 node skill/check-escapes.mjs --self-check  # 跑全套代码完整性、名词规范与历史漏网回归门禁
+node runner/donegate-fixtures.mjs          # 跑十二条核心命令、密封胶囊 V2 与单卡微门禁夹具
 node runner/dsh-fixtures.mjs               # 跑 DSH 插件包、共享依赖池与过夜挂机端到端夹具
 node runner/atlas-fixtures.mjs             # 跑无限画布测绘、自适应模块度分层与 UI 看板夹具
 ```
 
 ### 面向开源协作者与 AI 代理的代码寻路入口
 
-如果你是来阅读源码、排查问题或提交 PR 的开发者 / AI 编码代理，**请先阅读根目录 `AGENTS.md`**，无需盲翻全仓源码模块，直接用内置零依赖三级按需变焦驾驶舱 `O(1)` 定位（多目标查询推荐在单条 `zoom` 命令中一次并列传入）：
+如果你是来阅读源码、排查问题或提交 PR 的开发者 / AI 编码代理，**请先阅读根目录 `AGENTS.md`**，无需盲翻全仓源码模块，直接用内置零依赖三级按需变焦驾驶舱定位（多目标查询推荐在单条 `zoom` 命令中一次并列传入）：
 
 ```bash
-node runner/donegate.mjs brief                       # Zoom-0：一屏看清五大业务域、实时模块/HTTP 路由规模、Kneedle 承重接口与四维红线
-node runner/donegate.mjs zoom <01..05|rules|tests>   # Zoom-1：支持一次并列展开多个业务域（如 zoom 01 02）、实时阈值字典或单测清单
-node runner/donegate.mjs zoom <文件1> [文件2...]      # Zoom-2：一次穿透多个文件的导出/内部/内联脚本函数签名、CLI 参数与跨脚本路径
-node runner/donegate.mjs impact <符号|路由|文件路径>   # 影响面雷达：自动反查跨文件调用点并推导 1-Hop 必跑回归单测
-node runner/donegate.mjs lint-edit <修改文件路径>      # 毫秒级微门禁：即时检查语法、认知复杂度（<=15 绿灯 / >25 硬拦）与反压行
+node runner/donegate.mjs locate "<任务描述>" [--budget 4000]        # 第一步：任务语义直达定位（CBM 入度阻尼 PPR 图排序 + 骨架摘要）
+node runner/donegate.mjs brief [--budget 4000]                     # Zoom-0：一屏看清五大业务域、实时模块/路由规模与四维红线
+node runner/donegate.mjs zoom <文件1> [文件2...] --skeleton         # 第二步：约 85% 压缩仅看导出签名与注释摘要，支持多目标并列传入
+node runner/donegate.mjs zoom <文件路径[:起始行-结束行]> --source    # 第三步：锁定目标后按行直读真实源码真源
+node runner/donegate.mjs impact <符号|路由|文件路径>                 # 影响面雷达：自动反查跨文件调用点并推导多跳（<=3 跳）回归单测
+node runner/donegate.mjs lint-edit <修改文件路径>                    # 毫秒级微门禁：即时检查语法、认知复杂度（<=15 绿灯 / >25 硬拦）、头注与反压行
+node runner/donegate.mjs flow list                                 # 默认治理流：查看与执行 dg-on-edit / dg-pre-commit 等声明式治理流
+node runner/donegate.mjs mcp                                       # MCP 服务：启动零依赖 stdio MCP 服务（暴露 dg_brief/locate/zoom/impact）
 ```
 
 > **关于「运行时零依赖」与开发期单测的说明**：完结门 CLI 与判定核运行时 **100% 零第三方 npm 依赖**（裸克隆直接 `node runner/donegate.mjs ...` 即可运行）；`tests/*.test.mjs` 单元测试使用可选开发依赖 `vitest`，裸克隆首次运行 `npm test` 前请先执行一次 `npm install`。提交代码须遵守四维预算（净增生产代码 `<= 250` 绿灯 / `> 450` 硬拦，生产文件 `<= 6` 个 / 含测试总文件 `<= 10` 个，单函数认知复杂度 `<= 25`）。
 
 ## 致谢
 
-感谢以下开源项目为完结门外部工具生态提供灵感与支持：[StrykerJS](https://github.com/stryker-mutator/stryker-js)、[CodeGraph](https://github.com/colbymchenry/codegraph)、[dependency-cruiser](https://github.com/sverweij/dependency-cruiser)、[Knip](https://knip.dev)、[Playwright](https://playwright.dev)、[Maestro](https://github.com/mobile-dev-inc/maestro)、[Schemathesis](https://github.com/schemathesis/schemathesis)、[Gitleaks](https://github.com/gitleaks/gitleaks)、[OSV-Scanner](https://google.github.io/osv-scanner/)、[Trivy](https://trivy.dev)、[OpenSpec](https://github.com/Fission-AI/OpenSpec)、[Beads](https://github.com/steveyegge/beads)、[Biome](https://biomejs.dev) 与 [ast-grep](https://ast-grep.github.io)。
+感谢以下开源项目为完结门外部工具生态提供灵感与支持：[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)、[Oxc / oxlint](https://oxc.rs)、[ShellCheck](https://www.shellcheck.net)、[StrykerJS](https://github.com/stryker-mutator/stryker-js)、[CodeGraph](https://github.com/colbymchenry/codegraph)、[dependency-cruiser](https://github.com/sverweij/dependency-cruiser)、[Knip](https://knip.dev)、[Playwright](https://playwright.dev)、[Maestro](https://github.com/mobile-dev-inc/maestro)、[Schemathesis](https://github.com/schemathesis/schemathesis)、[Gitleaks](https://github.com/gitleaks/gitleaks)、[OSV-Scanner](https://google.github.io/osv-scanner/)、[Trivy](https://trivy.dev)、[OpenSpec](https://github.com/Fission-AI/OpenSpec)、[Beads](https://github.com/steveyegge/beads)、[Biome](https://biomejs.dev) 与 [ast-grep](https://ast-grep.github.io)。

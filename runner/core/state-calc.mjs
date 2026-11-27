@@ -1,4 +1,4 @@
-// L0 五状态六栏、契约显式生命周期状态机与通过四分现算引擎（INV-01..INV-18，<= 420 有效行）
+// L1 五状态六栏、契约显式生命周期状态机与通过四分现算引擎（INV-01..INV-18，<= 350 行）
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';

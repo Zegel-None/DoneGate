@@ -1,0 +1,52 @@
+{
+  "说明": "工具能力清单：Oxlint (Oxc) Rust 多线程高速 JS/TS 语义正确性与可疑缺陷静态检查器。",
+  "tool": "oxlint",
+  "registryId": "oxlint@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "由默认治理流 dg-on-edit 按环境探测动态拦截 errorCount > 0，保留本仓零外部 npm 硬依赖契约边界",
+      "note": "error 级语义正确性错误总数"
+    },
+    {
+      "id": "warningCount",
+      "from": "warningCount",
+      "kind": "count",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "warning 含未使用解构残余与风格提示，直接判红会造成误伤",
+      "note": "warning 级可疑与冗余提示总数"
+    },
+    {
+      "id": "byRule",
+      "from": "byRule",
+      "kind": "map",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "按规则编号聚合供定位子代理高频失误模式",
+      "note": "按规则 ID 统计命中分布"
+    }
+  ],
+  "requiresProject": [
+    "含 JS/TS 源码的项目"
+  ],
+  "blindSpots": [
+    "默认静态规则不覆盖深层跨文件业务状态不变量与无类型注解下的动态对象属性拼写"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "作为默认治理流 dg-on-edit 的按需高速语义正确性护栏（与 Biome 组成互补覆盖族），不改变判定核零外部依赖契约。"
+  }
+}

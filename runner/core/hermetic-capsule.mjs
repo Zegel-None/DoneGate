@@ -1,4 +1,4 @@
-// L2 密封施工胶囊打包器（1M×40%=400k 预算 · 隐式 DOM 耦合闭包 · Louvain 分片建议 · 双指标 TOC，<= 350 行）
+// L1 密封施工胶囊打包器（1M×40%=400k 预算 · 隐式 DOM 耦合闭包 · Louvain 分片建议 · 双指标 TOC，<= 350 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';

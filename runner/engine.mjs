@@ -1,4 +1,4 @@
-// L0 判定核 · pendingRecheck 传播与影响面引擎（D01 · 零第三方依赖）。
+// L1 判定核 · pendingRecheck 传播与影响面引擎（D01 · 零第三方依赖）。
 // 用法：
 //   node runner/engine.mjs --root <项目根> --changed <file1,file2> [--observation <observation.json>] [--json]
 //   node runner/engine.mjs                   （无参数时提示用法并退 3，夹具见 runner/donegate-fixtures.mjs）

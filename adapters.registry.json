@@ -408,6 +408,32 @@
       "blindSpots": [
         "仅静态校验 Python 导入图与声明的分层契约，不覆盖运行时动态 importlib 调用"
       ]
+    },
+    {
+      "id": "oxlint@stage4",
+      "tool": "oxlint",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-js-oxlint-correctness",
+      "entry": "skill/adapters/oxlint-check.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.10.0 <5.0.0",
+      "blindSpots": [
+        "默认静态规则不覆盖深层跨文件业务状态不变量与无类型注解下的动态对象属性拼写"
+      ]
+    },
+    {
+      "id": "shellcheck@stage4",
+      "tool": "shellcheck",
+      "stage": 4,
+      "role": "soft",
+      "checkedBy": "c01/crit-shellcheck-scripts",
+      "entry": "skill/adapters/shellcheck-lint.mjs",
+      "protocolVersion": "1.1",
+      "testedToolRange": ">=0.8.0 <2.0.0",
+      "blindSpots": [
+        "仅静态分析 POSIX sh/bash 脚本语法与常见陷阱，不覆盖 PowerShell (.ps1) 或 Windows .cmd 批处理语义"
+      ]
     }
   ]
 }

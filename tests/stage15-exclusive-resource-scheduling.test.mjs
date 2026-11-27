@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildSanitizedEnv } from '../runner/core/contract.mjs';
-import { cmdCheck, cmdContractFreeze, cmdContractNew, cmdInit } from '../runner/core/commands-a.mjs';
+import { cmdCheck, cmdContractFreeze, cmdContractNew, cmdInit } from '../runner/core/index.mjs';
 import { validateContractSchema } from '../skill/schema-lite.mjs';
 import { planCampaignExecutionStrategy } from '../runner/dsh/autopilot/campaign-routing.mjs';
 import { approveAndResumeCampaignAutopilot, executeProjectCampaignAutopilot } from '../runner/dsh/autopilot/campaign-autopilot.mjs';

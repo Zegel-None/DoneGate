@@ -15,6 +15,7 @@ import { analyzeCodeComplexityAndGolfing } from './cognitive-complexity.mjs';
 import { countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 import { scanTerminologyViolations } from './check-terminology.mjs';
 import { validateDecisionFiveSections } from './check-decisions.mjs';
+import { auditSubagentEditHazards } from './lint-edit/header-hazards.mjs';
 import { attachFixHints, resolveLintFixHint } from './lint-edit/remediation.mjs';
 
 const JS_LIKE_RE = /\.(mjs|cjs|js|ts|tsx|jsx)$/i;
@@ -269,6 +270,10 @@ export function lintEditedFiles(projectRoot, targetFiles = [], opts = {}) {
       fails.push(`术语漂移 [${v.ruleId}] (${v.file}:L${v.line})：命中「${v.matched}」→ 应改为「${v.replacement}」`);
     }
     const owners = leMatchScopeOwner(rel, scopeEntries);
+    auditSubagentEditHazards({
+      rel, raw, owners, hasScopes: scopeEntries.length > 0,
+      isTestOrFixture, isSelfMeta: SELF_META_EXEMPT_RE.test(rel), fails
+    });
     if (scopeEntries.length > 0 && JS_LIKE_RE.test(rel) && !isTestOrFixture && !/^[^/]+\.(?:config|rc)\.[a-z0-9]+$/i.test(rel) && owners.length === 0) {
       warnings.push(`契约归属提示 (${rel})：当前未被任何活跃契约 scope[] 认领（提交前需归入对应契约或伴生子模块目录）`);
     }
@@ -361,10 +366,22 @@ function runRedSelfTest() {
     writeFileSync(join(tmp, 'runner/core/term.mjs'), 'export const label = "核心护栏" + "包";\n'.replace('" + "', ''));
     const rTerm = lintEditedFiles(tmp, ['runner/core/term.mjs']);
     t('必红样本 4：单文件未归一化违禁词即时拦截', rTerm.exitCode === 1 && rTerm.fails.some((x) => x.includes('术语漂移')));
+
+    writeFileSync(join(tmp, 'runner/core/cmd-a.mjs'), 'export const x = 1;\n');
+    const rShard = lintEditedFiles(tmp, ['runner/core/cmd-a.mjs']);
+    t('必红样本 5：机械字母切片命名 cmd-a.mjs 单文件即时拦截', rShard.exitCode === 1 && rShard.fails.some((x) => x.includes('C4 禁止机械按字母')));
+
+    writeFileSync(join(tmp, 'runner/core/stale-head.mjs'), '// 模块自述（<= 2 行，归属契约：wrong-contract）\nexport const a = 1;\nexport const b = 2;\n');
+    const rHead = lintEditedFiles(tmp, ['runner/core/stale-head.mjs']);
+    t('必红样本 6：文件头注释行数超标与契约归属失真双重抓获', rHead.exitCode === 1 && rHead.fails.some((x) => x.includes('M7 文件头行数')) && rHead.fails.some((x) => x.includes('M7 文件头契约归属')));
+
+    writeFileSync(join(tmp, 'runner/core/bad-sort.mjs'), 'export const rank = (arr) => arr.sort((a, b) => a.score > b.score);\n');
+    const rSort = lintEditedFiles(tmp, ['runner/core/bad-sort.mjs']);
+    t('必红样本 7：Array.sort 布尔比较器破坏严格弱序当场抓获', rSort.exitCode === 1 && rSort.fails.some((x) => x.includes('C3:boolean-sort')));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
-  console.log(bad === 0 ? '\nRESULT: PASS lint-edit 单文件毫秒级微门禁 5 组红绿样本全过' : `\nRESULT: FAIL ${bad} 项未过`);
+  console.log(bad === 0 ? '\nRESULT: PASS lint-edit 单文件毫秒级微门禁 8 组红绿样本全过' : `\nRESULT: FAIL ${bad} 项未过`);
   return bad === 0 ? 0 : 1;
 }
 

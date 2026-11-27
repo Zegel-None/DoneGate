@@ -1,4 +1,4 @@
-// L0 单条判据状态与运行证据现算子模块（INV-06/INV-07/INV-15/INV-16/G-10，<= 350 行）
+// L1 单条判据状态与运行证据现算子模块（INV-06/INV-07/INV-15/INV-16/G-10，<= 350 行）
 import { VALID_TEETH, checkHumanOutcome, checkMaterialsFresh, isSelfWriterIdentity } from './project-loader.mjs';
 
 export function scIsFormalEvidenceRun(r) {

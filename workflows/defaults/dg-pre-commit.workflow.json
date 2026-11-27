@@ -144,6 +144,40 @@
       "config": { "target": "." },
       "configSchema": [],
       "exec": { "kind": "adapter_node", "tool": "ty", "entryRel": "skill/adapters/ty-check.mjs", "registryId": "ty@stage4" }
+    },
+    {
+      "id": "pc-arch-depcruise",
+      "title": "架构分层与零循环守卫 (Depcruise)",
+      "tip": "存在 .dependency-cruiser 配置且安装 depcruise 时自动激活：提交前阻断跨层逆向导入、门面绕过与循环依赖",
+      "tier": "recommended",
+      "slot": "gate:arch-boundary",
+      "activeBrick": "adp-depcruise",
+      "requires": ["hasDepcruiseConfig", "hasDepcruise"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 980,
+      "y": 250,
+      "w": 265,
+      "config": { "target": "." },
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "depcruise", "entryRel": "skill/adapters/depcruise-arch.mjs", "registryId": "depcruise@stage4", "obligationId": "depcruise-no-violations" }
+    },
+    {
+      "id": "pc-shellcheck",
+      "title": "Shell 与 Git 钩子脚本检查 (ShellCheck)",
+      "tip": "含 .githooks 或 .sh 脚本且安装 shellcheck 时自动激活：拦截变量漏加双引号分词、吞退出码与语法隐患",
+      "tier": "optional",
+      "slot": "gate:shell-lint",
+      "activeBrick": "adp-shellcheck",
+      "requires": ["hasShellScripts", "hasShellcheck"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 1290,
+      "y": 250,
+      "w": 265,
+      "config": {},
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "shellcheck", "entryRel": "skill/adapters/shellcheck-lint.mjs", "registryId": "shellcheck@stage4" }
     }
   ],
   "links": [
@@ -152,6 +186,8 @@
     { "id": "lk-pc-3", "fromNode": "pc-doc-budgets", "fromSlot": "out", "toNode": "pc-decisions-inv13", "toSlot": "in", "type": "SIGNAL" },
     { "id": "lk-pc-4", "fromNode": "pc-decisions-inv13", "fromSlot": "out", "toNode": "pc-symbols-gate", "toSlot": "in", "type": "SIGNAL" },
     { "id": "lk-pc-5", "fromNode": "pc-commit-hygiene", "fromSlot": "out", "toNode": "pc-py-complexipy", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-pc-6", "fromNode": "pc-py-complexipy", "fromSlot": "out", "toNode": "pc-py-types", "toSlot": "in", "type": "SIGNAL" }
+    { "id": "lk-pc-6", "fromNode": "pc-py-complexipy", "fromSlot": "out", "toNode": "pc-py-types", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-7", "fromNode": "pc-module-integrity", "fromSlot": "out", "toNode": "pc-arch-depcruise", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-pc-8", "fromNode": "pc-arch-depcruise", "fromSlot": "out", "toNode": "pc-shellcheck", "toSlot": "in", "type": "SIGNAL" }
   ]
 }

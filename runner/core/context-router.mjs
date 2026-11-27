@@ -1,4 +1,4 @@
-// L0 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算、共享治理与伴生子模块归属）
+// L1 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算、共享治理与伴生子模块归属）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';

@@ -1,0 +1,41 @@
+{
+  "说明": "工具能力清单：ShellCheck 静态二进制 Shell 与 Git Hooks 脚本分析器。",
+  "tool": "shellcheck",
+  "registryId": "shellcheck@stage4",
+  "role": "soft",
+  "stage": 4,
+  "observables": [
+    {
+      "id": "errorCount",
+      "from": "errorCount",
+      "kind": "count",
+      "assertableAs": [
+        "zero"
+      ],
+      "wired": false,
+      "reason": "由默认治理流 dg-pre-commit 按环境探测拦截 errorCount > 0，避免未装 shellcheck 的裸机无法验收",
+      "note": "Shell 脚本 error 级致命缺陷总数"
+    },
+    {
+      "id": "byCode",
+      "from": "byCode",
+      "kind": "map",
+      "assertableAs": [
+        "max"
+      ],
+      "wired": false,
+      "reason": "SC 规则码统计供定位未加引号分词或吞退出码问题",
+      "note": "按 SC 编号聚合的诊断分布"
+    }
+  ],
+  "requiresProject": [
+    "含 .sh/.bash 或 .githooks/* 脚本的仓库"
+  ],
+  "blindSpots": [
+    "仅静态分析 POSIX sh/bash 脚本语法与常见陷阱，不覆盖 PowerShell (.ps1) 或 Windows .cmd 批处理语义"
+  ],
+  "disposition": {
+    "state": "advisory",
+    "reason": "供含 .githooks 或 .sh 脚本的项目在 dg-pre-commit 默认流中按需拦截子代理漏加引号分词与吞退出码隐患。"
+  }
+}

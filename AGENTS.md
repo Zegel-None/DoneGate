@@ -16,16 +16,16 @@
 
 ## 1. 项目施工第一铁律：三步聚焦掌控全局 · 区分双模式闭环
 
-1. **三步聚焦按需寻路（禁一进仓盲扫全仓源码或全仓盲 `grep`；多目标查询优先合并为单条命令）**：
-   新开会话的主控代理或开源协作者先用内置三步聚焦驾驶舱（自动对接 `codebase-memory-mcp` MIT 持久化 SQLite 图谱）完成全局定向、多跳缩圈，**最后一步再对锁定的 2~5 个目标文件精确行号直读源码真源**：
+1. **三步聚焦按需寻路（`locate` → `zoom --skeleton` → `zoom --source`，禁一进仓盲扫全仓或全仓盲 `grep`）**：
+   新开会话的主控代理或开源协作者先用内置驾驶舱（对接 `codebase-memory-mcp` MIT 持久化 SQLite 图谱，支持 `node runner/donegate.mjs mcp` stdio 服务）完成语义定位与骨架下钻，**最后一步再对锁定的 2~5 个目标精确行号直读源码真源**：
    ```bash
-   # 第一步 · 全局根视口与多域/真源并列展开（Zoom-0 / Zoom-1）：
-   node runner/donegate.mjs brief
-   node runner/donegate.mjs zoom 01 02 03 04 05
-   node runner/donegate.mjs zoom rules tests gaps
-   # 第二步 · 开源图谱文件/符号追踪与跨文件波及面雷达（Zoom-2 + CBM 双向 2-Hop 调用链 + 无截断 1-Hop 单测）：
-   node runner/donegate.mjs zoom <文件路径或函数符号名1> [更多文件或符号...]
-   node runner/donegate.mjs impact <目标文件、符号、HTTP 路由、DOM ID 或配置文件名>
+   # 第一步 · 任务定位与全局定向（PPR 图排序 + 全局根视口 + 跨文件多跳波及面雷达）：
+   node runner/donegate.mjs locate "<任务描述>" [--budget 4000]
+   node runner/donegate.mjs brief [--budget 4000]
+   node runner/donegate.mjs impact <目标文件、符号、HTTP 路由、DOM ID 或配置文件名> [--budget 4000]
+   # 第二步 · 骨架视图下钻（约 85% 压缩仅看签名/注释摘要，支持多目标并列传入）：
+   node runner/donegate.mjs zoom <文件或符号1> [更多文件或符号...] --skeleton [--budget 4000]
+   node runner/donegate.mjs zoom <01..05|rules|tests|gaps>
    # 第三步 · 最后一步按行直读真实源码（锁准具体文件与 [L起-L止] 区间后必看真源，禁靠大纲盲猜细微分支）：
    node runner/donegate.mjs zoom <文件路径[:起始行-结束行] | 函数符号名> --source
    ```

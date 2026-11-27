@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonStrict } from './io.mjs';
 import { validateDecisionFiveSections } from './check-decisions.mjs';
-import { analyzeCodeComplexityAndGolfing, auditRepository4D, auditRepository4DWithStats } from './cognitive-complexity.mjs';
+import { analyzeCodeComplexityAndGolfing, auditRepository4DWithStats } from './cognitive-complexity.mjs';
 import { DEFAULT_HYGIENE_BUDGETS, computeRelocatedCodeLines, countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 
 export { DEFAULT_HYGIENE_BUDGETS, computeRelocatedCodeLines, countEffectiveCodeLines };
@@ -761,6 +761,7 @@ function hyEmitPythonOnlyAuditCli(stats, pyRes, budgets, asJson) {
 
 function hyPrintAuditReportLines(report, pyRes, verbose) {
   for (const r of report) {
+    if (r.isMechanicalShard) console.log(`  ✗ [C4机械切片] ${r.file} → 禁止按字母/序号切碎代码文件`);
     for (const f of r.overMaxFns) console.log(`  ✗ [超硬顶] ${r.file} · ${f.name} (L${f.startLine}-L${f.endLine}) 认知复杂度=${f.cognitiveComplexity} (嵌套=${f.maxNesting})`);
     for (const g of r.golfingIssues) console.log(`  ✗ [C4g压行] ${r.file}:L${g.line} (${g.kind} count=${g.count}) → ${g.preview}`);
     if (verbose) {
@@ -776,7 +777,7 @@ function runRepoFourDimAuditCli(root, argv) {
   const budgets = loadHygieneBudgets(root);
   const stats = auditRepository4DWithStats(root, budgets);
   const report = stats.items;
-  const hardFiles = report.filter((r) => r.overMaxFns.length > 0 || r.golfingIssues.length > 0);
+  const hardFiles = report.filter((r) => r.overMaxFns.length > 0 || r.golfingIssues.length > 0 || r.isMechanicalShard);
   const pyRes = stats.detectedPyFiles > 0 ? hyTryRunPythonComplexipyAudit(root, budgets) : { ran: false, offenders: [], parseError: null };
   const asJson = argv.includes('--json');
 

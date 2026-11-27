@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildProjectAtlas } from '../runner/atlas/assemble-atlas.mjs';
+import { buildAdaptiveBusinessHierarchy } from '../runner/atlas/modularity-hierarchy.mjs';
 import { renderAtlasWorkbenchHtml } from '../runner/atlas/render-html.mjs';
 import { WB_PRESET_BLOCK_TEMPLATES } from '../runner/atlas/wb-catalog.mjs';
 import { createDoneGateWebRouteHandler } from '../runner/dsh/host/host-routes.mjs';
@@ -324,5 +325,80 @@ describe('DoneGate 第二轮与第三轮工作台问题单回归验证', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('混合 archOrder 图（< 999 与 999 共存同层）正反排列输入下保持严格弱序不变性与 dsh -> mid -> core 边方向', () => {
+    const baseNodes = [
+      { id: 'host-dom-core-a', archTier: 2, scopePaths: ['p/core'], sublinePath: 'p/core/a.mjs', contractIds: ['c-core'], nextIds: [], modules: [] },
+      { id: 'host-dom-core-b', archTier: 2, scopePaths: ['p/core'], sublinePath: 'p/core/b.mjs', contractIds: ['c-core'], nextIds: [], modules: [] },
+      { id: 'gen-mid-a', archTier: 2, scopePaths: ['p/mid'], sublinePath: 'p/mid/a.mjs', contractIds: ['c-mid'], nextIds: ['host-dom-core-a'], modules: [] },
+      { id: 'gen-mid-b', archTier: 2, scopePaths: ['p/mid'], sublinePath: 'p/mid/b.mjs', contractIds: ['c-mid'], nextIds: [], modules: [] },
+      { id: 'host-dom-dsh-a', archTier: 2, scopePaths: ['p/dsh'], sublinePath: 'p/dsh/a.mjs', contractIds: ['c-dsh'], nextIds: ['gen-mid-a'], modules: [] },
+      { id: 'host-dom-dsh-b', archTier: 2, scopePaths: ['p/dsh'], sublinePath: 'p/dsh/b.mjs', contractIds: ['c-dsh'], nextIds: [], modules: [] }
+    ];
+    const projectTopo = (nodes) => buildAdaptiveBusinessHierarchy(nodes, {}, false).map((nd) => ({
+      step: nd.step,
+      id: nd.id,
+      archOrder: nd.archOrder,
+      x: nd.x,
+      nextIds: nd.nextIds
+    }));
+
+    const forwardTopo = projectTopo(baseNodes);
+    const reverseTopo = projectTopo([...baseNodes].reverse());
+
+    expect(reverseTopo).toEqual(forwardTopo);
+    expect(forwardTopo).toEqual([
+      { step: '01', id: 'sg-mod-d0-p-dsh', archOrder: 3, x: 64, nextIds: ['sg-mod-d0-p-mid'] },
+      { step: '02', id: 'sg-mod-d0-p-mid', archOrder: 999, x: 406, nextIds: ['sg-mod-d0-p-core'] },
+      { step: '03', id: 'sg-mod-d0-p-core', archOrder: 2, x: 748, nextIds: [] }
+    ]);
+  });
+
+  it('分数 meanTier 混合簇（FracGraph）与等 netFlow 链（equalNetGraph）在正反排列输入下保持全拓扑不变', () => {
+    const mkNode = (id, archTier, scope, nextIds = []) => ({
+      id,
+      archTier,
+      scopePaths: [scope],
+      sublinePath: `${scope}/${id}.mjs`,
+      contractIds: [`c-${scope}`],
+      nextIds,
+      modules: []
+    });
+    const projectFull = (nodes) => buildAdaptiveBusinessHierarchy(nodes, {}, false).map((nd) => ({
+      step: nd.step,
+      id: nd.id,
+      archOrder: nd.archOrder,
+      x: nd.x,
+      y: nd.y,
+      nextIds: nd.nextIds,
+      sub: nd.subgraph ? nd.subgraph.nodes.map((s) => ({ step: s.step, id: s.id, x: s.x, y: s.y, nextIds: s.nextIds })) : null
+    }));
+
+    const fracGraph = [
+      mkNode('host-dom-skill-a1', 1, 'p/a'),
+      mkNode('host-dom-skill-a2', 1, 'p/a'),
+      mkNode('host-dom-dsh-b1', 1, 'p/b', ['host-dom-skill-a1']),
+      mkNode('host-dom-dsh-b2', 1, 'p/b', ['host-dom-skill-a2']),
+      mkNode('host-dom-dsh-b3', 2, 'p/b'),
+      mkNode('host-dom-core-c1', 1, 'p/c', ['host-dom-dsh-b1', 'host-dom-skill-a1']),
+      mkNode('host-dom-core-c2', 2, 'p/c'),
+      mkNode('host-dom-core-c3', 2, 'p/c')
+    ];
+    expect(projectFull([...fracGraph].reverse())).toEqual(projectFull(fracGraph));
+
+    const equalNetGraph = [
+      mkNode('host-dom-dsh-1', 2, 'q/dsh', ['gen-m1-1']),
+      mkNode('host-dom-dsh-2', 2, 'q/dsh'),
+      mkNode('gen-m1-1', 2, 'q/m1', ['gen-m2-1']),
+      mkNode('gen-m1-2', 2, 'q/m1'),
+      mkNode('gen-m2-1', 2, 'q/m2', ['host-dom-core-1']),
+      mkNode('gen-m2-2', 2, 'q/m2'),
+      mkNode('host-dom-core-1', 2, 'q/core'),
+      mkNode('host-dom-core-2', 2, 'q/core')
+    ];
+    const eqFwd = projectFull(equalNetGraph);
+    expect(projectFull([...equalNetGraph].reverse())).toEqual(eqFwd);
+    expect(eqFwd.find((n) => n.id === 'sg-mod-d0-q-m1')?.nextIds).toEqual(['sg-mod-d0-q-m2']);
   });
 });

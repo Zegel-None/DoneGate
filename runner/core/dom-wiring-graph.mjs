@@ -3,33 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { maskCommentsAndStrings } from './ast-stub.mjs';
 
-export const ATLAS_SUBPACK_DEFAULTS = {
-  '@scanner': [
-    'runner/atlas/assemble-atlas.mjs', 'runner/atlas/scan-branches.mjs', 'runner/atlas/scan-entries.mjs',
-    'runner/atlas/scan-graph.mjs', 'runner/atlas/humanize.mjs', 'runner/atlas/hydrate-workbench.mjs'
-  ],
-  '@canvas': [
-    'runner/atlas/render-html.mjs', 'runner/dsh/host/serve-atlas.mjs', 'runner/atlas/ui-shell.mjs',
-    'runner/atlas/ui-views.mjs', 'runner/atlas/wb-dom.mjs', 'runner/atlas/wb-events-actions.mjs',
-    'runner/atlas/wb-events-pointer.mjs', 'runner/atlas/wb-events-wheel-drop.mjs', 'runner/atlas/wb-graph-engine.mjs',
-    'runner/atlas/wb-history.mjs', 'runner/atlas/wb-inline-rename.mjs', 'runner/atlas/wb-layout-tidy.mjs',
-    'runner/atlas/wb-menus-viewport.mjs', 'runner/atlas/wb-render-cards.mjs', 'runner/atlas/wb-render-wires.mjs',
-    'runner/atlas/wb-snap-rulers.mjs', 'runner/atlas/wb-style-base.mjs', 'runner/atlas/wb-style-canvas.mjs',
-    'runner/atlas/wb-viewport-ops.mjs'
-  ],
-  '@uiboard': [
-    'runner/atlas/wb-uiboard.mjs', 'runner/atlas/ui-shell.mjs', 'runner/atlas/ui-views.mjs',
-    'runner/atlas/wb-dom.mjs', 'runner/atlas/wb-style-base.mjs', 'runner/atlas/render-html.mjs'
-  ],
-  '@workflow': [
-    'runner/atlas/wb-jit-workflow.mjs', 'runner/atlas/wb-catalog.mjs', 'runner/atlas/wb-subagent.mjs',
-    'runner/atlas/wb-events-actions.mjs', 'runner/atlas/hydrate-workbench.mjs'
-  ],
-  '@dsh-dock': [
-    'runner/atlas/wb-dsh-bridge.mjs', 'runner/atlas/wb-dsh-shell.mjs', 'runner/atlas/wb-dsh-style.mjs',
-    'runner/atlas/wb-subagent.mjs', 'runner/dsh/host/serve-atlas.mjs'
-  ]
-};
+export const ATLAS_SUBPACK_DEFAULTS = Object.freeze({});
 
 const COMMON_WB_CONTAINERS = new Set([
   'state', 'data', 'dom', 'els', 'el', 'root', 'app', 'cfg', 'config', 'opts', 'options',
@@ -51,14 +25,14 @@ function parseExportedSubpacksFromContract(contractFileAbs, dirPrefix) {
   if (!existsSync(contractFileAbs)) return null;
   let src = '';
   try { src = readFileSync(contractFileAbs, 'utf8'); } catch (err) { void err; return null; }
-  const decl = src.match(/export\s+const\s+(?:ATLAS_SUBPACKS|[A-Z0-9_]*SUBPACKS)\s*=\s*\{/);
+  const decl = src.match(/export\s+const\s+[A-Z0-9_]*SUBPACKS\s*=\s*(?:Object\.freeze\s*\(\s*)?\{/);
   if (!decl) return null;
   const openBrace = decl.index + decl[0].length - 1;
   const closeBrace = findBal(src, openBrace, '{', '}');
   if (closeBrace < 0) return null;
   const body = src.slice(openBrace + 1, closeBrace);
   const out = {};
-  for (const m of body.matchAll(/(?:['"](@?[A-Za-z0-9_-]+)['"]|([A-Za-z0-9_-]+))\s*:\s*\[([\s\S]*?)\]/g)) {
+  for (const m of body.matchAll(/(?:['"](@?[A-Za-z0-9_-]+)['"]|([A-Za-z0-9_-]+))\s*:\s*(?:Object\.freeze\s*\(\s*)?\[([\s\S]*?)\]/g)) {
     const rawKey = m[1] || m[2];
     const key = rawKey.startsWith('@') ? rawKey : `@${rawKey}`;
     const files = [...m[3].matchAll(/['"]([^'"]+)['"]/g)].map((fm) => {
@@ -70,19 +44,24 @@ function parseExportedSubpacksFromContract(contractFileAbs, dirPrefix) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-export function resolveSubpackFocusPatterns(projectRoot, target, focusPatterns = []) {
-  const map = {};
-  const isAtlas = target?.id === 'atlas-workbench' || (target?.scope || []).some((s) => String(s).replace(/\\/g, '/').includes('runner/atlas'));
-  if (isAtlas) Object.assign(map, ATLAS_SUBPACK_DEFAULTS);
+function collectTargetContractFacades(target) {
+  const candidates = new Set();
   for (const f of target?.stub?.facadeFiles || []) {
-    if (!f.endsWith('/contract.mjs') && f !== 'contract.mjs') continue;
+    if (f === 'contract.mjs' || f.endsWith('/contract.mjs')) candidates.add(f);
+  }
+  for (const rawScope of target?.scope || []) {
+    const clean = String(rawScope || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+    if (clean && !/\.[a-z0-9]+$/i.test(clean)) candidates.add(`${clean}/contract.mjs`);
+  }
+  return [...candidates];
+}
+
+export function resolveSubpackFocusPatterns(projectRoot, target, focusPatterns = []) {
+  const map = { ...(target?.subpacks && typeof target.subpacks === 'object' ? target.subpacks : {}) };
+  for (const f of collectTargetContractFacades(target)) {
     const dirPref = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '';
     const parsed = parseExportedSubpacksFromContract(join(projectRoot, f), dirPref);
     if (parsed) Object.assign(map, parsed);
-  }
-  if (isAtlas) {
-    const parsedAtlas = parseExportedSubpacksFromContract(join(projectRoot, 'runner/atlas/contract.mjs'), 'runner/atlas');
-    if (parsedAtlas) Object.assign(map, parsedAtlas);
   }
   const expanded = [];
   for (const pat of focusPatterns) {

@@ -1,4 +1,4 @@
-// 门 5 多模型共识投票（3 轮上限）、半形式化推理校验与 escapes.jsonl 回归集构造器（<= 140 行）
+// 门 5 多模型共识投票（3 轮上限）、半形式化推理校验与 escapes.jsonl 回归集构造器（<= 220 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';

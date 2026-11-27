@@ -6,8 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { computeProjectStatus } from '../runner/core/contract.mjs';
-import { cmdCheck, cmdContractNew, cmdContractPromote, cmdInit } from '../runner/core/commands-a.mjs';
-import { cmdVerifyPack } from '../runner/core/commands-b.mjs';
+import { cmdCheck, cmdContractNew, cmdContractPromote, cmdInit, cmdVerifyPack } from '../runner/core/index.mjs';
 import { validateContractSchema } from '../skill/schema-lite.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));

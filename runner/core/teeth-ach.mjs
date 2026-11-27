@@ -1,4 +1,4 @@
-// ACH 语义变异验证（teeth --tier ACH）与 JiT Diff 捕获测试 + RubFake 假阳性过滤（donegate catch，<= 240 行）
+// ACH 语义变异验证（teeth --tier ACH）与 JiT Diff 捕获测试 + RubFake 假阳性过滤（donegate catch，<= 350 行）
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';

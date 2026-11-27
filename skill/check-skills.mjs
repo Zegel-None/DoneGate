@@ -13,7 +13,7 @@
 //   node skill/check-skills.mjs [--root <目录>] [--self-test]
 // 退出码：0 全部可加载；1 有技能会被丢弃；3 用法错
 import { readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join, resolve, dirname, basename } from 'node:path';
+import { join, resolve, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const argv = process.argv.slice(2);

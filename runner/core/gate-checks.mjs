@@ -1,4 +1,4 @@
-// L0 门 0（起手段）、门 1（基线冒烟）、门 2（判据段）校验器（<= 350 行聚焦子模块）
+// L1 门 0（起手段）、门 1（基线冒烟）、门 2（判据段）校验器（<= 350 行聚焦子模块）
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';

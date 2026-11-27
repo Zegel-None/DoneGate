@@ -1,13 +1,19 @@
 // 主控驾驶舱 Zoom-1 / Zoom-2 视图格式化渲染器（单一真源 CBM 开源图谱 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { SHARED_GOVERNANCE_GLOBS } from '../core/index.mjs';
+
+function ckrFormatFnSymbolLine(s) {
+  const sig = `${s.name}${s.signature || '()'} [L${s.startLine}-L${s.endLine}]`;
+  return s.nested ? `    ↳ ${sig}` : `  · ${s.isExported ? 'export ' : ''}${sig}`;
+}
 
 function ckrAppendCbmSymbols(L, symbols) {
   const fns = symbols.filter((s) => s.label === 'Function');
   const vars = symbols.filter((s) => s.label !== 'Function');
   if (fns.length > 0) {
     L.push(`CBM 图谱函数符号锚点 (共 ${fns.length} 项):`);
-    for (const s of fns) {
-      L.push(`  · ${s.isExported ? 'export ' : ''}${s.name}${s.signature || '()'} [L${s.startLine}-L${s.endLine}]`);
-    }
+    for (const s of fns) L.push(ckrFormatFnSymbolLine(s));
   }
   if (vars.length > 0) {
     const vList = vars.map((v) => `${v.name}[L${v.startLine}${v.endLine > v.startLine ? `-L${v.endLine}` : ''}]`);
@@ -20,11 +26,11 @@ function ckrAppendCbmCallEdges(L, cbmGraph) {
     L.push(`CBM 依赖导入 IMPORTS (共 ${cbmGraph.imports.length} 条): ${cbmGraph.imports.join(', ')}`);
   }
   if (cbmGraph.inboundCallers?.length > 0) {
-    const ins = cbmGraph.inboundCallers.map((c) => `${c.file}#${c.symbol}${c.line ? `@L${c.line}` : ''}`);
+    const ins = cbmGraph.inboundCallers.map((c) => `${c.trust === 'inferred' ? '≈' : ''}${c.file}#${c.symbol}${c.line ? `@L${c.line}` : ''}`);
     L.push(`CBM 跨文件上游调用方 Callers (← 共 ${ins.length} 处): ${ins.join(', ')}`);
   }
   if (cbmGraph.outboundCallees?.length > 0) {
-    const outs = cbmGraph.outboundCallees.map((c) => `${c.file}#${c.symbol}${c.targetLine ? `[L${c.targetLine}]` : ''}`);
+    const outs = cbmGraph.outboundCallees.map((c) => `${c.trust === 'inferred' ? '≈' : ''}${c.file}#${c.symbol}${c.targetLine ? `[L${c.targetLine}]` : ''}`);
     L.push(`CBM 跨文件下游被调方 Callees (→ 共 ${outs.length} 处): ${outs.join(', ')}`);
   }
 }
@@ -161,4 +167,46 @@ export function renderDomainOrContract(dom, con, stubsFlag, hasContracts, compac
     }
   }
   return L.join('\n');
+}
+
+function ckrSplitNonEmptyLines(text) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim());
+}
+
+function ckrRenderRulesTopic(idx) {
+  const hasContracts = (idx.graph.nodes || []).length > 0;
+  const activeGlobs = hasContracts ? SHARED_GOVERNANCE_GLOBS : SHARED_GOVERNANCE_GLOBS.filter((g) => existsSync(join(idx.root, g.replace(/\/$/, ''))));
+  const subpacks = Object.fromEntries(Object.entries(idx.liveMeta.annotatedSubpacks || {}).map(([k, files]) => [
+    k, files.map((f) => `${f.file} ← ${f.contractOwner}`)
+  ]));
+  return JSON.stringify({
+    mode: hasContracts ? 'contract-governed' : 'zero-contract-public',
+    thresholds: idx.thresholds, sharedGovernanceGlobs: activeGlobs,
+    annotatedSubpacks: subpacks, newAdapterArchetypes: idx.liveMeta.archetypes,
+    newAdapterUsage: idx.liveMeta.newAdapterHeader,
+    sharedPoolLayout: idx.liveMeta.sharedPoolLayout, declarativeWorkflows: idx.liveMeta.workflows,
+    intent: ckrSplitNonEmptyLines(idx.intentText), constraints: ckrSplitNonEmptyLines(idx.constraintsText)
+  }, null, 2);
+}
+
+function ckrRenderTestsTopic(idx, arg1) {
+  const kw = (arg1 || '').toLowerCase();
+  const list = kw ? idx.liveMeta.testSummaries.filter((t) => t.file.toLowerCase().includes(kw) || t.header.toLowerCase().includes(kw) || t.cases.some((c) => c.toLowerCase().includes(kw))) : idx.liveMeta.testSummaries;
+  const L = [`=== 全仓单测与夹具目录（匹配 ${list.length} / 总计 ${idx.liveMeta.testSummaries.length} 个） ===`];
+  for (const t of list) L.push(`- ${t.file} [执行: ${t.file.endsWith('.test.mjs') ? `npx vitest run ${t.file}` : `node ${t.file}`}] — ${t.header}`);
+  return L.join('\n');
+}
+
+function ckrRenderGapsTopic(idx, arg1) {
+  const list = arg1 ? idx.gaps.filter((g) => g.contractId === arg1) : idx.gaps;
+  const L = ['=== 本地分支雷达 ===', ...(idx.atlas.branches || []).map((b) => `- ${b.name}: ${b.isDefault ? '主线基线' : `+${b.ahead}/-${b.behind} 闲置${b.idleDays}d`}`), `\n=== 待验缺口明细（共 ${list.length} 项） ===`, ...list.map((g) => `- [${g.kind}] ${g.contractId || 'global'}: ${g.detail}`)];
+  return L.join('\n');
+}
+
+// 内置主题 rules / tests / gaps 渲染（非内置主题返回 null）
+export function renderBuiltinZoomTopic(idx, topic, arg1) {
+  if (topic === 'rules') return ckrRenderRulesTopic(idx);
+  if (topic === 'tests') return ckrRenderTestsTopic(idx, arg1);
+  if (topic === 'gaps') return ckrRenderGapsTopic(idx, arg1);
+  return null;
 }

@@ -1,0 +1,138 @@
+{
+  "说明": "声明挂靠的欠账与「刻意不接线」清单。pending = 已知欠账（只许变少，接上线必须同轮删除）；advisory = 决定不接线的砖（观测挖出来了但不构成判据，理由必填）。两列都每次运行打印。",
+  "since": "2026-11-20",
+  "todo": "pending 为空：能接的都已接线（见 contracts/brick-observations）；advisory 里的砖要接线，先补齐观测字段或补齐业务底线，再移出本表。",
+  "pending": [],
+  "advisory": [
+    {
+      "id": "jscpd@stage4",
+      "tool": "jscpd",
+      "reason": "克隆对数属重构建议（当前 3 组微克隆），没有「必须为 0」的业务底线；作为旁注给人看。"
+    },
+    {
+      "id": "fuck-u-code@stage4",
+      "tool": "fuck-u-code",
+      "reason": "复杂度是结构性建议，不代表业务正确性；作为热点清单供人选重构目标。"
+    },
+    {
+      "id": "dotenv-linter@stage4",
+      "tool": "dotenv-linter",
+      "reason": "本仓没有 .env 主体，跑出来的清单对判定无意义；使用者项目里由它自己的契约接。"
+    },
+    {
+      "id": "openspec@stage4",
+      "tool": "openspec",
+      "reason": "本仓没有 openspec 规格目录，规格格式校验对本仓无判据价值。"
+    },
+    {
+      "id": "srclight@stage4",
+      "tool": "srclight",
+      "reason": "索引新鲜度是读代码的前置条件，不是验收结论；由使用者在需要时跑。"
+    },
+    {
+      "id": "beads@stage4",
+      "tool": "beads",
+      "reason": "只读排序建议，禁止回写核状态；把它变成判据等于让外部工具推状态（撞 adr/002）。"
+    },
+    {
+      "id": "ast-grep@stage4",
+      "tool": "ast-grep",
+      "reason": "模式由调用方指定，没有固定业务含义；要判「不许出现某形状」时由那条判据自带模式。"
+    },
+    {
+      "id": "playwright@stage4",
+      "tool": "playwright",
+      "reason": "本仓没有 Web E2E 用例，判据只能恒为「无法判断」；有前端的用户项目里才有意义。"
+    },
+    {
+      "id": "maestro@stage4",
+      "tool": "maestro",
+      "reason": "本仓没有移动端 App 与模拟器，同上。"
+    },
+    {
+      "id": "schemathesis@stage4",
+      "tool": "schemathesis",
+      "reason": "本仓没有运行中的 HTTP 服务可供压测，判据无法产生证据。"
+    },
+    {
+      "id": "trivy@stage4",
+      "tool": "trivy",
+      "reason": "本仓没有 Dockerfile/IaC 清单，misconfig 扫描无对象。"
+    },
+    {
+      "id": "ruff@stage4",
+      "tool": "ruff",
+      "reason": "本仓无 Python 业务主体；供 Python 用户项目拦截小模型缩进截断、F821 未定义符号与裸 except。"
+    },
+    {
+      "id": "pyright@stage4",
+      "tool": "pyright",
+      "reason": "本仓无 Python 业务主体；供 Python 用户项目拦截小模型编造对象属性、传错参数个数与跨模块返回类型失配。"
+    },
+    {
+      "id": "typos@stage4",
+      "tool": "typos",
+      "reason": "未配置项目专属 _typos.toml 缩写白名单前先作旁注观测，防领域缩写误报；用户项目配齐词表后可接零容忍判据。"
+    },
+    {
+      "id": "actionlint@stage4",
+      "tool": "actionlint",
+      "reason": "本仓当前无 .github/workflows 目录；供含 CI 工作流的用户项目拦截小模型编造 Action 参数与表达式错误。"
+    },
+    {
+      "id": "ui-interaction-matrix@stage4",
+      "tool": "ui-interaction-matrix",
+      "reason": "前端交互控件决策规则与五态清单属工作流阶段 4 设计前置约束，由用户项目契约按需绑定。"
+    },
+    {
+      "id": "vuln-merge@stage4",
+      "tool": "vuln-merge",
+      "reason": "多源漏洞去重与可达性定级归并器供工作流安全覆盖族收口调用，本仓零运行时第三方依赖暂作旁注。"
+    },
+    {
+      "id": "syft@stage4",
+      "tool": "syft",
+      "reason": "CycloneDX SBOM 物料清单生成器供下游漏洞扫描消费，本身只列清单不作红绿判据。"
+    },
+    {
+      "id": "semgrep@stage4",
+      "tool": "semgrep",
+      "reason": "多语言 SAST 扫描规则由具体用户项目或安全覆盖族指定，本仓作为预置工作流节点提供。"
+    },
+    {
+      "id": "pbt-fastcheck@stage4",
+      "tool": "pbt-fastcheck",
+      "reason": "属性基不变量需按业务域（解析器、状态机、计费、序列化）编写，本仓提供协议适配器与反例观测规范，由用户项目按需接入硬判据。"
+    },
+    {
+      "id": "complexipy@stage4",
+      "tool": "complexipy",
+      "reason": "本仓无 Python 业务源码；供 Python 项目通过默认治理流强制校验 Campbell 2018 认知复杂度 <=25。"
+    },
+    {
+      "id": "pytest@stage4",
+      "tool": "pytest",
+      "reason": "本仓无 Python 业务源码；供 Python 项目通过默认治理流与契约自动运行单测并支持 xdist_group。"
+    },
+    {
+      "id": "ty@stage4",
+      "tool": "ty",
+      "reason": "本仓无 Python 业务源码；供 Python 项目以纯 Rust 单二进制执行高速静态类型检查。"
+    },
+    {
+      "id": "import-linter@stage4",
+      "tool": "import-linter",
+      "reason": "本仓无 Python 业务源码；供模块化 Python 项目以 grimp 校验架构分层与禁止跨层导入。"
+    },
+    {
+      "id": "oxlint@stage4",
+      "tool": "oxlint",
+      "reason": "作为默认治理流 dg-on-edit 的按需高速语义正确性护栏（与 Biome 组成互补覆盖族），保留判定核零外部 npm 依赖契约。"
+    },
+    {
+      "id": "shellcheck@stage4",
+      "tool": "shellcheck",
+      "reason": "供装有 shellcheck 的项目在 dg-pre-commit 默认流中检查 .githooks 与 .sh 脚本，不强制裸机预装外部二进制。"
+    }
+  ]
+}

@@ -24,35 +24,40 @@ const HUMAN_CAPABILITY_TITLES = {
 const DOMAIN_ARCHETYPES = [
   {
     key: 'intent',
-    match: (id) => id === 'host-dom-grill-me' || id === 'host-dom-root' || id.includes('openspec'),
+    order: 0,
+    match: (id) => id === 'host-dom-grill-me' || id === 'host-dom-root' || id.startsWith('host-dom-openspec'),
     title: '沟通需求与定好验收标准',
     colorKey: 'blue',
     baseTier: 0
   },
   {
     key: 'atlas',
-    match: (id) => id.includes('atlas-'),
+    order: 1,
+    match: (id) => id.startsWith('host-dom-atlas-'),
     title: '可视化项目看板与过夜挂机',
     colorKey: 'teal',
+    baseTier: 1
+  },
+  {
+    key: 'core',
+    order: 2,
+    match: (id) => id === 'host-dom-runner' || id.startsWith('host-dom-core-') || id.startsWith('host-dom-cockpit'),
+    title: '精准挑文件与真跑验收',
+    colorKey: 'indigo',
     baseTier: 2
   },
   {
     key: 'dsh',
-    match: (id) => id.includes('dsh-'),
+    order: 3,
+    match: (id) => id.startsWith('host-dom-dsh-'),
     title: '界面实时预览与分派助手',
     colorKey: 'emerald',
     baseTier: 2
   },
   {
-    key: 'core',
-    match: (id) => id === 'host-dom-runner' || id.includes('core-'),
-    title: '精准挑文件与真跑验收',
-    colorKey: 'indigo',
-    baseTier: 3
-  },
-  {
     key: 'gates',
-    match: (id) => id.includes('skill-') || id.includes('tools'),
+    order: 4,
+    match: (id) => id.startsWith('host-dom-skill-') || id.startsWith('host-dom-tools') || id.startsWith('host-dom-shared-prim'),
     title: '防 AI 偷懒与代码质量体检',
     colorKey: 'amber',
     baseTier: 5
@@ -339,6 +344,7 @@ function deriveSubgraphMeta(memberNodes, scopePaths, depth, seqIdx, usedTitles, 
     id,
     title,
     colorKey,
+    archOrder: arch ? arch.order : 999,
     tip: `按模块度内聚自动收拢的业务子流（内含 ${memberNodes.length} 步：${memberNodes.map((n) => n.title).join('、')}）· 可点「⊞ 原地展开」在当前画布直接查看，或点「进入子流」下钻`
   };
 }
@@ -448,20 +454,32 @@ function shouldKeepBackbonePair(a, b, qDir, strength, k, recA, recB) {
   return true;
 }
 
-function compareGroupOrderItems(a, b) {
+function compareGroupOrderItems(a, b, useArchOrder = false) {
   if (a.hasGrill !== b.hasGrill) return a.hasGrill ? -1 : 1;
-  if (Math.abs(a.tier - b.tier) >= 0.45) return a.tier - b.tier;
-  return b.netFlow - a.netFlow;
+  const tierDiff = Math.round(a.tier) - Math.round(b.tier);
+  if (tierDiff !== 0) return tierDiff;
+  if (useArchOrder && a.archOrder !== b.archOrder) return a.archOrder - b.archOrder;
+  const flowDiff = b.netFlow - a.netFlow;
+  if (flowDiff !== 0) return flowDiff;
+  return String(a.id).localeCompare(String(b.id));
 }
 
 function computeGroupRankMap(groupRecords, qDir) {
-  const orderedIdx = groupRecords
-    .map((rec, idx) => {
-      const outSum = qDir[idx].reduce((s, v) => s + v, 0);
-      const inSum = qDir.reduce((s, row) => s + row[idx], 0);
-      return { idx, tier: rec.meanTier, hasGrill: rec.hasGrill, netFlow: outSum - inSum };
-    })
-    .sort(compareGroupOrderItems)
+  const items = groupRecords.map((rec, idx) => {
+    const outSum = qDir[idx].reduce((s, v) => s + v, 0);
+    const inSum = qDir.reduce((s, row) => s + row[idx], 0);
+    return {
+      idx,
+      id: rec.node.id,
+      tier: rec.meanTier,
+      hasGrill: rec.hasGrill,
+      archOrder: rec.archOrder ?? 999,
+      netFlow: outSum - inSum
+    };
+  });
+  const useArchOrder = items.filter((it) => !it.hasGrill).every((it) => (it.archOrder ?? 999) < 999);
+  const orderedIdx = items
+    .sort((a, b) => compareGroupOrderItems(a, b, useArchOrder))
     .map((x) => x.idx);
   return new Map(orderedIdx.map((origIdx, r) => [origIdx, r]));
 }
@@ -528,6 +546,16 @@ function applySavedNodeLayout(nd, saved, stepCode, col, row, colCount, maxColCou
   };
 }
 
+function compareDagLayerNodes(a, b, depthMap, useArchOrder = false) {
+  const dDiff = (depthMap.get(a.id) || 0) - (depthMap.get(b.id) || 0);
+  if (dDiff !== 0) return dDiff;
+  const tDiff = inferNodeArchTier(a) - inferNodeArchTier(b);
+  if (tDiff !== 0) return tDiff;
+  const archDiff = useArchOrder ? (a.archOrder ?? 999) - (b.archOrder ?? 999) : 0;
+  if (archDiff !== 0) return archDiff;
+  return String(a.id).localeCompare(String(b.id));
+}
+
 function layoutDagLayerNodes(nodes, savedState = {}) {
   transitivelyReduceDag(nodes);
   const depthMap = computeLongestDagDepths(nodes);
@@ -539,10 +567,8 @@ function layoutDagLayerNodes(nodes, savedState = {}) {
   const maxColCount = Math.max(1, ...colTotals.values());
   const colRows = new Map();
   const layouts = savedState?.hostNodeLayouts || {};
-  const ordered = [...nodes].sort((a, b) => {
-    const dDiff = (depthMap.get(a.id) || 0) - (depthMap.get(b.id) || 0);
-    return dDiff !== 0 ? dDiff : (inferNodeArchTier(a) - inferNodeArchTier(b));
-  });
+  const useArchOrder = nodes.filter((nd) => nd.id !== 'host-dom-grill-me').every((nd) => (nd.archOrder ?? 999) < 999);
+  const ordered = [...nodes].sort((a, b) => compareDagLayerNodes(a, b, depthMap, useArchOrder));
   let nonGrillSeq = 0;
   return ordered.map((nd) => {
     const stepCode = nd.id === 'host-dom-grill-me' ? '00' : String(++nonGrillSeq).padStart(2, '0');
@@ -574,9 +600,11 @@ function buildMultiMemberGroupRecord(rawMembers, memberIdxs, depth, gIdx, usedTi
     single: false,
     hasGrill,
     meanTier,
+    archOrder: meta.archOrder,
     memberIdxs,
     node: {
       id: meta.id,
+      archOrder: meta.archOrder,
       step: '01',
       archTier: Math.max(0, Math.round(meanTier)),
       title: meta.title,
@@ -617,6 +645,7 @@ function buildHierarchyRecursive(nodes, depth, savedState, usedIds = new Set()) 
         single: true,
         hasGrill: m.id === 'host-dom-grill-me',
         meanTier: inferNodeArchTier(m),
+        archOrder: 999,
         memberIdxs,
         node: { ...m, nextIds: [] }
       };

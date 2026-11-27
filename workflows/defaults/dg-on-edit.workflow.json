@@ -64,10 +64,28 @@
       "config": { "target": "." },
       "configSchema": [],
       "exec": { "kind": "adapter_node", "tool": "ruff", "entryRel": "skill/adapters/ruff-lint.mjs", "registryId": "ruff@stage4" }
+    },
+    {
+      "id": "edit-js-oxlint",
+      "title": "JS/TS 语义正确性快检 (Oxlint)",
+      "tip": "共享池或系统安装 oxlint 时自动激活：Rust 多线程百毫秒级拦截死循环方向、常量重赋值、重复键与可疑逻辑",
+      "tier": "recommended",
+      "slot": "gate:js-correctness",
+      "activeBrick": "adp-oxlint",
+      "requires": ["hasJsOrTs", "hasOxlint"],
+      "onMissing": "skip",
+      "bypassed": false,
+      "x": 1050,
+      "y": 90,
+      "w": 270,
+      "config": { "target": "." },
+      "configSchema": [],
+      "exec": { "kind": "adapter_node", "tool": "oxlint", "entryRel": "skill/adapters/oxlint-check.mjs", "registryId": "oxlint@stage4" }
     }
   ],
   "links": [
     { "id": "lk-edit-1", "fromNode": "edit-lint-gate", "fromSlot": "out", "toNode": "edit-term-check", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-edit-2", "fromNode": "edit-term-check", "fromSlot": "out", "toNode": "edit-py-ruff", "toSlot": "in", "type": "SIGNAL" }
+    { "id": "lk-edit-2", "fromNode": "edit-term-check", "fromSlot": "out", "toNode": "edit-py-ruff", "toSlot": "in", "type": "SIGNAL" },
+    { "id": "lk-edit-3", "fromNode": "edit-term-check", "fromSlot": "out", "toNode": "edit-js-oxlint", "toSlot": "in", "type": "SIGNAL" }
   ]
 }

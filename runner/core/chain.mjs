@@ -1,4 +1,4 @@
-// L0 哈希链与冻结-实现绑定核验（02-规格.md §八 & §8.2.2，零第三方依赖）
+// L1 哈希链与冻结-实现绑定核验（02-规格.md §八 & §8.2.2，零第三方依赖）
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';

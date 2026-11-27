@@ -1,4 +1,4 @@
-// 零依赖 contract.json Schema 校验器（D10 · 禁 ajv/zod，≤80 行；规格 §2.3/§2.4 + G-01/03/06/10/11）。
+// 零依赖 contract.json Schema 校验器（D10 · 禁 ajv/zod，≤160 行；规格 §2.3/§2.4 + G-01/03/06/10/11）。
 // 用法：node skill/schema-lite.mjs <contract.json> [--runner] ｜ 退出码：0 通过 / 2 结构或 JSON 损坏 / 3 参数或文件读不出。
 // 诚实边界：只校验字段存在、类型与枚举，不核 frozenHash 真伪、目录名匹配或语义对齐（门 2/门 5 管）。
 import { resolve } from 'node:path';

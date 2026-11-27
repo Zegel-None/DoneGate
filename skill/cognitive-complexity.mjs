@@ -426,6 +426,7 @@ export function analyzeCodeComplexityAndGolfing(text) {
 
 const AUDIT_SKIP_DIRS = ['node_modules', '.git', '.donegate', '.venv', 'venv', '__pycache__', '.deps', 'dist', '_dist', 'build', 'coverage', 'vendor', 'tests', 'test', '__tests__'];
 const AUDIT_JS_EXTS = new Set(['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx']);
+const COG_MECHANICAL_SHARD_RE = /(?:[-_](?:part|chunk|slice|shard)\d*|[-_][a-z])\.(?:mjs|cjs|js|ts|tsx|jsx|py)$/i;
 
 function cogDiscoverAuditDirs(projectRoot) {
   const isSelf = existsSync(join(projectRoot, 'runner', 'donegate.mjs')) && existsSync(join(projectRoot, 'skill', 'check-commit-hygiene.mjs'));
@@ -440,8 +441,9 @@ function cogAuditSingleJsFile(projectRoot, absFile, budgets) {
   const cx = analyzeCodeComplexityAndGolfing(readFileSync(absFile, 'utf8'));
   const overMaxFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.maxCognitiveComplexity);
   const warnFns = cx.functions.filter((f) => f.cognitiveComplexity > budgets.warnCognitiveComplexity && f.cognitiveComplexity <= budgets.maxCognitiveComplexity);
-  if (overMaxFns.length === 0 && warnFns.length === 0 && cx.golfingIssues.length === 0) return { scanned: true, item: null };
-  return { scanned: true, item: { file: rel, maxCognitive: cx.maxCognitive, overMaxFns, warnFns, golfingIssues: cx.golfingIssues } };
+  const isMechanicalShard = COG_MECHANICAL_SHARD_RE.test(rel);
+  if (overMaxFns.length === 0 && warnFns.length === 0 && cx.golfingIssues.length === 0 && !isMechanicalShard) return { scanned: true, item: null };
+  return { scanned: true, item: { file: rel, maxCognitive: cx.maxCognitive, overMaxFns, warnFns, golfingIssues: cx.golfingIssues, isMechanicalShard } };
 }
 
 export function auditRepository4DWithStats(projectRoot, budgets) {
@@ -464,8 +466,4 @@ export function auditRepository4DWithStats(projectRoot, budgets) {
   }
   items.sort((a, b) => b.maxCognitive - a.maxCognitive);
   return { items, scannedJsFiles, detectedPyFiles, scannedRoots: dirs };
-}
-
-export function auditRepository4D(projectRoot, budgets) {
-  return auditRepository4DWithStats(projectRoot, budgets).items;
 }

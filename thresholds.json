@@ -1,0 +1,84 @@
+{
+  "maxConstraints": 12,
+  "maxPermanentConstraints": 6,
+  "maxTempConstraintDays": 90,
+  "intentReviewDays": 60,
+  "timeoutSec": 600,
+  "maxOutputChars": 262144,
+  "coverageFullPct": 60,
+  "coverageMinPct": 30,
+  "criterionValidDays": 90,
+  "maxContracts": 16,
+  "maxResliceCount": 3,
+  "maxCriteriaPerFileRatio": 2,
+  "maxNewCriteriaPerRound": 3,
+  "minSignoffSecPerCriterion": 20,
+  "unstableStreak": 3,
+  "maxDiffLines": 450,
+  "warnCommitCodeLines": 250,
+  "maxCommitCodeLines": 450,
+  "maxRawCommitCodeLines": 900,
+  "maxProdCommitFiles": 6,
+  "maxCommitFiles": 10,
+  "warnEffectiveFileLines": 600,
+  "maxEffectiveFileLines": 850,
+  "maxFileLines": 1200,
+  "warnFunctionLines": 160,
+  "warnCognitiveComplexity": 15,
+  "maxCognitiveComplexity": 25,
+  "subagentContextBudget": {
+    "contextWindowTokens": 1000000,
+    "targetUtilization": 0.4,
+    "totalSessionBudgetTokens": 400000,
+    "routerBudgetTokens": 8000,
+    "zeroHopSourceBudgetTokens": 160000,
+    "oneHopContractBudgetTokens": 48000,
+    "onDemandExpandBudgetTokens": 64000,
+    "multiTurnReserveTokens": 120000,
+    "receiptBudgetTokens": 500
+  },
+  "docBudgets": {
+    "rootAgentsMaxLines": 130,
+    "rootAgentsMaxBytes": 8192,
+    "subtreeAgentsMaxLines": 80,
+    "subtreeAgentsMaxBytes": 6144,
+    "maxParagraphLines": 14
+  },
+  "harnessProfiles": {
+    "standard": {
+      "contextWindowTokens": 200000,
+      "zeroHopSourceBudgetTokens": 64000,
+      "compactDefault": true
+    },
+    "frontier-1m": {
+      "contextWindowTokens": 1000000,
+      "zeroHopSourceBudgetTokens": 160000,
+      "compactDefault": false
+    }
+  },
+  "autopilotLimits": {
+    "maxSelfHealRounds": 2,
+    "maxSubagentTools": 10
+  },
+  "bannedPatterns": [
+    {
+      "id": "adapter-no-raw-node-primitives",
+      "pattern": "from\\s+['\"](?:node:)?(?:crypto|child_process)['\"]",
+      "pathRegex": "^skill/adapters/(?!_)[^/]+\\.mjs$",
+      "message": "具体适配器禁止直引 node:crypto 或 node:child_process，请统一调用 ./_shared.mjs 的 runAdapter"
+    },
+    {
+      "id": "no-duplicate-sha256",
+      "pattern": "createHash\\s*\\(\\s*['\"]sha256['\"]\\s*\\)",
+      "pathRegex": "^(?:runner|skill)/.*\\.mjs$",
+      "excludePathRegex": "^(?:skill/hash\\.mjs|skill/adapters/_shared\\.mjs)$",
+      "message": "禁止重复手搓 SHA-256，请复用 skill/hash.mjs 的 sha256() 或 _shared.mjs 的 shaBytes()"
+    },
+    {
+      "id": "adapter-no-inline-porcelain",
+      "pattern": "status['\"]\\s*,\\s*['\"]--porcelain",
+      "pathRegex": "^skill/adapters/(?!_)[^/]+\\.mjs$",
+      "message": "具体适配器禁止重复手写 git status --porcelain，脏树门禁已由 ./_shared.mjs 统一接管"
+    }
+  ]
+}

@@ -284,7 +284,6 @@ function hyReadNodeConfigOverrides() {
 export function loadHygieneBudgets(projectRoot) {
   const p = join(projectRoot, 'thresholds.json');
   const nodeCfg = hyReadNodeConfigOverrides();
-  const base = { ...DEFAULT_HYGIENE_BUDGETS, maxFunctionLines: 0, allowedRootDirs: [], bannedPatterns: [], blockEmptyCatch: true };
   const r = existsSync(p) ? readJsonStrict(p) : { ok: false };
   const fileVals = (r.ok && r.value && typeof r.value === 'object') ? r.value : {};
   const v = { ...fileVals, ...nodeCfg };

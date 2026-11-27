@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 过夜挂机确定性持久状态机（checkpoint 断点续跑 + 三重防烧钱熔断 + human-gate 挂起/手动停机与早间简报，<= 260 行）
+// 过夜挂机确定性持久状态机（checkpoint 断点续跑 + 三重防烧钱熔断 + human-gate 挂起/手动停机与早间简报，<= 320 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

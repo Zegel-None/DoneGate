@@ -1,0 +1,12 @@
+{
+  "note": "check-symbols 的棘轮基线：存量不挡路，新增即红（文件级无行号键，免受行位移干扰）",
+  "count": 6,
+  "keys": [
+    "dead · hasText · skill/io.mjs",
+    "sameName · links · skill/check-cards.mjs | skill/check-forge-cards.mjs · 3e458655",
+    "sameName · parseFrontmatter · skill/check-forge-cards.mjs | skill/check-skills.mjs · 4a6025de",
+    "sameName · prose · skill/check-cards.mjs | skill/check-forge-cards.mjs · 5e4f4f7c",
+    "sameName · readContractsIndex · skill/check-brick-capabilities.mjs | skill/check-brick-liveness.mjs · 55d1818b",
+    "sameName · run · runner/self-test.mjs | skill/symbols-fixtures.mjs · 666a0255"
+  ]
+}

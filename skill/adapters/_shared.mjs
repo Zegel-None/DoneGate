@@ -117,9 +117,15 @@ function adpShBuildProjectVenvCandidates(spec, rootDir) {
   if (!rootDir) return [];
   const isWin = process.platform === 'win32';
   const binNames = isWin ? [spec + '.exe', spec + '.cmd', spec + '.bat'] : [spec];
-  const venvDirs = isWin
-    ? [join(rootDir, '.venv', 'Scripts'), join(rootDir, 'venv', 'Scripts'), join(rootDir, 'workflows', '.deps', '_shared', 'venv', 'Scripts')]
-    : [join(rootDir, '.venv', 'bin'), join(rootDir, 'venv', 'bin'), join(rootDir, 'workflows', '.deps', '_shared', 'venv', 'bin')];
+  const sharedRoot = join(rootDir, 'workflows', '.deps', '_shared');
+  const venvDirs = [
+    ...(isWin
+      ? [join(rootDir, '.venv', 'Scripts'), join(rootDir, 'venv', 'Scripts'), join(sharedRoot, 'venv', 'Scripts')]
+      : [join(rootDir, '.venv', 'bin'), join(rootDir, 'venv', 'bin'), join(sharedRoot, 'venv', 'bin')]),
+    join(sharedRoot, '.bin'),
+    join(sharedRoot, 'npm', 'node_modules', '.bin'),
+    join(sharedRoot, 'npm-cells', spec, 'node_modules', '.bin')
+  ];
   const out = [];
   for (const d of venvDirs) for (const bn of binNames) out.push(join(d, bn));
   return out;

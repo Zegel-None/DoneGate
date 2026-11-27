@@ -1,4 +1,4 @@
-// L2 胶囊高水位 Louvain 模块度弹性分片建议器（Blondel et al. 2008，<= 350 行）
+// L1 胶囊高水位 Louvain 模块度弹性分片建议器（Blondel et al. 2008，<= 350 行）
 // 当单张契约卡 0-Hop 源码逼近预算上限（>= 80% 或发生截断）时，基于模块间导入、DOM 耦合与同族前缀自动计算最优拆分切口
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { maskCommentsAndStrings } from './ast-stub.mjs';

@@ -17,8 +17,11 @@ export const GOVERNANCE_DEFAULTS_REL = 'workflows/defaults';
 export const GOVERNANCE_PROPOSALS_REL = '.donegate/workflows/proposals';
 
 export const GOVERNANCE_SEAM_CATALOG = Object.freeze({
-  'gate:lint-edit': ['builtin-lint-edit', 'adp-biome', 'adp-ruff'],
+  'gate:lint-edit': ['builtin-lint-edit', 'adp-oxlint', 'adp-biome', 'adp-ruff'],
+  'gate:js-correctness': ['adp-oxlint', 'adp-biome'],
   'gate:commit-hygiene': ['builtin-commit-hygiene'],
+  'gate:arch-boundary': ['adp-depcruise', 'adp-codegraph'],
+  'gate:shell-lint': ['adp-shellcheck'],
   'gate:doc-budget': ['builtin-doc-budgets'],
   'gate:module-integrity': ['builtin-module-integrity'],
   'gate:terminology': ['builtin-terminology'],
@@ -40,7 +43,11 @@ export const GOVERNANCE_SEAM_CATALOG = Object.freeze({
 
 export const WFC_BRICK_EXEC_MAP = Object.freeze({
   'builtin-lint-edit': { kind: 'builtin_gate', scriptRel: 'skill/lint-edit.mjs', args: ['--changed'] },
+  'adp-oxlint': { kind: 'adapter_node', tool: 'oxlint', entryRel: 'skill/adapters/oxlint-check.mjs', registryId: 'oxlint@stage4' },
   'adp-biome': { kind: 'adapter_node', tool: 'biome', entryRel: 'skill/adapters/biome-lint.mjs', registryId: 'biome@stage4', obligationId: 'biome-no-errors' },
+  'adp-depcruise': { kind: 'adapter_node', tool: 'depcruise', entryRel: 'skill/adapters/depcruise-arch.mjs', registryId: 'depcruise@stage4', obligationId: 'depcruise-no-violations' },
+  'adp-codegraph': { kind: 'adapter_node', tool: 'codegraph', entryRel: 'skill/adapters/codegraph-impact.mjs', registryId: 'codegraph@stage4', obligationId: 'codegraph-no-cycles' },
+  'adp-shellcheck': { kind: 'adapter_node', tool: 'shellcheck', entryRel: 'skill/adapters/shellcheck-lint.mjs', registryId: 'shellcheck@stage4' },
   'adp-ruff': { kind: 'adapter_node', tool: 'ruff', entryRel: 'skill/adapters/ruff-lint.mjs', registryId: 'ruff@stage4', obligationId: 'ruff-no-violations' },
   'adp-complexipy': { kind: 'adapter_node', tool: 'complexipy', entryRel: 'skill/adapters/complexipy-check.mjs', registryId: 'complexipy@stage4', obligationId: 'complexipy-under-cap' },
   'adp-fuck-u-code': { kind: 'adapter_node', tool: 'fuck-u-code', entryRel: 'skill/adapters/fuck-u-code.mjs', registryId: 'fuck-u-code@stage4', obligationId: 'fuck-u-code-no-hot-files' },
@@ -75,10 +82,10 @@ export function wfcAssertHumanAuthority(actorRole = 'human', confirmedByHuman = 
   return { ok: true, exitCode: 0 };
 }
 
-function wfcDirHasPyFile(dirPath) {
+function wfcDirHasExtFile(dirPath, extRe) {
   if (!existsSync(dirPath)) return false;
   try {
-    return readdirSync(dirPath).some((name) => name.endsWith('.py'));
+    return readdirSync(dirPath).some((name) => extRe.test(name));
   } catch (err) {
     void err;
     return false;
@@ -87,15 +94,35 @@ function wfcDirHasPyFile(dirPath) {
 
 function wfcDetectPythonProject(root) {
   if (['pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile'].some((f) => existsSync(join(root, f)))) return true;
-  return wfcDirHasPyFile(root) || wfcDirHasPyFile(join(root, 'src'));
+  return wfcDirHasExtFile(root, /\.py$/i) || wfcDirHasExtFile(join(root, 'src'), /\.py$/i);
+}
+
+function wfcDetectJsProject(root) {
+  if (existsSync(join(root, 'package.json'))) return true;
+  return ['src', 'runner', 'lib'].some((d) => wfcDirHasExtFile(join(root, d), /\.(?:mjs|cjs|js|ts|tsx|jsx)$/i));
+}
+
+function wfcDetectShellScripts(root) {
+  if (existsSync(join(root, '.githooks', 'pre-commit'))) return true;
+  return wfcDirHasExtFile(root, /\.(?:sh|bash)$/i) || wfcDirHasExtFile(join(root, 'scripts'), /\.(?:sh|bash)$/i);
+}
+
+function wfcHasDepcruiseConfig(root) {
+  return ['.dependency-cruiser.cjs', '.dependency-cruiser.js', '.dependency-cruiser.json'].some((f) => existsSync(join(root, f)));
 }
 
 function wfcProbeBinFast(root, binName) {
   const isWin = process.platform === 'win32';
   const exts = isWin ? ['.exe', '.cmd', '.bat'] : [''];
-  const venvDirs = isWin
-    ? [join(root, '.venv', 'Scripts'), join(root, 'venv', 'Scripts'), join(root, 'workflows', '.deps', '_shared', 'venv', 'Scripts')]
-    : [join(root, '.venv', 'bin'), join(root, 'venv', 'bin'), join(root, 'workflows', '.deps', '_shared', 'venv', 'bin')];
+  const sharedRoot = join(root, 'workflows', '.deps', '_shared');
+  const venvDirs = [
+    ...(isWin
+      ? [join(root, '.venv', 'Scripts'), join(root, 'venv', 'Scripts'), join(sharedRoot, 'venv', 'Scripts')]
+      : [join(root, '.venv', 'bin'), join(root, 'venv', 'bin'), join(sharedRoot, 'venv', 'bin')]),
+    join(sharedRoot, '.bin'),
+    join(sharedRoot, 'npm', 'node_modules', '.bin'),
+    join(sharedRoot, 'npm-cells', binName, 'node_modules', '.bin')
+  ];
   const pathDirs = String(process.env.PATH || '').split(delimiter).filter(Boolean);
   for (const d of [...venvDirs, ...pathDirs]) {
     for (const ext of exts) {
@@ -110,6 +137,8 @@ export function wfcProbeEnvCoeffects(projectRoot) {
   const pw = uleResolvePlaywrightModule(root);
   const srt = aosProbeOsSandbox(root);
   const hasPython = wfcDetectPythonProject(root);
+  const hasJsOrTs = wfcDetectJsProject(root);
+  const hasShellScripts = wfcDetectShellScripts(root);
   const hasPyVenv = existsSync(join(root, '.venv')) || existsSync(join(root, 'venv'));
   const tsCell = probeTreeSitterWasmCell(root);
   return {
@@ -121,6 +150,12 @@ export function wfcProbeEnvCoeffects(projectRoot) {
     hasSymbolsBaseline: existsSync(join(root, 'skill', 'symbols-baseline.json')),
     hasPlaywright: pw.available,
     hasSrt: srt.readyForDefaultUse,
+    hasJsOrTs,
+    hasOxlint: hasJsOrTs && wfcProbeBinFast(root, 'oxlint'),
+    hasDepcruiseConfig: wfcHasDepcruiseConfig(root),
+    hasDepcruise: wfcProbeBinFast(root, 'depcruise'),
+    hasShellScripts,
+    hasShellcheck: hasShellScripts && wfcProbeBinFast(root, 'shellcheck'),
     hasPython,
     hasPyVenv,
     hasRuff: hasPython && wfcProbeBinFast(root, 'ruff'),

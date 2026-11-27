@@ -1,4 +1,4 @@
-// L0 项目配置、契约/功能清单与运行证据加载原语（<= 350 行聚焦子模块）
+// L1 项目配置、契约/功能清单与运行证据加载原语（<= 350 行聚焦子模块）
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -26,7 +26,7 @@ export const DEFAULT_THRESHOLDS = {
   coverageFullPct: 60,
   coverageMinPct: 30,
   criterionValidDays: 90,
-  maxContracts: 8,
+  maxContracts: 16,
   maxResliceCount: 3,
   maxCriteriaPerFileRatio: 2,
   maxNewCriteriaPerRound: 3,

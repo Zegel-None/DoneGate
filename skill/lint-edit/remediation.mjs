@@ -1,4 +1,4 @@
-// lint-edit 可执行修复配方表（伴生子模块，自动继承 gate-tooling 归属）
+// lint-edit 可执行修复配方表（伴生子模块，自动继承 shared-primitives 归属）
 const LER_REMEDIATION_RULES = [
   {
     match: /C4g/,
@@ -39,6 +39,18 @@ const LER_REMEDIATION_RULES = [
   {
     match: /C2:skip-only|C2:tautology/,
     hint: '移除 `.skip/.only/.todo` 或恒真断言，改写为检验真实业务行为的可失败断言'
+  },
+  {
+    match: /C4 禁止机械按字母/,
+    hint: '禁止使用 `-a.mjs` / `-b.mjs` / `-part1.mjs` 机械切片后缀，请按业务职责重命名模块并更新引用'
+  },
+  {
+    match: /M7 文件头/,
+    hint: '按模块职责拆分减负使其重新低于头注声明上限，或将文件头注释中的行数/契约归属校准为当前真实值'
+  },
+  {
+    match: /C3:boolean-sort|比较器返回布尔值/,
+    hint: '将 `.sort((a, b) => a > b)` 改为返回数值差 `(a, b) => a - b`、`a.localeCompare(b)` 或三元 `(a < b ? -1 : a > b ? 1 : 0)`'
   },
   {
     match: /C4d|决策记录/,

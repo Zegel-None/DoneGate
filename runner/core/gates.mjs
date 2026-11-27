@@ -1,4 +1,4 @@
-// L0 门禁与状态现算聚合导出（子模块均 <= 350 行：project-loader / state-calc / gate-checks）
+// L1 门禁与状态现算聚合导出（子模块均 <= 350 行：project-loader / state-calc / gate-checks）
 export {
   DEFAULT_THRESHOLDS,
   SELF_WRITER_RE,

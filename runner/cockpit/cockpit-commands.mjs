@@ -1,12 +1,12 @@
 // 主控三级按需变焦命令实现（单一 MIT 开源图谱底座 + 极薄契约/ADR 挂载 + 末步直读源码，<= 350 行）
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { getCbmGraphSummary, queryCbmFileGraph } from '../core/index.mjs';
+import { cmdImpact, fileBelongsToScopes, getCbmGraphSummary,
+  isSharedGovernanceFile, queryCbmFileGraph, SHARED_GOVERNANCE_GLOBS } from '../core/index.mjs';
 import { buildCockpitGraphIndex, extractFullHeaderComment } from './cockpit-index.mjs';
-import { renderDecisionsZoom, renderDomainOrContract, renderSingleFileZoom } from './cockpit-render.mjs';
-import { formatPathGovernanceLines, renderBoundedSourceSlice, renderCbmSymbolZoom } from './cockpit-source.mjs';
-import { fileBelongsToScopes, isSharedGovernanceFile, SHARED_GOVERNANCE_GLOBS } from '../core/index.mjs';
-import { cmdImpact } from '../core/index.mjs';
+import { finalizeCliTextView, finalizeZoomCliResult, parseBudgetOption } from './cockpit-budget.mjs';
+import { renderBuiltinZoomTopic, renderDecisionsZoom, renderDomainOrContract, renderSingleFileZoom } from './cockpit-render.mjs';
+import { formatPathGovernanceLines, renderBoundedSourceSlice, renderCbmSymbolZoom, renderFileSkeletonZoom } from './cockpit-source.mjs';
 
 const BUILTIN_TOPICS = new Set(['rules', 'tests', 'gaps', 'all']);
 
@@ -91,7 +91,8 @@ function ckcFormatContractBlock(cid, idx, layerMap) {
   const srcTok = n.stub?.sourceTokens || 0;
   const gauge = ckcFormatCapacityGauge(srcTok);
   const up = n.dependsOnIds.length ? `上游:[${n.dependsOnIds.join(', ')}]` : '上游:无(L0叶)';
-  const down = n.dependedByIds.length ? `下游:[${n.dependedByIds.join(', ')}]` : '下游:无(顶层)';
+  const noDownLabel = n.dependsOnIds.length ? '下游:无(顶层)' : '下游:无(孤立卡·无静态引用方)';
+  const down = n.dependedByIds.length ? `下游:[${n.dependedByIds.join(', ')}]` : noDownLabel;
   const cidAdr = idx.hasDecisionsDir ? ` | ADR:${idx.adrs.filter((a) => a.contracts.includes(cid)).length}` : '';
   return [
     `- **[L${layer}] \`${cid}\`** · ${gauge}（${n.title} | \`${srcTok.toLocaleString()} tok\` / 存根 \`${n.stub?.stubTokens || 0} tok\` | ${up} · ${down}${cidAdr}）`,
@@ -122,11 +123,12 @@ function ckcBuildZoomZeroGovernanceSection(idx, hasContracts) {
 
 function ckcBuildCommandDictLines(idx, hasContracts) {
   const items = [
-    '**第一步 · 图谱域/契约缩圈（Zoom-1）**：`node runner/donegate.mjs zoom <域编号 01..05|all> [更多域...]`' + (hasContracts ? ' | 契约详情与存根：`zoom <契约ID> [--stubs]`' : ''),
+    '**第一步 · 任务语义直达定位（FTS5 种子 + 入度阻尼 PPR + 预算打包）**：`node runner/donegate.mjs locate "<任务描述>" [--budget 4000]`（MCP 宿主优先调 `dg_locate`）',
+    '**图谱域/契约缩圈（Zoom-1）**：`node runner/donegate.mjs zoom <域编号 01..05|all> [更多域...]`' + (hasContracts ? ' | 契约详情与存根：`zoom <契约ID> [--stubs]`' : ''),
     idx.hasDecisionsDir ? '**极薄契约/ADR 历史决策挂载**：`node runner/donegate.mjs zoom <域编号|契约ID|文件路径|all> --decisions [--full [编号关键词]]`' : null,
     '**真源规则、单测与缺口并列查询**：`node runner/donegate.mjs zoom rules tests gaps`（亦支持 `zoom tests <词>` 过滤）',
-    '**第二步 · 开源图谱文件/符号/FTS5 追踪（Zoom-2 + CBM 2-Hop 调用链）**：`node runner/donegate.mjs zoom <相对文件路径 | 符号名 | 关键词> [更多目标...]`',
-    '**跨文件波及面与无截断 1-Hop 单测反查**：`node runner/donegate.mjs impact <文件|符号|路由|DOM-ID|配置文件名>`',
+    '**第二步 · 骨架压缩与双向 2-Hop 调用链（Zoom-2 · 置信度标注）**：`node runner/donegate.mjs zoom <相对文件路径 | 符号名> [--skeleton]`',
+    '**跨文件波及面与无截断多跳（≤3 跳）单测反查**：`node runner/donegate.mjs impact <文件|符号|路由|DOM-ID|配置文件名>`',
     '**第三步 · 最后一步按行直读真实源码（锁准 2~5 个目标后必看真源）**：`node runner/donegate.mjs zoom <文件路径[:起-止] | 函数符号名> --source`'
   ].filter(Boolean);
   return items.map((txt, idxNum) => `> ${idxNum + 1}. ${txt}`);
@@ -154,8 +156,10 @@ function ckcBuildContractSectionLines(idx, hasContracts, layerMap, maxLayer) {
   const sccNote = (idx.graph.sccCycles || []).length > 0
     ? `；含互引强连通簇 ${idx.graph.sccCycles.map((c) => `[${c.join(' ⇄ ')}]`).join('、')}，簇内按被依赖净流出度由底座/后端门面先行合入 \`main\`，前端消费卡后跟`
     : '；严格单向无环 DAG（L0 纯叶底座先行，逐层向上合入 `main`）';
-  const out = ['', '## 2. 密封契约卡分层边界、容量水位与 CBM 承重接口', `推荐拓扑合入序（Tarjan DAG · L0→L${maxLayer}）：${idx.graph.topoOrder.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`];
-  for (const cid of idx.graph.topoOrder) out.push(...ckcFormatContractBlock(cid, idx, layerMap));
+  const topoIdx = new Map(idx.graph.topoOrder.map((cid, i) => [cid, i]));
+  const layered = [...idx.graph.topoOrder].sort((a, b) => ((layerMap.get(a) ?? 0) - (layerMap.get(b) ?? 0)) || (topoIdx.get(a) - topoIdx.get(b)));
+  const out = ['', '## 2. 密封契约卡分层边界、容量水位与 CBM 承重接口', `推荐拓扑合入序（Tarjan DAG · L0→L${maxLayer}）：${layered.map((x) => `\`${x}\``).join(' → ')}（纯下游叶节点置末${sccNote}）`];
+  for (const cid of layered) out.push(...ckcFormatContractBlock(cid, idx, layerMap));
   return out;
 }
 
@@ -176,7 +180,7 @@ function ckcBuildZoomZeroMarkdown(idx) {
   const z0 = [
     `# ${idx.atlas.project.name} · 主控全局根视口（Zoom-0 · 三级零漂移按需变焦页表）`,
     `> HEAD：\`${idx.gitHead}\` | 指纹：\`INTENT=${idx.intentHash}\` · \`CONSTRAINTS=${idx.constraintsHash}\``,
-    `> 规模对账：源码模块 \`${idx.atlas.project.moduleCount}\` 个（画布含虚拟立约起点合计 \`${canvasSum}\` 项；声明式工作流 \`${idx.liveMeta.workflows.length}\` 个）| 图谱函数 \`${idx.hubs.uniqueSymbolCount}\` 个 | 架构决策 \`${idx.adrs.length}\` 篇 | 全仓源码约 \`${totalRaw.toLocaleString()} tok\``,
+    `> 规模对账：源码模块 \`${idx.atlas.project.moduleCount}\` 个（画布含虚拟立约起点合计 \`${canvasSum}\` 项；声明式工作流 \`${idx.liveMeta.workflows.length}\` 个）| 去重函数名 \`${idx.hubs.uniqueSymbolCount}\` 个 | 架构决策 \`${idx.adrs.length}\` 篇 | 全仓源码约 \`${totalRaw.toLocaleString()} tok\``,
     ...(archHealthLine ? [archHealthLine] : []),
     cbmLine,
     '> **三步聚焦寻路字典（① MIT 开源图谱缩圈 → ② 契约/ADR 路径挂载 → ③ 末步按行直读源码；支持单条命令并列传多目标）**：',
@@ -191,6 +195,8 @@ function ckcBuildZoomZeroMarkdown(idx) {
 }
 
 export function cmdBrief(projectRoot, opts = {}) {
+  const budgetOpt = parseBudgetOption(opts.budget);
+  if (!budgetOpt.ok) return { exitCode: 3, stderr: budgetOpt.stderr };
   const idx = buildCockpitGraphIndex(projectRoot);
   const cbm = getCbmGraphSummary(idx.root);
   if (opts.json) {
@@ -201,40 +207,14 @@ export function cmdBrief(projectRoot, opts = {}) {
     return { exitCode: 0, stdout: out };
   }
   const md = ckcBuildZoomZeroMarkdown(idx);
+  const view = finalizeCliTextView(md.trimEnd(), budgetOpt.value, 'node runner/donegate.mjs brief');
+  if (!view.ok) return { exitCode: view.exitCode, stderr: view.stderr };
   if (typeof opts.out === 'string' && opts.out.trim()) {
     const absOut = resolve(projectRoot, opts.out.trim());
     mkdirSync(dirname(absOut), { recursive: true });
-    writeFileSync(absOut, md, 'utf8');
+    writeFileSync(absOut, `${view.stdout}\n`, 'utf8');
   }
-  return { exitCode: 0, stdout: md.trimEnd() };
-}
-
-function ckcHandleBuiltinZoomTopic(idx, topic, arg1) {
-  if (topic === 'rules') {
-    const hasContracts = (idx.graph.nodes || []).length > 0;
-    const activeGlobs = hasContracts ? SHARED_GOVERNANCE_GLOBS : SHARED_GOVERNANCE_GLOBS.filter((g) => existsSync(join(idx.root, g.replace(/\/$/, ''))));
-    return JSON.stringify({
-      mode: hasContracts ? 'contract-governed' : 'zero-contract-public',
-      thresholds: idx.thresholds, sharedGovernanceGlobs: activeGlobs,
-      annotatedSubpacks: idx.liveMeta.annotatedSubpacks, newAdapterArchetypes: idx.liveMeta.archetypes,
-      newAdapterUsage: idx.liveMeta.newAdapterHeader,
-      sharedPoolLayout: idx.liveMeta.sharedPoolLayout, declarativeWorkflows: idx.liveMeta.workflows,
-      intent: idx.intentText.trim(), constraints: idx.constraintsText.trim()
-    }, null, 2);
-  }
-  if (topic === 'tests') {
-    const kw = (arg1 || '').toLowerCase();
-    const list = kw ? idx.liveMeta.testSummaries.filter((t) => t.file.toLowerCase().includes(kw) || t.header.toLowerCase().includes(kw) || t.cases.some((c) => c.toLowerCase().includes(kw))) : idx.liveMeta.testSummaries;
-    const L = [`=== 全仓单测与夹具目录（匹配 ${list.length} / 总计 ${idx.liveMeta.testSummaries.length} 个） ===`];
-    for (const t of list) L.push(`- ${t.file} [执行: ${t.file.endsWith('.test.mjs') ? `npx vitest run ${t.file}` : `node ${t.file}`}] — ${t.header}`);
-    return L.join('\n');
-  }
-  if (topic === 'gaps') {
-    const list = arg1 ? idx.gaps.filter((g) => g.contractId === arg1) : idx.gaps;
-    const L = ['=== 本地分支雷达 ===', ...(idx.atlas.branches || []).map((b) => `- ${b.name}: ${b.isDefault ? '主线基线' : `+${b.ahead}/-${b.behind} 闲置${b.idleDays}d`}`), `\n=== 待验缺口明细（共 ${list.length} 项） ===`, ...list.map((g) => `- [${g.kind}] ${g.contractId || 'global'}: ${g.detail}`)];
-    return L.join('\n');
-  }
-  return null;
+  return { exitCode: 0, stdout: view.stdout };
 }
 
 function ckcLookupFileInfo(idx, target) {
@@ -280,11 +260,12 @@ function ckcResolveAllTarget(idx, stubsFlag, hasContracts) {
   return idx.domains.map((d) => renderDomainOrContract(d, null, false, hasContracts, true)).join('\n\n');
 }
 
-function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts) {
-  const builtinOut = ckcHandleBuiltinZoomTopic(idx, target, arg1);
+function ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts, opts = {}) {
+  const builtinOut = renderBuiltinZoomTopic(idx, target, arg1);
   if (builtinOut !== null) return builtinOut;
   const fileInfo = ckcLookupFileInfo(idx, target);
   if (!fileInfo) return null;
+  if (opts?.skeleton) return renderFileSkeletonZoom(idx, fileInfo, hasContracts);
   const adrLines = formatPathGovernanceLines(idx, fileInfo.file, hasContracts, true).slice(1);
   return renderSingleFileZoom(fileInfo, hasContracts, { adrLines, cbmGraph: queryCbmFileGraph(idx.root, fileInfo.file) });
 }
@@ -295,13 +276,13 @@ function ckcResolveSingleTarget(idx, target, arg1, opts, batchCtx = null) {
   if (opts.decisions) return renderDecisionsZoom(idx, target, Boolean(opts.full), arg1 || '');
   if (target === 'all') return ckcResolveAllTarget(idx, Boolean(opts.stubs), hasContracts);
   if (!opts.stubs && !opts.trace) {
-    const tf = ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts);
+    const tf = ckcTryTopicOrFileZoom(idx, target, arg1, hasContracts, opts);
     if (tf !== null) return tf;
   }
   const dom = idx.domains.find((d) => d.step === target || d.id === target);
   const con = (idx.graph.nodes || []).find((c) => c.id === target);
   if (dom || con) return renderDomainOrContract(dom, con, Boolean(opts.stubs), hasContracts, Boolean(batchCtx?.multiDomain));
-  return (!opts.stubs && !ckcLooksLikeExplicitFilePath(target)) ? renderCbmSymbolZoom(idx, target, hasContracts) : null;
+  return (!opts.stubs && !ckcLooksLikeExplicitFilePath(target)) ? renderCbmSymbolZoom(idx, target, hasContracts, opts) : null;
 }
 
 function ckcFormatMissingZoomError(idx, target) {
@@ -331,23 +312,23 @@ function ckcRunZoomTargetLoop(idx, targets, opts) {
 }
 
 export function cmdZoom(projectRoot, opts = {}) {
+  const budgetOpt = parseBudgetOption(opts.budget);
+  if (!budgetOpt.ok) return { exitCode: 3, stderr: budgetOpt.stderr };
   const targets = Array.isArray(opts.targets) ? opts.targets : [];
   if (targets.length === 0) {
-    return { exitCode: 3, stderr: '用法：donegate zoom <域编号|契约ID|文件路径[:起-止]|符号名|rules|tests|gaps|all> [更多目标...] [--stubs] [--decisions] [--full [关键词]] [--source]' };
+    return { exitCode: 3, stderr: '用法：donegate zoom <域编号|契约ID|文件路径[:起-止]|符号名|rules|tests|gaps|all> [更多目标...] [--stubs] [--decisions] [--full [关键词]] [--skeleton] [--source] [--budget <n>]' };
   }
-  if (targets[0] === 'impact') return cmdImpact(projectRoot, { targets: targets.slice(1), json: opts.json });
+  if (targets[0] === 'impact') return cmdImpact(projectRoot, { targets: targets.slice(1), json: opts.json, budget: opts.budget });
   const idx = buildCockpitGraphIndex(projectRoot);
   if (opts.decisions) {
     const first = targets[0].replace(/^\.\//, '');
     const out = ckcResolveSingleTarget(idx, first, targets[1] || '', opts);
-    return out !== null ? { exitCode: 0, stdout: out } : { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, first) };
+    if (out === null) return { exitCode: 1, stderr: ckcFormatMissingZoomError(idx, first) };
+    return finalizeZoomCliResult(out, 0, null, targets, opts, budgetOpt.value);
   }
   const { chunks, errors } = ckcRunZoomTargetLoop(idx, targets, opts);
-  if (errors.length === 0) return { exitCode: 0, stdout: chunks.join('\n\n') };
+  if (errors.length === 0) return finalizeZoomCliResult(chunks.join('\n\n'), 0, null, targets, opts, budgetOpt.value);
   if (chunks.length === 0) return { exitCode: 1, stderr: errors.join('\n') };
-  return {
-    exitCode: 1,
-    stdout: [...chunks, `=== [部分目标未命中告警 (${errors.length} 项)] ===\n${errors.map((e) => `  ✗ ${e}`).join('\n')}`].join('\n\n'),
-    stderr: errors.join('\n')
-  };
+  const partial = [...chunks, `=== [部分目标未命中告警 (${errors.length} 项)] ===\n${errors.map((e) => `  ✗ ${e}`).join('\n')}`].join('\n\n');
+  return finalizeZoomCliResult(partial, 1, errors.join('\n'), targets, opts, budgetOpt.value);
 }

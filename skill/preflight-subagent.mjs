@@ -11,7 +11,7 @@
 // 退出码：
 //   0  工作树与可写临时区健康就绪，可安全施工
 //   78 工作树已失效、Git 元数据断链或分支不匹配（EX_CONFIG / WORKTREE_EXPIRED）——子代理必须第 1 秒立即停机回报总控，严禁自救探测
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

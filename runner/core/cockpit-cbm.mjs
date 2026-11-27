@@ -6,29 +6,15 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { sha256 } from '../../skill/hash.mjs';
 import { readJsonStrict } from '../../skill/io.mjs';
+import { applyExportTruthToSymbols, isPhantomHubTarget, kneedleElbowCount, readExportTruth } from './cbm-export-truth.mjs';
+import { buildCallEdgeTrustContext, classifyCallEdge, pickBestCallEdgeTrust } from './cbm-edge-trust.mjs';
 import { computeQuickRepoFingerprint, tryAcquireExclusiveLock } from './cockpit-cache.mjs';
+
+export { kneedleElbowCount } from './cbm-export-truth.mjs';
 
 const CBM_WAIT_SLICE = new Int32Array(new SharedArrayBuffer(4));
 const CBM_MEM_CACHE = new Map();
 let cachedSqliteCtor = undefined;
-
-// Satopää et al. (2011) Kneedle 无参最大曲率拐点（均匀分布返回 0，绝不硬凑假中心）
-export function kneedleElbowCount(sortedDescWeights) {
-  const pos = (sortedDescWeights || []).filter((w) => w > 0);
-  const n = pos.length;
-  if (n <= 1) return n;
-  const sum = pos.reduce((a, b) => a + b, 0);
-  let cum = 0, maxDiff = 0, knee = 0;
-  for (let i = 0; i < n; i++) {
-    cum += pos[i];
-    const diff = (cum / sum) - ((i + 1) / n);
-    if (diff > maxDiff + 1e-9) {
-      maxDiff = diff;
-      knee = i + 1;
-    }
-  }
-  return knee;
-}
 
 function loadDatabaseSyncCtor() {
   if (cachedSqliteCtor !== undefined) return cachedSqliteCtor;
@@ -168,21 +154,22 @@ export function queryCbmFileGraph(projectRoot, relFile) {
   const h = openCbmGraphHandle(projectRoot);
   const norm = String(relFile || '').replace(/\\/g, '/');
   if (!h || !norm) return null;
+  const trustCtx = buildCallEdgeTrustContext(h.root, { handle: h });
   const symRows = h.db.prepare(
     "SELECT name, label, start_line, end_line, properties FROM nodes WHERE file_path = ? AND label IN ('Function', 'Method', 'Class', 'Variable') ORDER BY start_line ASC, id ASC"
   ).all(norm);
-  const symbols = symRows.map((r) => {
+  const symbols = applyExportTruthToSymbols(symRows.map((r) => {
     const p = parseJsonProps(r.properties);
     return {
       name: r.name, label: r.label, startLine: Number(r.start_line || 0), endLine: Number(r.end_line || 0),
       isExported: Boolean(p.is_exported), signature: p.signature || '', cognitive: Number(p.cognitive || 0)
     };
-  });
+  }), readExportTruth(h.root, norm));
   const impRows = h.db.prepare(
     "SELECT DISTINCT t.file_path AS file, t.name AS name FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'IMPORTS' AND s.file_path = ? AND t.file_path != '' ORDER BY t.file_path"
   ).all(norm);
   const inRows = h.db.prepare(
-    "SELECT s.file_path AS file, s.name AS symbol, MIN(CAST(coalesce(json_extract(e.properties,'$.line'), 0) AS INTEGER)) AS line FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.file_path = ? AND s.file_path != '' AND s.file_path != ? GROUP BY s.file_path, s.name ORDER BY s.file_path, s.name"
+    "SELECT s.file_path AS file, s.name AS symbol, GROUP_CONCAT(DISTINCT t.name) AS targetSyms, MIN(CAST(coalesce(json_extract(e.properties,'$.line'), 0) AS INTEGER)) AS line FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.file_path = ? AND s.file_path != '' AND s.file_path != ? GROUP BY s.file_path, s.name ORDER BY s.file_path, s.name"
   ).all(norm, norm);
   const outRows = h.db.prepare(
     "SELECT DISTINCT t.file_path AS file, t.name AS symbol, t.start_line AS targetLine FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND s.file_path = ? AND t.file_path != '' AND t.file_path != ? ORDER BY t.file_path, t.name"
@@ -199,30 +186,33 @@ export function queryCbmFileGraph(projectRoot, relFile) {
   return {
     symbols,
     imports: impRows.map((r) => r.file || r.name).filter(Boolean),
-    inboundCallers: inRows.map((r) => ({ file: r.file, symbol: r.symbol, line: Number(r.line || 0) })),
-    outboundCallees: outRows.map((r) => ({ file: r.file, symbol: r.symbol, targetLine: Number(r.targetLine || 0) })),
+    inboundCallers: inRows.map((r) => ({ file: r.file, symbol: r.symbol, line: Number(r.line || 0), trust: pickBestCallEdgeTrust(r.file, norm, String(r.targetSyms || '').split(',').filter(Boolean), trustCtx) })),
+    outboundCallees: outRows.map((r) => ({ file: r.file, symbol: r.symbol, targetLine: Number(r.targetLine || 0), trust: classifyCallEdge(norm, r.file, r.symbol, trustCtx) })),
     spawns: spawnRows.map((r) => ({ program: r.program, line: Number(r.line || 0) })),
     httpRoutes: httpRows.map((r) => r.route).filter(Boolean),
     docMentions: docRows.map((r) => ({ docFile: r.docFile, docLabel: r.docLabel, title: r.title }))
   };
 }
 
-function collectTwoHopCalls(db, seedIds, direction) {
-  if (seedIds.length === 0) return [];
+function collectTwoHopCalls(db, seedNodes, direction, trustCtx) {
+  if (seedNodes.length === 0) return [];
   const sql = direction === 'in'
     ? "SELECT s.id, s.name, s.file_path, s.start_line, s.end_line FROM edges e JOIN nodes s ON e.source_id = s.id WHERE e.type = 'CALLS' AND e.target_id = ? AND s.file_path != ''"
     : "SELECT t.id, t.name, t.file_path, t.start_line, t.end_line FROM edges e JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND e.source_id = ? AND t.file_path != ''";
   const stmt = db.prepare(sql);
-  const visited = new Set(seedIds), out = [];
-  let frontier = [...seedIds];
+  const visited = new Set(seedNodes.map((d) => d.id)), out = [];
+  let frontier = seedNodes.map((d) => ({ id: d.id, file: d.file_path, name: d.name }));
   for (let hop = 1; hop <= 2; hop++) {
     const next = [];
-    for (const nid of frontier) {
-      for (const r of stmt.all(nid)) {
+    for (const cur of frontier) {
+      for (const r of stmt.all(cur.id)) {
         if (visited.has(r.id)) continue;
         visited.add(r.id);
-        next.push(r.id);
-        out.push({ hop, name: r.name, file: r.file_path, startLine: Number(r.start_line || 0), endLine: Number(r.end_line || 0) });
+        next.push({ id: r.id, file: r.file_path, name: r.name });
+        const trust = direction === 'in'
+          ? classifyCallEdge(r.file_path, cur.file, cur.name, trustCtx)
+          : classifyCallEdge(cur.file, r.file_path, r.name, trustCtx);
+        out.push({ hop, name: r.name, file: r.file_path, startLine: Number(r.start_line || 0), endLine: Number(r.end_line || 0), trust });
       }
     }
     frontier = next;
@@ -237,7 +227,7 @@ function queryCbmFtsFallback(db, term) {
     .map((w) => w.trim())
     .filter((w) => w.length >= 2);
   if (words.length === 0) return [];
-  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '')}"`).join(' OR ');
+  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '')}"`).join(' AND ');
   try {
     return db.prepare(
       "SELECT n.id, n.name, n.label, n.file_path, n.start_line, n.end_line, n.properties FROM nodes_fts f JOIN nodes n ON n.id = f.rowid WHERE nodes_fts MATCH ? AND n.label IN ('Function', 'Variable', 'Route', 'File') AND (n.file_path != '' OR n.label = 'Route') ORDER BY bm25(nodes_fts) ASC LIMIT 12"
@@ -251,38 +241,63 @@ export function queryCbmSymbolTrace(projectRoot, queryTerm) {
   const h = openCbmGraphHandle(projectRoot);
   const term = String(queryTerm || '').trim();
   if (!h || !term) return null;
+  let matchTier = 'exact';
   let defs = h.db.prepare(
     "SELECT id, name, label, file_path, start_line, end_line, properties FROM nodes WHERE name = ? AND label IN ('Function', 'Variable', 'Route') AND (file_path != '' OR label = 'Route') ORDER BY start_line ASC"
   ).all(term);
   if (defs.length === 0) {
+    matchTier = 'like';
     defs = h.db.prepare(
-      "SELECT id, name, label, file_path, start_line, end_line, properties FROM nodes WHERE name LIKE ? AND label IN ('Function', 'Variable', 'Route') AND (file_path != '' OR label = 'Route') ORDER BY length(name) ASC, start_line ASC LIMIT 20"
-    ).all(`%${term}%`);
+      "SELECT id, name, label, file_path, start_line, end_line, properties FROM nodes WHERE name LIKE ? ESCAPE '\\' AND label IN ('Function', 'Variable', 'Route') AND (file_path != '' OR label = 'Route') ORDER BY length(name) ASC, start_line ASC LIMIT 20"
+    ).all(`%${term.replace(/[\\%_]/g, '\\$&')}%`);
   }
-  if (defs.length === 0) defs = queryCbmFtsFallback(h.db, term);
+  if (defs.length === 0) {
+    matchTier = 'fts';
+    defs = queryCbmFtsFallback(h.db, term);
+  }
   if (defs.length === 0) return null;
-  const fnIds = defs.filter((d) => d.label === 'Function').map((d) => d.id);
+  const fnDefs = defs.filter((d) => d.label === 'Function');
+  const trustCtx = buildCallEdgeTrustContext(h.root, { handle: h });
   return {
+    matchTier,
     definitions: defs.map((d) => ({
       name: d.name, label: d.label, file: d.file_path,
       startLine: Number(d.start_line || 0), endLine: Number(d.end_line || 0),
       signature: parseJsonProps(d.properties).signature || ''
     })),
-    callers: collectTwoHopCalls(h.db, fnIds, 'in'),
-    callees: collectTwoHopCalls(h.db, fnIds, 'out')
+    callers: collectTwoHopCalls(h.db, fnDefs, 'in', trustCtx),
+    callees: collectTwoHopCalls(h.db, fnDefs, 'out', trustCtx)
+  };
+}
+
+function cbmSelectGroupHubs(byFn, gid) {
+  const mine = [...byFn.values()].filter((x) => x.owners.includes(gid)).map((x) => ({
+    signature: x.signature, extFiles: x.callerFiles.size, crossContracts: [...x.crossGroups]
+  }));
+  const crossList = mine.filter((s) => s.crossContracts.length > 0).sort((a, b) => (b.crossContracts.length * b.extFiles) - (a.crossContracts.length * a.extFiles) || b.extFiles - a.extFiles);
+  const crossKnee = kneedleElbowCount(crossList.map((s) => s.crossContracts.length * s.extFiles));
+  const selectedCross = crossList.slice(0, crossKnee);
+  const intraList = mine.filter((s) => s.crossContracts.length === 0 && s.extFiles > 0).sort((a, b) => b.extFiles - a.extFiles);
+  const intraKnee = selectedCross.length <= 1 ? kneedleElbowCount(intraList.map((s) => s.extFiles)) : 0;
+  return {
+    totalExported: mine.length, crossTotal: crossList.length,
+    uniformCross: crossList.length > 1 && crossKnee === 0,
+    selectedCross, selectedIntra: intraList.slice(0, intraKnee)
   };
 }
 
 export function queryCbmContractHubs(projectRoot, ownerMap, groupIds, isZeroContract) {
   const h = openCbmGraphHandle(projectRoot);
   if (!h) return { uniqueSymbolCount: 0, hubsByContract: {}, hubsByDomain: {} };
+  const trustCtx = buildCallEdgeTrustContext(h.root, { handle: h, ownerMap });
   const rows = h.db.prepare(
-    "SELECT t.id, t.file_path AS file, t.name AS symbol, t.properties AS props, s.file_path AS callerFile FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.label IN ('Function', 'Method', 'Class') AND t.file_path != '' AND s.file_path != '' AND s.file_path != t.file_path"
+    "SELECT t.id, t.label AS label, t.file_path AS file, t.name AS symbol, t.properties AS props, s.file_path AS callerFile FROM edges e JOIN nodes s ON e.source_id = s.id JOIN nodes t ON e.target_id = t.id WHERE e.type = 'CALLS' AND t.label IN ('Function', 'Method', 'Class') AND t.file_path != '' AND s.file_path != '' AND s.file_path != t.file_path"
   ).all();
   const byFn = new Map();
   for (const r of rows) {
     const owners = ownerMap.get(r.file) || [];
-    if (owners.length === 0) continue;
+    if (owners.length === 0 || isPhantomHubTarget(projectRoot, r)) continue;
+    if (classifyCallEdge(r.callerFile, r.file, r.symbol, trustCtx) === 'inferred') continue;
     let rec = byFn.get(r.id);
     if (!rec) {
       const sig = parseJsonProps(r.props).signature || '()';
@@ -295,21 +310,7 @@ export function queryCbmContractHubs(projectRoot, ownerMap, groupIds, isZeroCont
     }
   }
   const hubsMap = {};
-  for (const gid of groupIds) {
-    const mine = [...byFn.values()].filter((x) => x.owners.includes(gid)).map((x) => ({
-      signature: x.signature, extFiles: x.callerFiles.size, crossContracts: [...x.crossGroups]
-    }));
-    const crossList = mine.filter((s) => s.crossContracts.length > 0).sort((a, b) => (b.crossContracts.length * b.extFiles) - (a.crossContracts.length * a.extFiles) || b.extFiles - a.extFiles);
-    const crossKnee = kneedleElbowCount(crossList.map((s) => s.crossContracts.length * s.extFiles));
-    const selectedCross = crossList.slice(0, crossKnee);
-    const intraList = mine.filter((s) => s.crossContracts.length === 0 && s.extFiles > 0).sort((a, b) => b.extFiles - a.extFiles);
-    const intraKnee = selectedCross.length <= 1 ? kneedleElbowCount(intraList.map((s) => s.extFiles)) : 0;
-    hubsMap[gid] = {
-      totalExported: mine.length, crossTotal: crossList.length,
-      uniformCross: crossList.length > 1 && crossKnee === 0,
-      selectedCross, selectedIntra: intraList.slice(0, intraKnee)
-    };
-  }
+  for (const gid of groupIds) hubsMap[gid] = cbmSelectGroupHubs(byFn, gid);
   const fnCountRow = h.db.prepare("SELECT COUNT(DISTINCT name) AS cnt FROM nodes WHERE label = 'Function' AND file_path != ''").get();
   return {
     uniqueSymbolCount: Number(fnCountRow?.cnt || 0),
