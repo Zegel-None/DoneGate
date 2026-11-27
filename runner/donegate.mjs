@@ -20,21 +20,22 @@ import {
 import { cmdBrief, cmdZoom } from './cockpit/cockpit-commands.mjs';
 import { cmdLocate } from './cockpit/cockpit-locate.mjs';
 import { startCockpitMcp } from './cockpit/cockpit-mcp.mjs';
+import { buildDoneGateGovernanceArgv, DONEGATE_GOVERNANCE_MCP_TOOLS } from './cockpit/adapters/donegate-mcp-tools.mjs';
 import { cmdLintEdit } from '../skill/lint-edit.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
 const BOOLEAN_FLAGS = new Set([
-  'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass', 'explore',
+  'tree', 'flow', 'signoff', 'allow-dirty', 'human-pass', 'explore', 'discover',
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
   'stubs', 'decisions', 'full', 'skeleton', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human'
 ]);
 
 const HELP_TEXT = [
-  'DoneGate V4 CLI（十二条命令 + 九个驾驶舱与微门禁快捷入口，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
+  'DoneGate V4 CLI（十二条命令 + 十个驾驶舱、治理流与微门禁快捷入口，四值退出码：0=通过 1=判否 2=事故 3=无法判断）',
   '',
   '用法：node runner/donegate.mjs <命令> [参数] [--root <项目根>]',
-  '  init [dir]                                      初始化项目骨架（已存在退 3）',
+  '  init [dir] [--discover]                         初始化项目骨架（--discover 自动扫描存量仓建探索态起步契约；已存在退 3）',
   '  contract new <id> [--title --why --scope --owner --depends-on --explore --ttl-days --golden]   新建契约（--explore 建探索态）',
   '  contract promote <id> --by <签字人> [--legacy]   将探索态契约晋升为正式交付契约并一次签字冻结',
   '  contract freeze <id> --by <签字人> [--legacy] [--force-batch]   冻结判据并签字（有判据缺 expect 或 kind 退 1）',
@@ -57,7 +58,8 @@ const HELP_TEXT = [
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
   '· impact <file-or-anchor...> [--budget <n>] [--json]   跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断多跳单测与 ADR 预警）',
-  '· mcp [--root <项目根>]   启动零依赖 stdio MCP 服务（暴露 dg_brief / dg_locate / dg_zoom / dg_impact）',
+  '· mcp [--root <项目根>]   启动零依赖 stdio MCP 服务（暴露 dg_brief / dg_locate / dg_zoom / dg_impact / dg_status / dg_slice / dg_lint_edit / dg_check_node）',
+  '· flow <list|plan|inspect|diff|run|reset> [flowId] [--staged] [--json]   声明式治理流查看、预演与一键运行（支持 workflow 别名）',
   '· preflight [--stamp-lease] [--expect-branch <b>] [--node <id> | --target-node <id>] [--json]   子代理工作树健康探针（失联即刻退 78 熔断）'
 ].join('\n');
 
@@ -258,6 +260,17 @@ function dgCmdStatusAndGovernance(cmd, sub, root, pos, flags) {
   return null;
 }
 
+function dgCmdFlow(cmd, argv, root) {
+  const cliAbs = join(dirname(fileURLToPath(import.meta.url)), 'dsh', 'autopilot', 'governance-flow-cli.mjs');
+  const fwdArgs = cmd === 'workflow-run' ? ['run', ...argv.slice(1)] : argv.slice(1);
+  const r = spawnSync(process.execPath, [cliAbs, ...fwdArgs, '--root', root], { encoding: 'utf8', windowsHide: true });
+  return {
+    exitCode: typeof r.status === 'number' ? r.status : 3,
+    stdout: (r.stdout || '').trimEnd(),
+    stderr: (r.stderr || '').trimEnd()
+  };
+}
+
 export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   const { flags, pos } = parseCliArgs(argv);
   if (flags.help || pos[0] === 'help' || pos.length === 0) {
@@ -265,21 +278,9 @@ export function dispatchCommand(argv, defaultRoot = process.cwd()) {
   }
   const root = resolve(typeof flags.root === 'string' ? flags.root : defaultRoot);
   const cmd = pos[0];
-  if (cmd === 'mcp') {
-    return { exitCode: 3, stderr: 'mcp 为常驻 stdio 服务，请通过命令行 `node runner/donegate.mjs mcp` 启动。' };
-  }
-  if (cmd === 'flow') {
-    const cliAbs = join(dirname(fileURLToPath(import.meta.url)), 'dsh', 'autopilot', 'governance-flow-cli.mjs');
-    const r = spawnSync(process.execPath, [cliAbs, ...argv.slice(1), '--root', root], { encoding: 'utf8', windowsHide: true });
-    return {
-      exitCode: typeof r.status === 'number' ? r.status : 3,
-      stdout: (r.stdout || '').trimEnd(),
-      stderr: (r.stderr || '').trimEnd()
-    };
-  }
-  if (cmd === 'init') {
-    return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root);
-  }
+  if (cmd === 'mcp') return { exitCode: 3, stderr: 'mcp 为常驻 stdio 服务，请通过命令行 `node runner/donegate.mjs mcp` 启动。' };
+  if (cmd === 'flow' || cmd === 'workflow' || cmd === 'workflow-run') return dgCmdFlow(cmd, argv, root);
+  if (cmd === 'init') return cmdInit(pos[1] ? resolve(defaultRoot, pos[1]) : root, { discover: Boolean(flags.discover) });
   const sub = pos[1];
   const routed = (cmd === 'contract' ? dgCmdContract(root, sub, pos, flags) : null)
     || dgCmdSliceOrGraph(cmd, root, pos, flags)
@@ -298,7 +299,12 @@ async function runCliEntry(argv) {
       console.error(`项目根目录不存在：${root}`);
       return 3;
     }
-    return startCockpitMcp({ root, dispatchCommand });
+    return startCockpitMcp({
+      root,
+      dispatchCommand,
+      extraTools: DONEGATE_GOVERNANCE_MCP_TOOLS,
+      buildExtraArgv: buildDoneGateGovernanceArgv
+    });
   }
   const res = dispatchCommand(argv);
   if (res.stdout) console.log(res.stdout);

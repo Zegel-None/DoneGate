@@ -1,6 +1,6 @@
 // Stage 23 · 变焦驾驶舱通用组件与 DoneGate 适配层解耦回归测试（外部多语言裸仓 CLI + stdio MCP + 依赖边界守卫）
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -195,6 +195,13 @@ describe('Stage 23 · 独立通用变焦驾驶舱组件与 DoneGate 适配层解
     for (const f of ['adapter-protocol.mjs', 'cli.mjs', 'cockpit-budget.mjs', 'cockpit-commands.mjs', 'cockpit-locate.mjs', 'cockpit-mcp.mjs', 'cockpit-render.mjs', 'cockpit-source.mjs']) {
       const src = readFileSync(join(REPO_ROOT, 'runner', 'cockpit', f), 'utf8');
       expect(src, f).not.toMatch(/atlas\/contract\.mjs|commit-hygiene-metrics\.mjs|SHARED_GOVERNANCE_GLOBS/);
+    }
+
+    const syncTool = join(REPO_ROOT, 'tools', 'sync-zoom-cockpit.mjs');
+    if (existsSync(syncTool)) {
+      const syncRun = spawnSync(process.execPath, [syncTool, '--upstream', join(extRepo, 'nonexistent-upstream'), '--json'], { encoding: 'utf8' });
+      expect(syncRun.status).toBe(1);
+      expect(JSON.parse(syncRun.stdout).found).toBe(false);
     }
   });
 });

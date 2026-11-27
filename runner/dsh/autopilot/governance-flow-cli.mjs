@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DoneGate 声明式治理工作流 CLI 引擎（donegate flow list|inspect|dump|diff|run|reset，<= 180 行）
+// DoneGate 声明式治理工作流 CLI 引擎（donegate flow list|plan|inspect|dump|diff|run|reset，<= 200 行）
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -8,6 +8,7 @@ import {
   wfcResetProjectOverlay
 } from './workflow-compiler.mjs';
 import { executeBrickGateNode } from './brick-exec.mjs';
+import { buildWorkflowDepEnv } from '../deps/index.mjs';
 import { hagSanitizeSubagentEnv } from '../../shared/subagent-env.mjs';
 
 function gfcParseFlags(argv) {
@@ -65,10 +66,31 @@ function gfcFormatResultLine(r) {
   return `  ${icon} ${r.title} (${r.nodeId}) -> exit ${r.exitCode}${note}`;
 }
 
+function gfcHandlePlan(root, flowId, flags) {
+  const comp = wfcCompileWorkflow(root, flowId);
+  if (!comp.ok) return { exitCode: comp.exitCode, stderr: comp.reason };
+  const plan = comp.effectivePack.nodes.map((node) => {
+    const status = node.bypassed
+      ? 'bypassed'
+      : (node.envSkipped ? 'env-skipped' : (node.isHumanGate ? 'human-gate' : (node.exec ? 'active' : 'non-exec')));
+    return { id: node.id, title: node.title, tier: node.tier || 'recommended', status, kind: node.exec?.kind || 'none' };
+  });
+  const payload = { ok: true, flowId: comp.flowId, name: comp.effectivePack.name, workflowHash: comp.workflowHash, disclosureBanner: comp.disclosureBanner, plan };
+  if (flags.json) return { exitCode: 0, stdout: JSON.stringify(payload, null, 2), ...payload };
+  const badge = { active: '▶', 'env-skipped': '↷', bypassed: '⏸', 'human-gate': '👤', 'non-exec': '·' };
+  const lines = [
+    `=== DoneGate 治理流预演：${comp.effectivePack.name} (${comp.flowId} · hash=${comp.workflowHash.slice(0, 12)}) ===`,
+    ...(comp.disclosureBanner ? [comp.disclosureBanner] : []),
+    ...plan.map((n) => `  ${badge[n.status] || '·'} [${n.tier}] ${n.title} (${n.id}) · ${n.status}`),
+    `汇总：共 ${plan.length} 节点（激活 ${plan.filter((n) => n.status === 'active').length} / 环境跳过 ${plan.filter((n) => n.status === 'env-skipped').length} / 关闭 ${plan.filter((n) => n.status === 'bypassed').length}）`
+  ];
+  return { exitCode: 0, stdout: lines.join('\n'), ...payload };
+}
+
 function gfcHandleRun(root, flowId, flags) {
   const comp = wfcCompileWorkflow(root, flowId);
   if (!comp.ok) return { exitCode: comp.exitCode, stderr: comp.reason };
-  const cleanEnv = hagSanitizeSubagentEnv(process.env);
+  const cleanEnv = hagSanitizeSubagentEnv(buildWorkflowDepEnv(root, comp.flowId));
   const results = [];
   let worstExit = 0;
 
@@ -120,6 +142,7 @@ export function cmdGovernanceFlow(projectRoot, argv = []) {
   const flowId = pos[1] || '';
 
   if (sub === 'list') return gfcHandleList(root, flags);
+  if (sub === 'plan') return gfcHandlePlan(root, flowId, flags);
   if (sub === 'inspect' || sub === 'dump') {
     const c = wfcCompileWorkflow(root, flowId);
     if (!c.ok) return { exitCode: c.exitCode, stderr: c.reason };
@@ -137,7 +160,7 @@ export function cmdGovernanceFlow(projectRoot, argv = []) {
     if (!res.ok) return { exitCode: res.exitCode, stderr: res.reason };
     return { exitCode: 0, stdout: flags.json ? JSON.stringify(res, null, 2) : `已重置治理流 ${flowId} 为官方默认配置（hash=${res.workflowHash.slice(0, 12)}）` };
   }
-  return { exitCode: 3, stderr: `未知 flow 子命令：${sub}（支持 list | inspect | dump | diff | run | reset）` };
+  return { exitCode: 3, stderr: `未知 flow 子命令：${sub}（支持 list | plan | inspect | dump | diff | run | reset）` };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

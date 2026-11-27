@@ -14,7 +14,7 @@ const tempDirs = [];
 
 afterEach(() => {
   while (tempDirs.length > 0) {
-    rmSync(tempDirs.pop(), { recursive: true, force: true });
+    try { rmSync(tempDirs.pop(), { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch (err) { void err; }
   }
 });
 
@@ -125,7 +125,10 @@ describe('Stage 22 · 驾驶舱零依赖 stdio MCP 服务 (donegate mcp)', () =>
     send({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
     const listRes = await mcp.nextMessage('ndjson');
     const names = listRes.result.tools.map((t) => t.name);
-    expect(names).toEqual(['dg_brief', 'dg_locate', 'dg_zoom', 'dg_impact']);
+    expect(names).toEqual([
+      'dg_brief', 'dg_locate', 'dg_zoom', 'dg_impact',
+      'dg_status', 'dg_slice', 'dg_lint_edit', 'dg_check_node'
+    ]);
     const locateTool = listRes.result.tools.find((t) => t.name === 'dg_locate');
     expect(locateTool.description).toContain('定位代码时先用 dg_locate，而不是 grep');
 
@@ -274,22 +277,23 @@ describe('Stage 22 · 驾驶舱零依赖 stdio MCP 服务 (donegate mcp)', () =>
     expect(await eofPromise).toBe(0);
   }, 20000);
 
-  it('④ 无 CBM 临时目录调用 dg_locate 优雅返回 isError: true 且服务继续存活', async () => {
+  it('④ 无 CBM 索引的空临时目录调用 dg_locate 优雅返回 isError: true 且服务继续存活', async () => {
     const emptyDir = mkdtempSync(join(tmpdir(), 'dg-mcp-nocbm-'));
     tempDirs.push(emptyDir);
     const mcp = spawnMcpProc(emptyDir);
     const send = (obj) => mcp.child.stdin.write(`${JSON.stringify(obj)}\n`);
+    try {
+      send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'dg_locate', arguments: { query: 'kneedle' } } });
+      const locRes = await mcp.nextMessage('ndjson');
+      expect(locRes.result.isError).toBe(true);
+      expect(locRes.result.content[0].text).toMatch(/CBM|未命中任何种子词/);
 
-    send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'dg_locate', arguments: { query: 'kneedle' } } });
-    const locRes = await mcp.nextMessage('ndjson');
-    expect(locRes.result.isError).toBe(true);
-    expect(locRes.result.content[0].text).toContain('CBM');
-
-    send({ jsonrpc: '2.0', id: 2, method: 'ping' });
-    const pingRes = await mcp.nextMessage('ndjson');
-    expect(pingRes.id).toBe(2);
-    expect(pingRes.result).toEqual({});
-
-    expect(await mcp.closeAndWait()).toBe(0);
+      send({ jsonrpc: '2.0', id: 2, method: 'ping' });
+      const pingRes = await mcp.nextMessage('ndjson');
+      expect(pingRes.id).toBe(2);
+      expect(pingRes.result).toEqual({});
+    } finally {
+      expect(await mcp.closeAndWait()).toBe(0);
+    }
   }, 15000);
 });

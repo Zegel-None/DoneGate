@@ -1,6 +1,7 @@
 // 判定核完整对外无头门面出口（汇总 L1 内核契约、十二条命令、进度便签、密封切片、开源图谱桥与影响雷达，零 UI/Atlas 反向依赖）
 export * from './contract.mjs';
 export { cmdContractFreeze, cmdContractNew, cmdContractPromote, cmdInit, cmdRetire } from './cmd-lifecycle.mjs';
+export { detectRepoStackAndSmoke, discoverExistingRepoStarterContracts } from './init-discover.mjs';
 export { cmdCheck } from './cmd-execute.mjs';
 export { cmdTeeth } from './cmd-teeth.mjs';
 export { cmdGaps, cmdStatus, collectGapsList, runHealthChecks } from './cmd-inspect.mjs';

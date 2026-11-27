@@ -13,6 +13,7 @@ import {
   lcCheckFreezeBatchQuota, lcExecuteContractSignoff,
   lcSealObligationsAndWrite, lcValidateObligationsForFreeze
 } from './contract-freeze.mjs';
+import { detectRepoStackAndSmoke, discoverExistingRepoStarterContracts } from './init-discover.mjs';
 
 export function gitAnchorInfo(projectRoot) {
   const inside = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -93,7 +94,7 @@ export function collectOrderedIncompleteContractGaps(projectRoot) {
   return gaps;
 }
 
-export function cmdInit(projectRoot) {
+export function cmdInit(projectRoot, opts = {}) {
   if (existsSync(join(projectRoot, 'INTENT.md')) || existsSync(join(projectRoot, 'contracts'))) {
     return { exitCode: 3, stdout: '拒绝初始化：INTENT.md 或 contracts/ 已存在（§八 退 3，不覆盖）' };
   }
@@ -102,8 +103,8 @@ export function cmdInit(projectRoot) {
   mkdirSync(join(projectRoot, 'decisions'), { recursive: true });
   mkdirSync(join(projectRoot, '.donegate', 'scratch'), { recursive: true });
 
-  const isPythonRepo = ['pyproject.toml', 'requirements.txt', 'setup.py'].some((f) => existsSync(join(projectRoot, f)));
-  const defaultSmokeCmd = isPythonRepo ? 'pytest --collect-only -q' : 'node -e "process.exit(0)"';
+  const discovered = opts.discover ? discoverExistingRepoStarterContracts(projectRoot) : null;
+  const defaultSmokeCmd = discovered ? discovered.smokeCmd : detectRepoStackAndSmoke(projectRoot).smokeCmd;
 
   writeFileSync(join(projectRoot, 'INTENT.md'), [
     '# 项目意图', '',
@@ -123,9 +124,22 @@ export function cmdInit(projectRoot) {
   writeFileSync(join(projectRoot, '.donegate', 'escapes.jsonl'), '');
   installGitHooks(projectRoot);
 
+  const discoverLines = discovered
+    ? [
+      '',
+      `🔍 存量逆向建图（--discover · 技术栈=${discovered.stack} · 源码=${discovered.totalCodeFiles} / 测试=${discovered.totalTestFiles}）：`,
+      ...(discovered.contracts.length > 0
+        ? discovered.contracts.map((c) => `  - contracts/${c.id}/contract.json [track=explore] (${c.fileCount} 文件 | ${c.obligationCount} 条起步单测${c.dependsOn.length ? ` | 依赖: ${c.dependsOn.join(', ')}` : ''})`)
+        : ['  - （未探测到存量源码目录，可按需执行 contract new 建卡）']),
+      '  下一步：运行 donegate status / donegate graph --router / donegate brief 查看全局骨架，确认边界后用 contract promote <id> --by <姓名> 晋升冻结。'
+    ].join('\n')
+    : '';
+
   return {
     exitCode: 0,
-    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl\n  .githooks/pre-commit\n\n' +
+    ...(discovered ? { discovered } : {}),
+    stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl\n  .githooks/pre-commit' +
+      discoverLines + '\n\n' +
       renderProgressBlock(projectRoot, { headline: '✅ [1-1] 项目基线已初始化 · 总进度 {{PCT}}' })
   };
 }

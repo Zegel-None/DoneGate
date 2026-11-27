@@ -202,17 +202,17 @@ function resolveBaseToolCmd(rawName, toolPrefix) {
   return ['brief', 'locate', 'zoom', 'impact'].includes(stripped) ? stripped : null;
 }
 
-function handleToolCall(params, root, dispatchCommand, toolPrefix) {
+function handleToolCall(params, root, dispatchCommand, cfg) {
   if (!isPlainObject(params) || typeof params.name !== 'string') return { rpcError: 'Invalid tools/call params' };
   const args = params.arguments === undefined ? {} : params.arguments;
   if (!isPlainObject(args)) return { rpcError: 'arguments must be an object' };
   const { name } = params;
-  const baseCmd = resolveBaseToolCmd(name, toolPrefix);
-  const built = (baseCmd === 'brief' || baseCmd === 'locate')
-    ? buildLocateOrBriefArgv(baseCmd, name, args)
-    : (baseCmd === 'zoom' || baseCmd === 'impact')
-      ? buildZoomOrImpactArgv(baseCmd, name, args)
-      : { rpcError: `Unknown tool: ${name}` };
+  const baseCmd = resolveBaseToolCmd(name, cfg.toolPrefix);
+  let built = null;
+  if (baseCmd === 'brief' || baseCmd === 'locate') built = buildLocateOrBriefArgv(baseCmd, name, args);
+  else if (baseCmd === 'zoom' || baseCmd === 'impact') built = buildZoomOrImpactArgv(baseCmd, name, args);
+  else if (typeof cfg.buildExtraArgv === 'function') built = cfg.buildExtraArgv(name, args);
+  if (!built) built = { rpcError: `Unknown tool: ${name}` };
   if (built.rpcError) return { rpcError: built.rpcError };
   if (built.toolError) return { result: { isError: true, content: [{ type: 'text', text: built.toolError }] } };
   try {
@@ -238,7 +238,7 @@ function dispatchRpcMessage(msg, resolvedRoot, dispatchCommand, cfg) {
   if (method === 'ping') return { jsonrpc: '2.0', id, result: {} };
   if (method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: cfg.tools } };
   if (method === 'tools/call') {
-    const out = handleToolCall(params, resolvedRoot, dispatchCommand, cfg.toolPrefix);
+    const out = handleToolCall(params, resolvedRoot, dispatchCommand, cfg);
     return out.rpcError ? jsonRpcError(id, -32602, out.rpcError) : { jsonrpc: '2.0', id, result: out.result };
   }
   return jsonRpcError(id, -32601, `Method not found: ${method}`);
@@ -249,11 +249,15 @@ export function createMcpDispatcher({
   dispatchCommand,
   serverName = 'donegate-cockpit',
   toolPrefix = 'dg_',
-  brandName = 'DoneGate'
+  brandName = 'DoneGate',
+  extraTools = [],
+  buildExtraArgv = null
 } = {}) {
   if (typeof dispatchCommand !== 'function') throw new TypeError('startCockpitMcp requires dispatchCommand function');
   const resolvedRoot = resolve(root);
-  const cfg = { serverName, toolPrefix, tools: toolPrefix === 'dg_' && brandName === 'DoneGate' ? MCP_TOOLS : buildMcpTools(toolPrefix, brandName) };
+  const baseTools = toolPrefix === 'dg_' && brandName === 'DoneGate' ? MCP_TOOLS : buildMcpTools(toolPrefix, brandName);
+  const tools = Array.isArray(extraTools) && extraTools.length > 0 ? [...baseTools, ...extraTools] : baseTools;
+  const cfg = { serverName, toolPrefix, tools, buildExtraArgv };
   return (msg) => dispatchRpcMessage(msg, resolvedRoot, dispatchCommand, cfg);
 }
 
@@ -293,11 +297,13 @@ export function startCockpitMcp({
   serverName = 'donegate-cockpit',
   toolPrefix = 'dg_',
   brandName = 'DoneGate',
+  extraTools = [],
+  buildExtraArgv = null,
   stdin = process.stdin,
   stdout = process.stdout,
   stderr = process.stderr
 } = {}) {
-  const dispatchRpc = createMcpDispatcher({ root, dispatchCommand, serverName, toolPrefix, brandName });
+  const dispatchRpc = createMcpDispatcher({ root, dispatchCommand, serverName, toolPrefix, brandName, extraTools, buildExtraArgv });
   const resolvedRoot = resolve(root);
   if (!existsSync(resolvedRoot)) throw new Error(`项目根目录不存在：${resolvedRoot}`);
   const state = { rxBuf: Buffer.alloc(0), replyMode: 'ndjson', pipeClosed: false, stdout, stderr, dispatchRpc };
