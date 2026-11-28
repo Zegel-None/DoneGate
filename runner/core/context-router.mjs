@@ -1,4 +1,4 @@
-// L1 三级渐进全局路由生成器（适配 1M 窗口 × 40% = 400k Tokens 五段式子代理预算、共享治理与伴生子模块归属）
+// L1 三级渐进全局路由生成器（首页契约卡容量条统计、1M 窗口 × 40% = 400k Tokens 五段式子代理预算、共享治理与伴生子模块归属）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
@@ -8,6 +8,9 @@ import { computeProjectStatus, loadContracts, loadThresholds } from './gates.mjs
 import { DEFAULT_SUBAGENT_BUDGET } from './project-loader.mjs';
 import { collectCodeFilesForCoverage } from './graph-edges.mjs';
 import { sortNodesByTarjanCondensation } from './tarjan-scc.mjs';
+import { V41_FLASH_PROFILE_ID, enrichSubagentBudgetForProfile, lookupHarnessProfileConfig, resolveModelReasoningEffort } from './context-router/v41-flash-profile.mjs';
+
+export { V41_FLASH_PROFILE_ID, resolveModelReasoningEffort };
 
 export const SHARED_GOVERNANCE_GLOBS = [
   'workflows/', 'AGENTS.md', 'HANDOFF.md', 'README.md', 'CONSTRAINTS.md', 'INTENT.md',
@@ -83,15 +86,10 @@ export function inspectCrossCardFocusPatterns(target, rawPatterns, graph) {
   return { warnings, crossCardRoutes };
 }
 
-function ctxRtrLookupProfile(thresholds, opts) {
-  const name = String(opts.harnessProfile || process.env.DG_HARNESS_PROFILE || '').trim();
-  const raw = name ? thresholds?.harnessProfiles?.[name] : null;
-  return (raw && typeof raw === 'object') ? { harnessProfile: name, prof: raw } : { harnessProfile: null, prof: null };
-}
-
 export function resolveSubagentBudgetProfile(thresholds, opts = {}) {
   const base = { ...DEFAULT_SUBAGENT_BUDGET, ...(thresholds?.subagentContextBudget || {}) };
-  const { harnessProfile, prof } = ctxRtrLookupProfile(thresholds, opts);
+  const lookup = lookupHarnessProfileConfig(thresholds, opts);
+  const { harnessProfile, prof } = lookup;
   const expWin = Number(opts.contextWindowTokens ?? opts.contextWindow);
   const win = Math.round([expWin, prof?.contextWindowTokens, base.contextWindowTokens].find((v) => Number(v) > 0));
   const utilRaw = Number(opts.utilizationRatio ?? opts.utilization ?? prof?.utilizationRatio ?? prof?.targetUtilization);
@@ -105,7 +103,7 @@ export function resolveSubagentBudgetProfile(thresholds, opts = {}) {
   const oneHopContractBudgetTokens = hasCustomScale ? Math.round(total * 0.12) : base.oneHopContractBudgetTokens;
   const onDemandExpandBudgetTokens = hasCustomScale ? Math.round(total * 0.16) : base.onDemandExpandBudgetTokens;
   const multiTurnReserveTokens = hasCustomScale ? Math.round(total * 0.30) : base.multiTurnReserveTokens;
-  return {
+  return enrichSubagentBudgetForProfile({
     harnessProfile, compactDefault: typeof prof?.compactDefault === 'boolean' ? prof.compactDefault : Boolean(base.compactDefault),
     contextWindowTokens: win,
     targetUtilization: util,
@@ -117,7 +115,7 @@ export function resolveSubagentBudgetProfile(thresholds, opts = {}) {
     multiTurnReserveTokens,
     capsuleInitialMaxTokens: routerBudgetTokens + zeroHopSourceBudgetTokens + oneHopContractBudgetTokens,
     receiptBudgetTokens: base.receiptBudgetTokens || 500
-  };
+  }, lookup, opts);
 }
 
 function loadCanvasExtraNodes(projectRoot, existingIds) {

@@ -9,6 +9,11 @@ import { evaluateGate0, evaluateGate1, evaluateGate2, loadThresholds } from './g
 import { buildSanitizedEnv, checkCommandBans, runIsolationProbes } from './isolation.mjs';
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
 import { buildGate0ActionHint, buildGate2ActionHint, collectMaterialList, collectOrderedIncompleteContractGaps, gitAnchorInfo } from './cmd-lifecycle.mjs';
+import {
+  BLOCKED_IMPOSSIBLE_CATEGORIES, DEFAULT_F2P_BASE_REF, f2pEvaluateCriterionExtras,
+  recordBlockedImpossible, verifyExpectedOutputFiles, verifyFailToPassOnBase
+} from './cmd-execute/f2p-and-safe-exit.mjs';
+export { BLOCKED_IMPOSSIBLE_CATEGORIES, DEFAULT_F2P_BASE_REF, recordBlockedImpossible, verifyExpectedOutputFiles, verifyFailToPassOnBase };
 
 export function execRunPreFlightPlug(projectRoot, contract, sanitizedEnv) {
   const plugCmd = typeof contract?.execution?.preFlightPlug === 'string' ? contract.execution.preFlightPlug.trim() : '';
@@ -179,8 +184,9 @@ function execRunCommandCriterion(projectRoot, evDir, ts, id, o, startRaw, ctx) {
   const spawnFailed = Boolean(r.error && !timedOut) || typeof r.status !== 'number';
   const stdoutTrim = String(r.stdout || '').replace(/[\r\n\s]+$/, '');
   const stdoutMatched = o.expect?.stdoutMatches !== undefined ? stdoutTrim === o.expect.stdoutMatches : null;
+  const { reportExtras, extraUnknown, extraFail } = f2pEvaluateCriterionExtras(projectRoot, o, r.status, timedOut || spawnFailed, ctx);
   const reportObj = {
-    exitCode: r.status, stdout: stdoutTrim.slice(0, 4096), ...(stdoutMatched !== null ? { stdoutMatched } : {}),
+    exitCode: r.status, stdout: stdoutTrim.slice(0, 4096), ...(stdoutMatched !== null ? { stdoutMatched } : {}), ...reportExtras,
     stdoutSha256: sha256(r.stdout), stderrSha256: sha256(r.stderr), outputChars: totalOutChars, outputOverflow,
     durationMs, timedOut, isDirty: ctx.anchor.isDirty, debugDirtyRun: ctx.debugDirtyRun, skipGates: ctx.skipGatesRun,
     track: ctx.track, gate4Eligible: ctx.gate4Eligible, isolationNotice: ctx.isolationNotice, hashStart: sha256(startRaw)
@@ -188,8 +194,8 @@ function execRunCommandCriterion(projectRoot, evDir, ts, id, o, startRaw, ctx) {
   const reportRaw = JSON.stringify(reportObj, null, 2);
   writeFileSync(join(evDir, 'report.json'), reportRaw);
   let verdict = 'pass';
-  if (timedOut || spawnFailed || outputOverflow) verdict = 'unknown';
-  else if (r.status !== o.expect?.exitCode || stdoutMatched === false) verdict = 'fail';
+  if (timedOut || spawnFailed || outputOverflow || extraUnknown) verdict = 'unknown';
+  else if (r.status !== o.expect?.exitCode || stdoutMatched === false || extraFail) verdict = 'fail';
   writeFileSync(join(evDir, 'end.json'), JSON.stringify({ result: verdict, hashReport: sha256(reportRaw), endedAt: new Date().toISOString() }, null, 2));
   let compactError = null;
   if (ctx.opts.compact) {
@@ -265,6 +271,8 @@ export function cmdCheck(projectRoot, opts) {
   const res = readJsonStrict(cPath);
   if (!res.ok) return { exitCode: res.error === 'parse' ? 2 : 3, stderr: '读取契约失败：' + cPath };
   const contract = res.value, isExploreTrack = contract.track === 'explore';
+  const blkSpec = opts.blockedImpossible || contract.blockedImpossible;
+  if (blkSpec) return recordBlockedImpossible(projectRoot, { contractId: id, ...(typeof blkSpec === 'object' ? blkSpec : { reason: String(blkSpec) }) });
   const envChk = execCheckEnvAndIsolation(projectRoot, id, contract, isExploreTrack, opts);
   if (!envChk.ok) return envChk.res;
   const tgtChk = execResolveAndAuditTargets(projectRoot, id, contract, opts);

@@ -8,8 +8,88 @@ import {
 import { resolveCockpitAdapter } from './cockpit-index.mjs';
 import { resolveFileContractOwners } from './cockpit-source.mjs';
 
-const LOCATE_CONTRACT_CACHE = new Map();
-const LOCATE_CACHE_MAX = 8;
+const LOCATE_CONTRACT_CACHE = new Map(), LOCATE_CACHE_MAX = 8;
+const STACKTRACE_FILE_SEED_BOOST = 6.0, STACKTRACE_SYMBOL_SEED_BOOST = 3.5;
+const STACKTRACE_FILE_SCORE_BONUS = 0.5, STACKTRACE_SYMBOL_SCORE_BONUS = 0.2, STACKTRACE_FRAME_DECAY = 0.85;
+const MIN_SYMBOL_LEN = 3, MAX_REASON_SYMBOLS = 4;
+const STACK_AT_FRAME_RE = /\bat\s+(?:async\s+)?(?:([A-Za-z_$][\w$.<>]*)\s+\()?([^()\s]+?\.(?:mjs|cjs|js|ts|tsx|jsx|mts|py|go|rs))(?:\?[^:\s)]*)?:(\d+)(?::(\d+))?\)?/g;
+const BARE_FILE_LINE_RE = /(?:^|[\s(['"`])([A-Za-z0-9_.\-/\\]+\.(?:mjs|cjs|js|ts|tsx|jsx|mts|py|go|rs))(?:\?[^:\s)]*)?:L?(\d+)(?::(\d+))?/g;
+const CAMEL_IDENT_RE = /\b[A-Za-z_$][a-z0-9_$]*[A-Z][A-Za-z0-9_$]*\b/g;
+const RUNTIME_ERR_PATTERNS = [
+  /([A-Za-z_$][\w$.]*)\s+is\s+not\s+a\s+function/g, /([A-Za-z_$][\w$]*)\s+is\s+not\s+defined/g,
+  /reading\s+['"`]([A-Za-z_$][\w$]*)['"`]/g, /Cannot\s+access\s+['"`]([A-Za-z_$][\w$]*)['"`]/g,
+  /(?:Type|Reference|Syntax|Range|URI|Assertion)Error:\s*([A-Za-z_$][\w$.]*)/g
+];
+const BUILTIN_TRACE_SKIP = new Set([
+  'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'URIError',
+  'AssertionError', 'Object', 'Function', 'Promise', 'Array', 'Module', 'async', 'Cannot', 'Uncaught', 'anonymous'
+]);
+
+const clNormTracePath = (raw) => String(raw || '').replace(/^(?:file:\/\/\/|https?:\/\/[^/]+\/)/i, '').replace(/[?#].*$/, '').replace(/\\/g, '/').replace(/^(?:\.\/|\/+)/, '');
+
+function clPushTraceSymbol(rawSym, symbolSet) {
+  for (const seg of String(rawSym || '').replace(/[<>[\]]/g, '').trim().split('.')) {
+    if (seg.length >= MIN_SYMBOL_LEN && !BUILTIN_TRACE_SKIP.has(seg)) symbolSet.add(seg);
+  }
+}
+
+function clRecordFrame(frames, seenFrames, lineByFile, rawFile, lineStr, colStr, rawSym, symbolSet) {
+  const file = clNormTracePath(rawFile), line = Number(lineStr);
+  if (!file || !Number.isInteger(line) || line <= 0) return;
+  if (rawSym) clPushTraceSymbol(rawSym, symbolSet);
+  const key = `${file}:${line}`;
+  if (seenFrames.has(key)) return;
+  seenFrames.add(key);
+  if (lineByFile[file] === undefined) lineByFile[file] = line;
+  frames.push({ file, line, column: colStr ? Number(colStr) : null, symbol: rawSym || null });
+}
+
+export function extractStacktraceAnchors(query) {
+  const text = String(query || ''), frames = [], seenFrames = new Set(), symbolSet = new Set(), lineByFile = {};
+  for (const m of text.matchAll(STACK_AT_FRAME_RE)) clRecordFrame(frames, seenFrames, lineByFile, m[2], m[3], m[4], m[1], symbolSet);
+  for (const m of text.matchAll(BARE_FILE_LINE_RE)) clRecordFrame(frames, seenFrames, lineByFile, m[1], m[2], m[3], null, symbolSet);
+  let matchedRuntimeErr = /(?:Type|Reference|Syntax|Range|URI|Assertion)Error:/i.test(text);
+  for (const re of RUNTIME_ERR_PATTERNS) {
+    for (const m of text.matchAll(re)) { matchedRuntimeErr = true; clPushTraceSymbol(m[1], symbolSet); }
+  }
+  const hasStacktrace = frames.length > 0 || matchedRuntimeErr;
+  if (hasStacktrace) {
+    for (const m of text.matchAll(CAMEL_IDENT_RE)) clPushTraceSymbol(m[0], symbolSet);
+  }
+  return { hasStacktrace, files: [...new Set(frames.map((f) => f.file))], frames, lineByFile, symbols: [...symbolSet] };
+}
+
+function clQuerySymbolFiles(handle, symbols, fileSet) {
+  const byFile = new Map();
+  if (!handle || symbols.length === 0) return byFile;
+  try {
+    const stmt = handle.db.prepare("SELECT DISTINCT file_path FROM nodes WHERE project = ? AND name = ? AND file_path != '' AND file_path NOT LIKE 'tests/%'");
+    for (const sym of symbols) {
+      for (const r of stmt.all(handle.project, sym)) {
+        const f = String(r.file_path || '').replace(/\\/g, '/');
+        if (fileSet.has(f)) byFile.set(f, [...new Set([...(byFile.get(f) || []), sym])]);
+      }
+    }
+  } catch (err) { void err; }
+  return byFile;
+}
+
+function clApplyStacktraceBoost(handle, graph, baseSeeds, anchors) {
+  if (!anchors.hasStacktrace) return { seeds: baseSeeds, directLineByFile: null, symbolHitsByFile: null };
+  const seeds = new Map(baseSeeds), directLineByFile = new Map();
+  anchors.files.forEach((af, idx) => {
+    const boost = STACKTRACE_FILE_SEED_BOOST * (STACKTRACE_FRAME_DECAY ** idx);
+    for (const gf of graph.files) {
+      if (gf === af || gf.endsWith(`/${af}`) || af.endsWith(`/${gf}`)) {
+        seeds.set(gf, (seeds.get(gf) || 0) + boost);
+        if (!directLineByFile.has(gf)) directLineByFile.set(gf, anchors.lineByFile[af]);
+      }
+    }
+  });
+  const symbolHitsByFile = clQuerySymbolFiles(handle, anchors.symbols, new Set(graph.files));
+  for (const gf of symbolHitsByFile.keys()) seeds.set(gf, (seeds.get(gf) || 0) + STACKTRACE_SYMBOL_SEED_BOOST);
+  return { seeds, directLineByFile, symbolHitsByFile };
+}
 
 function clParsePosInt(raw, fallback, flagName) {
   if (raw === undefined) return { ok: true, value: fallback };
@@ -72,22 +152,24 @@ function clReadSkeletonSummary(projectRoot, file, skelMaxTok) {
   return skel.text.split('\n').map(clFormatSkeletonLine);
 }
 
-function clFormatReason(graph, seeds, file) {
+function clFormatReason(graph, seeds, file, boostCtx = null) {
+  if (boostCtx?.directLineByFile?.has(file)) {
+    const ln = boostCtx.directLineByFile.get(file);
+    return ln ? `报错栈直达: L${ln}` : '报错栈路径直达';
+  }
+  if (boostCtx?.symbolHitsByFile?.has(file)) return `报错符号命中: ${boostCtx.symbolHitsByFile.get(file).slice(0, MAX_REASON_SYMBOLS).join(', ')}`;
   const exp = explainRank(graph, seeds, file);
   if (exp.seedTerms.length > 0) return `种子词: ${exp.seedTerms.slice(0, 5).join(', ')}`;
   if (exp.via.length > 0) return `经 ${exp.via[0].type} ← ${exp.via[0].from} 传播`;
   return '图谱关联传播';
 }
 
-function clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok, isGeneric) {
+function clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok, isGeneric, boostCtx = null) {
   const { ownerIds, contract } = clResolveContractInfo(nodes, item.file, isGeneric);
   return {
-    file: item.file,
-    score: item.score,
-    ownerIds,
-    contract,
+    file: item.file, score: item.score, ownerIds, contract,
     skeletonLines: clReadSkeletonSummary(projectRoot, item.file, skelMaxTok),
-    reason: clFormatReason(graph, seeds, item.file)
+    reason: clFormatReason(graph, seeds, item.file, boostCtx)
   };
 }
 
@@ -188,11 +270,13 @@ function clPackCandidates(candidates, header, safeQuery, budget, footerLines) {
   return { kept, omitted, renderedText, tokens: estimateTokens(renderedText), minNeeded };
 }
 
-function clRankCandidates(graph, seeds, alpha, k) {
+function clRankCandidates(graph, seeds, alpha, k, boostCtx = null) {
   const scores = personalizedPageRank(graph, seeds, { alpha });
   const rankedAll = [];
   for (let i = 0; i < graph.files.length; i++) {
-    if (scores[i] > 0) rankedAll.push({ file: graph.files[i], score: scores[i] });
+    const file = graph.files[i];
+    const bonus = (boostCtx?.directLineByFile?.has(file) ? STACKTRACE_FILE_SCORE_BONUS : 0) + (boostCtx?.symbolHitsByFile?.has(file) ? STACKTRACE_SYMBOL_SCORE_BONUS : 0);
+    if (scores[i] + bonus > 0) rankedAll.push({ file, score: scores[i] + bonus });
   }
   rankedAll.sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
   return { total: rankedAll.length, topSlice: rankedAll.slice(0, k) };
@@ -214,17 +298,19 @@ export function cmdLocate(projectRoot, opts = {}) {
   if (!graph) {
     return { exitCode: 3, stderr: '缺少 CBM 图谱索引（codebase-memory-mcp 未就绪），无法执行 locate。' };
   }
-  const seeds = scoreSeeds(projectRoot, query);
+  const h = openCbmGraphHandle(projectRoot);
+  const baseSeeds = scoreSeeds(projectRoot, query, { handle: h });
+  const boostCtx = clApplyStacktraceBoost(h, graph, baseSeeds, extractStacktraceAnchors(query));
+  const seeds = boostCtx.seeds;
   if (seeds.size === 0) return clNoSeedResponse(query, Boolean(opts.json));
 
-  const ranked = clRankCandidates(graph, seeds, opts.alpha ?? 0.65, kOpt.value);
+  const ranked = clRankCandidates(graph, seeds, opts.alpha ?? 0.65, kOpt.value, boostCtx);
   if (ranked.topSlice.length === 0) return clNoSeedResponse(query, Boolean(opts.json));
 
-  const h = openCbmGraphHandle(projectRoot);
   const rootDir = h?.root || projectRoot;
   const nodes = isGeneric ? [] : clLoadContractNodes(rootDir, h ? `${h.root}|${h.fp}` : rootDir);
   const skelMaxTok = clResolveSkeletonBudget(budgetOpt.value);
-  const candidates = ranked.topSlice.map((item) => clBuildCandidate(projectRoot, graph, seeds, nodes, item, skelMaxTok, isGeneric));
+  const candidates = ranked.topSlice.map((item) => clBuildCandidate(projectRoot, graph, baseSeeds, nodes, item, skelMaxTok, isGeneric, boostCtx));
   const singleLineQuery = query.replace(/[\r\n\t]+/g, ' ').trim();
   const safeQuery = singleLineQuery.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const header = clBuildHeader(safeQuery, seeds.size, candidates.length, ranked.total, budgetOpt.value);

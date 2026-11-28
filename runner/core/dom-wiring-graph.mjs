@@ -2,6 +2,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { maskCommentsAndStrings } from './ast-stub.mjs';
+import { expandScopeWithWebAssets, extractFileFullstackWiring, indexFullstackEdges } from './dom-wiring-graph/fullstack-edges.mjs';
+
+export { expandScopeWithWebAssets };
 
 export const ATLAS_SUBPACK_DEFAULTS = Object.freeze({});
 
@@ -97,7 +100,10 @@ function dwgAddNonHexMatches(source, re, targetSet) {
 
 export function extractFileDomWiring(source, relPath = '') {
   if (!source) {
-    return { relPath, wbDefs: [], wbRefs: [], actionTriggers: [], actionHandlers: [], actions: [], domDefs: [], domRefs: [], domIds: [] };
+    return {
+      relPath, wbDefs: [], wbRefs: [], actionTriggers: [], actionHandlers: [], actions: [],
+      domDefs: [], domRefs: [], domIds: [], apiDefs: [], apiRefs: [], apiRoutes: [], cssDefs: [], cssRefs: [], cssClasses: []
+    };
   }
   const wbDefs = new Set(), wbRefs = new Set();
   const actionTriggers = new Set(), actionHandlers = new Set();
@@ -111,6 +117,7 @@ export function extractFileDomWiring(source, relPath = '') {
   dwgAddNonHexMatches(source, /\bgetElementById\s*\(\s*['"]([A-Za-z][A-Za-z0-9_:-]{1,63})['"]\s*\)/g, domRefs);
   dwgAddNonHexMatches(source, /\b(?:querySelector|querySelectorAll|closest|matches|\$\$?)\s*\(\s*['"`][^'"`\n]{0,120}?#([A-Za-z][A-Za-z0-9_-]{1,63})\b/g, domRefs);
 
+  const fullstack = extractFileFullstackWiring(source, relPath);
   return {
     relPath,
     wbDefs: [...wbDefs].sort(),
@@ -120,7 +127,8 @@ export function extractFileDomWiring(source, relPath = '') {
     actions: [...new Set([...actionTriggers, ...actionHandlers])].sort(),
     domDefs: [...domDefs].sort(),
     domRefs: [...domRefs].sort(),
-    domIds: [...new Set([...domDefs, ...domRefs])].sort()
+    domIds: [...new Set([...domDefs, ...domRefs])].sort(),
+    ...fullstack
   };
 }
 
@@ -163,16 +171,19 @@ export function buildDomWiringGraph(rawByFile) {
   dwgIndexWiringPair(byFile, edges, (w) => w.wbDefs, (w) => [...w.wbRefs, ...w.wbDefs], (p) => (propTouchCount.get(p) || 0) <= hubCap);
   dwgIndexWiringPair(byFile, edges, (w) => w.actionTriggers, (w) => w.actionHandlers);
   dwgIndexWiringPair(byFile, edges, (w) => w.domDefs, (w) => w.domRefs);
+  indexFullstackEdges(byFile, edges, hubCap, dwgIndexWiringPair);
   return { byFile, edges };
 }
 
 export function formatDomWiringStubComment(relPath, wiring) {
   if (!wiring) return '';
+  const apiRoutes = wiring.apiRoutes || [], cssClasses = wiring.cssClasses || [];
   const isBrowserScript = /^(?:wb|ui)-/i.test(basename(relPath));
-  const hasAny = wiring.wbDefs.length > 0 || wiring.actions.length > 0 || wiring.domIds.length > 0;
+  const hasAny = wiring.wbDefs.length > 0 || wiring.actions.length > 0 || wiring.domIds.length > 0 || apiRoutes.length > 0 || cssClasses.length > 0;
   if (!isBrowserScript && !hasAny) return '';
   const fmtList = (arr) => arr.slice(0, 16).join(', ') + (arr.length > 16 ? `, +${arr.length - 16}` : '');
-  return `// [DOM & Action Wiring] wbDefs=[${fmtList(wiring.wbDefs)}] actions=[${fmtList(wiring.actions)}] domIds=[${fmtList(wiring.domIds)}]`;
+  const extra = `${apiRoutes.length ? ` apiRoutes=[${fmtList(apiRoutes)}]` : ''}${cssClasses.length ? ` cssClasses=[${fmtList(cssClasses)}]` : ''}`;
+  return `// [DOM & Action Wiring] wbDefs=[${fmtList(wiring.wbDefs)}] actions=[${fmtList(wiring.actions)}] domIds=[${fmtList(wiring.domIds)}]${extra}`;
 }
 
 function dwgFindLineIndex(lineStarts, idx) {

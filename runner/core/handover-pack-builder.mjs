@@ -1,4 +1,4 @@
-// 交接包文档渲染与门 5 复核包 diff/打包构建子模块（供 cmd-handover-verify.mjs 委托，<= 350 行）
+// 交接包文档渲染、高风险 Diff 置顶排序与门 5 复核包打包构建子模块（供 cmd-handover-verify.mjs 委托，<= 348 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,89 @@ import { sanitizeReviewEvidence, stripCrossSessionReasoning } from './review-evi
 
 const HPB_SECURITY_PATH_RE = /(?:^|\/)(?:\.githooks\/|hooks?\/|auth|security|sandbox|isolation|egress|proxy|guard|crypto|token|secret|permission|acl)|(?:auth|guard|sandbox|isolation|egress|proxy|verify-consensus|heldout)[^/]*\.[a-z0-9]+$/i;
 const HPB_UI_PATH_RE = /(?:^|\/)(?:uiboard|atlas|frontend|web|ui|components|views|pages|public|assets|styles)\/|\.(?:html|css|scss|less|tsx|jsx|vue|svelte)$/i;
-const HPB_MAX_ANCESTOR_HOPS = 6;
+const HPB_MAX_ANCESTOR_HOPS = 6, HPB_MAX_CONS_PREVIEW_RULES = 2;
+
+export const DEFAULT_INCIDENT_ESCALATION_THRESHOLD = 2;
+export const SEVERE_INCIDENT_ESCALATION_THRESHOLD = 1;
+
+const HPB_RISK_SUBPROCESS_WEIGHT = 60;
+const HPB_RISK_AUTH_WEIGHT = 55;
+const HPB_RISK_CRYPTO_WEIGHT = 50;
+const HPB_RISK_HTML_INJECTION_WEIGHT = 45;
+const HPB_RISK_FILE_DELETION_WEIGHT = 40;
+const HPB_RISK_ROUTE_EXPOSURE_WEIGHT = 35;
+
+const HPB_DIFF_RISK_RULES = Object.freeze([
+  { tag: 'subprocess-exec', weight: HPB_RISK_SUBPROCESS_WEIGHT, re: /\b(?:child_process|spawnSync|spawn|execSync|execFileSync|execFile|fork)\b|shell\s*:\s*true/ },
+  { tag: 'auth-guard', weight: HPB_RISK_AUTH_WEIGHT, re: /(?:^|\/)(?:auth|login|session|acl|rbac|permission|token|oauth)|(?:\bverifyTok\b|\bverifySignature\b|\bcheckAcl\b|\bjwt\b|\bcredential)/i },
+  { tag: 'crypto-secret', weight: HPB_RISK_CRYPTO_WEIGHT, re: /(?:^|\/)(?:crypto|cipher|tls|secret)|(?:\bcreateCipher|\bcreateDecipher|\bhmac\b|\bpbkdf2|\bscrypt|\bprivateKey\b|\bdecrypt\b|\bencrypt\b)/i },
+  { tag: 'html-injection', weight: HPB_RISK_HTML_INJECTION_WEIGHT, re: /\b(?:innerHTML|outerHTML|dangerouslySetInnerHTML|insertAdjacentHTML|document\.write)\s*[=(]/ },
+  { tag: 'file-deletion', weight: HPB_RISK_FILE_DELETION_WEIGHT, re: /^(?:deleted file mode |\+\+\+ \/dev\/null)|(?:\brmSync\b|\bunlinkSync\b|\brmdirSync\b|\bfs\.rm\b|\bfs\.unlink\b)/m },
+  { tag: 'route-exposure', weight: HPB_RISK_ROUTE_EXPOSURE_WEIGHT, re: /(?:^|\/)(?:routes?|router|controllers?|api|endpoints?)\/|\b(?:app|router)\.(?:get|post|put|delete|patch|all|use)\s*\(|\bcreateServer\s*\(|0\.0\.0\.0/i }
+]);
+
+function hpbChooseSplitRegex(raw) {
+  if (/^diff --git /m.test(raw)) return /(?=^diff --git )/m;
+  if (/^--- a\//m.test(raw)) return /(?=^--- a\/)/m;
+  return /(?=^@@ )/m;
+}
+
+function hpbSplitDiffSegments(raw) {
+  const parts = raw.split(hpbChooseSplitRegex(raw)).filter(Boolean);
+  if (parts.length <= 1) return { preamble: '', chunks: parts };
+  const firstStartsChunk = /^(?:diff --git |--- a\/|@@ )/.test(parts[0]);
+  return firstStartsChunk ? { preamble: '', chunks: parts } : { preamble: parts[0], chunks: parts.slice(1) };
+}
+
+export function scoreDiffChunkRisk(chunkText) {
+  const text = String(chunkText || '');
+  const fileMatch = text.match(/^diff --git a\/(.+?) b\/(.+)$/m) || text.match(/^\+\+\+ b\/(.+)$/m) || text.match(/^--- a\/(.+)$/m);
+  let rawFile = 'unknown';
+  if (fileMatch) rawFile = (fileMatch[2] && fileMatch[2] !== '/dev/null') ? fileMatch[2] : fileMatch[1];
+  const file = String(rawFile || '').trim();
+  const riskTags = [];
+  let riskScore = 0;
+  for (const rule of HPB_DIFF_RISK_RULES) {
+    if (rule.re.test(file) || rule.re.test(text)) {
+      riskTags.push(rule.tag);
+      riskScore += rule.weight;
+    }
+  }
+  return { file, riskScore, riskTags };
+}
+
+export function orderDiffHunksByRisk(diffText) {
+  const raw = String(diffText ?? '');
+  if (!raw.trim()) return raw;
+  const hadTrailingNewline = raw.endsWith('\n');
+  const { preamble, chunks } = hpbSplitDiffSegments(raw);
+  if (chunks.length <= 1) return raw;
+  const scored = chunks.map((chunk, index) => ({
+    index,
+    body: chunk.replace(/\r?\n$/, ''),
+    ...scoreDiffChunkRisk(chunk)
+  }));
+  scored.sort((a, b) => (b.riskScore - a.riskScore) || (a.index - b.index));
+  const joined = (preamble ? preamble.replace(/\r?\n$/, '') + '\n' : '') + scored.map((s) => s.body).join('\n');
+  return hadTrailingNewline ? `${joined}\n` : joined;
+}
+
+export function evaluateIncidentEscalation(incidentCounters = {}, opts = {}) {
+  const c = {
+    blockedBypassCount: Number(incidentCounters?.blockedBypassCount) || 0,
+    selfSignAttemptCount: Number(incidentCounters?.selfSignAttemptCount) || 0,
+    stopCircuitTrips: Number(incidentCounters?.stopCircuitTrips) || 0,
+    revertedFrozenTestTouches: Number(incidentCounters?.revertedFrozenTestTouches) || 0
+  };
+  const threshold = Number(opts.incidentThreshold) > 0 ? Number(opts.incidentThreshold) : DEFAULT_INCIDENT_ESCALATION_THRESHOLD;
+  const totalIncidents = c.blockedBypassCount + c.selfSignAttemptCount + c.stopCircuitTrips + c.revertedFrozenTestTouches;
+  const reasons = [];
+  if (c.selfSignAttemptCount >= SEVERE_INCIDENT_ESCALATION_THRESHOLD) reasons.push('self-sign-attempt');
+  if (c.revertedFrozenTestTouches >= SEVERE_INCIDENT_ESCALATION_THRESHOLD) reasons.push('frozen-test-tamper');
+  if (totalIncidents >= threshold) reasons.push('incident-threshold-reached');
+  const requireCrossFamilyJudge = reasons.length > 0;
+  return { requireCrossFamilyJudge, escalationLocked: requireCrossFamilyJudge, totalIncidents, threshold, reasons };
+}
 
 function hvReadLastEscapePitfall(projectRoot) {
   const fallback = '不要跳过冻结判据或用 || true 吞掉失败退出码，因为核侧会直接拒收。';
@@ -68,7 +150,7 @@ export function hvBuildNextTurnInjectBlock(projectRoot, st, gaps, intent, smokeC
   const intentLines = stripCrossSessionReasoning(intent).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith('（'));
   const intentBrief = intentLines[0] || '按当前契约与判据推进开发';
   const consText = readMaybe(join(projectRoot, 'CONSTRAINTS.md')) || '';
-  const consRules = consText.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^(不许|必须)/.test(l)).slice(0, 2);
+  const consRules = consText.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^(不许|必须)/.test(l)).slice(0, HPB_MAX_CONS_PREVIEW_RULES);
   const lastPitfall = stripCrossSessionReasoning(hvReadLastEscapePitfall(projectRoot));
   const completed = st.contractSummaries.filter((c) => !c.retired && c.state === '通过');
   const doneText = completed.length ? completed.map((c) => `${c.id}（${c.title}）`).join('、') : '尚无已通关模块，刚完成项目基线初始化';
@@ -118,11 +200,11 @@ export function hvBuildPackGitDiff(projectRoot, id, contract, opts) {
   if (!hoRes.ok) return { ok: false, exitCode: 2, code: hoRes.code, stderr: hoRes.fails.join('\n') };
   const d1 = spawnSync('git', ['-C', projectRoot, 'diff', `${baseRev}..${headRev}`, '--', '.', ':(exclude)contracts'], { encoding: 'utf8' }).stdout || '';
   const d2 = spawnSync('git', ['-C', projectRoot, 'diff', `${baseRev}..${headRev}`, '--', `contracts/${id}`], { encoding: 'utf8' }).stdout || '';
-  const diffText = [d1.trimEnd(), d2.trimEnd()].filter(Boolean).join('\n') + '\n';
-  if (!diffText.trim()) {
+  const rawDiff = [d1.trimEnd(), d2.trimEnd()].filter(Boolean).join('\n') + '\n';
+  if (!rawDiff.trim()) {
     return { ok: false, exitCode: 3, stderr: 'base..head 无任何实际改动 diff（可能是空提交或冻结后未改动），拒绝生成空复核包，请指定 --base <commit>' };
   }
-  return { ok: true, diffText, versText, touchedFiles };
+  return { ok: true, diffText: orderDiffHunksByRisk(rawDiff), versText, touchedFiles };
 }
 
 function hvReadJsonl(filePath) {
@@ -148,6 +230,18 @@ function hvCountGuardEvent(ev, counters) {
   else if (/BYPASS|NO_VERIFY|SKIP_GATES|TAMPER|DENY|BLOCK/.test(code) || ev.decision === 'deny' || ev.blocked === true) counters.blockedBypassCount++;
 }
 
+function hvCollectIncidentCounters(rootAbs) {
+  const counters = { blockedBypassCount: 0, selfSignAttemptCount: 0, stopCircuitTrips: 0, revertedFrozenTestTouches: 0 };
+  for (const ev of hvReadJsonl(join(rootAbs, '.donegate', 'guard-events.jsonl'))) hvCountGuardEvent(ev, counters);
+  for (const note of hvReadJsonl(join(rootAbs, '.donegate', 'notes.jsonl'))) {
+    if (note.kind !== 'worry') continue;
+    const text = `${note.title || ''} ${note.detail || ''}`;
+    if (/(?:防死锁放行|自动熔断|熔断放行|stopStrikes|circuit)/i.test(text)) counters.stopCircuitTrips++;
+    if (/(?:冻结测试|frozen.?test)/i.test(text)) counters.revertedFrozenTestTouches++;
+  }
+  return counters;
+}
+
 function hvFindRepoRoot(startPath, id) {
   let cur = startPath ? resolve(startPath) : '';
   for (let i = 0; cur && i <= HPB_MAX_ANCESTOR_HOPS; i++) {
@@ -160,27 +254,37 @@ function hvFindRepoRoot(startPath, id) {
   return null;
 }
 
-function hvEmitCompanionPackMeta(rootAbs, contractId, manifestBody, diffText) {
-  const paths = [...String(diffText || '').matchAll(/^(?:diff --git a\/.+? b\/|\+\+\+ b\/)(.+)$/gm)].map((m) => m[1].trim()).filter((p) => p && p !== '/dev/null');
+function hvEmitCompanionPackMeta(rootAbs, contractId, manifestBody, orderedDiff, opts = {}) {
+  const { chunks } = hpbSplitDiffSegments(String(orderedDiff || ''));
+  const riskOrderSummary = chunks.filter((c) => c.trim()).map(scoreDiffChunkRisk);
+  const paths = [...String(orderedDiff || '').matchAll(/^(?:diff --git a\/.+? b\/|\+\+\+ b\/)(.+)$/gm)].map((m) => m[1].trim()).filter((p) => p && p !== '/dev/null');
   const requiredDimensions = ['core-rubric'];
   if (paths.some((f) => HPB_SECURITY_PATH_RE.test(f))) requiredDimensions.push('security');
   if (paths.some((f) => HPB_UI_PATH_RE.test(f))) requiredDimensions.push('ui-live');
-  const incidentCounters = { blockedBypassCount: 0, selfSignAttemptCount: 0, stopCircuitTrips: 0, revertedFrozenTestTouches: 0 };
-  for (const ev of hvReadJsonl(join(rootAbs, '.donegate', 'guard-events.jsonl'))) hvCountGuardEvent(ev, incidentCounters);
-  for (const note of hvReadJsonl(join(rootAbs, '.donegate', 'notes.jsonl'))) {
-    if (note.kind !== 'worry') continue;
-    const text = `${note.title || ''} ${note.detail || ''}`;
-    if (/(?:防死锁放行|自动熔断|熔断放行|stopStrikes|circuit)/i.test(text)) incidentCounters.stopCircuitTrips++;
-    if (/(?:冻结测试|frozen.?test)/i.test(text)) incidentCounters.revertedFrozenTestTouches++;
-  }
-  const requiresHeterogeneousJudge = Object.values(incidentCounters).some((n) => n > 0) || requiredDimensions.includes('security');
+  const incidentCounters = hvCollectIncidentCounters(rootAbs);
+  const escalation = evaluateIncidentEscalation(incidentCounters, opts);
+  const hasAnyIncident = Object.values(incidentCounters).some((n) => n > 0);
+  const requiresHeterogeneousJudge = escalation.requireCrossFamilyJudge || hasAnyIncident || requiredDimensions.includes('security');
   const outDir = join(rootAbs, '.donegate', 'verify');
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, `pack-meta-${contractId}.json`), JSON.stringify({ schema: 'donegate-pack-meta/v1', contractId, packManifestSha256: sha256(manifestBody), requiredDimensions, incidentCounters, requiresHeterogeneousJudge }, null, 2) + '\n', 'utf8');
+  const payload = {
+    schema: 'donegate-pack-meta/v1',
+    contractId,
+    packManifestSha256: sha256(manifestBody),
+    requiredDimensions,
+    incidentCounters,
+    requiresHeterogeneousJudge,
+    requireCrossFamilyJudge: escalation.requireCrossFamilyJudge,
+    escalationLocked: escalation.escalationLocked,
+    escalationReasons: escalation.reasons,
+    riskOrderSummary
+  };
+  writeFileSync(join(outDir, `pack-meta-${contractId}.json`), JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
 export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, versText, evPairs, opts = {}) {
   const filesWritten = [];
+  const orderedDiff = orderDiffHunksByRisk(diffText);
   const emit = (rel, content) => {
     const abs = join(packDir, rel);
     mkdirSync(dirname(abs), { recursive: true });
@@ -192,7 +296,7 @@ export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, ver
   emit(`criterion/${id}.json`, JSON.stringify({ id: contract.id, obligations: obs }, null, 2) + '\n');
   emit('contract-scope-why.md', `# 契约 ${id} 的 scope 与 why\n\n## scope\n${JSON.stringify(contract.scope)}\n\n## why\n${cleanWhy}\n`);
   emit('完成声称.md', `${cleanClaim}\n`);
-  emit(`diff/${id}.diff`, diffText);
+  emit(`diff/${id}.diff`, orderedDiff);
   emit('diff/versions.txt', versText);
   for (const ev of evPairs) {
     for (const part of ['start.json', 'report.json', 'end.json']) {
@@ -202,6 +306,6 @@ export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, ver
   const manifestBody = filesWritten.map((r) => sha256(readFileSync(join(packDir, r))) + '  ' + r).join('\n') + '\n';
   writeFileSync(join(packDir, 'MANIFEST.txt'), manifestBody, 'utf8');
   const rootAbs = opts.projectRoot ? resolve(opts.projectRoot) : (hvFindRepoRoot(evPairs?.[0]?.latestRunDir, id) || hvFindRepoRoot(packDir, id));
-  if (rootAbs && resolve(join(rootAbs, '.donegate', 'verify')) !== resolve(packDir)) hvEmitCompanionPackMeta(rootAbs, id, manifestBody, diffText);
+  if (rootAbs && resolve(join(rootAbs, '.donegate', 'verify')) !== resolve(packDir)) hvEmitCompanionPackMeta(rootAbs, id, manifestBody, orderedDiff, opts);
   return manifestBody;
 }

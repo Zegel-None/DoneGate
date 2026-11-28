@@ -1,9 +1,13 @@
-// Claude Code 原生宿主适配器（.mcp.json + .claude/settings.json 钩子 + 三套技能部署与无损卸载，L5，<= 85 行）
+// Claude Code 原生宿主适配器（.mcp.json + .claude/settings.json 钩子 + STEER 热纠偏尾部追加，L5，<= 95 行）
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { validateHarnessAdapter } from './protocol.mjs';
-import { HARNESS_SKILL_DIRS, buildAntigravityMcpConfig, formatHarnessDetection, hasManagedHooksReady, installHarnessSkills, pruneEmptyDir, readJsonObjectSafe, syncManagedHooksConfig, uninstallHarnessSkills } from './antigravity-assets.mjs';
+import { HARNESS_SKILL_DIRS, appendLiveSteerTail as appendSharedSteerTail, buildAntigravityMcpConfig, formatHarnessDetection, hasManagedHooksReady, installHarnessSkills, pruneEmptyDir, readJsonObjectSafe, syncManagedHooksConfig, uninstallHarnessSkills } from './antigravity-assets.mjs';
+
+export function appendLiveSteerTail(projectRoot, baseInput = '', opts = {}) {
+  return appendSharedSteerTail(projectRoot, baseInput, { ...opts, host: 'claude-code' });
+}
 
 export function resolveClaudeCodeRoot(opts = {}) {
   if (typeof opts.configRoot === 'string' && opts.configRoot.trim()) return resolve(opts.configRoot);
@@ -26,7 +30,10 @@ export const claudeCodeHarnessAdapter = validateHarnessAdapter({
   displayName: 'Claude Code',
   description: 'Claude Code 原生宿主适配器：合并 .mcp.json 治理 MCP、挂载 .claude/settings.json 守护钩子并部署三套技能。',
   implemented: true,
-  capabilities: ['mcp-require-root', 'lifecycle-hooks', 'skills'],
+  capabilities: ['mcp-require-root', 'lifecycle-hooks', 'skills', 'live-steer-tail'],
+  appendLiveSteerTail(projectRoot, baseInput = '', opts = {}) {
+    return appendLiveSteerTail(projectRoot, baseInput, opts);
+  },
   detect(opts = {}) {
     const rootDir = resolveClaudeCodeRoot(opts);
     const info = inspectClaude(rootDir);

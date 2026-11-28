@@ -272,6 +272,96 @@ export function lockDesignSystemMaster(projectRoot, proposalId, projectName = 'P
   return lockPayload;
 }
 
+export const WCAG_MIN_READABLE_CONTRAST_RATIO = 3.0;
+export const WCAG_AA_NORMAL_CONTRAST_RATIO = 4.5;
+
+const SRGB_CHANNEL_MAX = 255, SRGB_LINEAR_THRESHOLD = 0.04045, SRGB_LINEAR_DIVISOR = 12.92;
+const SRGB_GAMMA_OFFSET = 0.055, SRGB_GAMMA_DIVISOR = 1.055, SRGB_GAMMA_EXPONENT = 2.4;
+const REL_LUM_RED = 0.2126, REL_LUM_GREEN = 0.7152, REL_LUM_BLUE = 0.0722, CONTRAST_LUM_OFFSET = 0.05, CONTRAST_PRECISION_FACTOR = 100;
+const HEX_SHORT_LEN = 3, HEX_SHORT_ALPHA_LEN = 4, HEX_FULL_LEN = 6, HEX_FULL_ALPHA_LEN = 8, HEX_RADIX = 16, HEX_PAIR_STEP = 2;
+const DEFAULT_CANVAS_RGB = Object.freeze({ r: 255, g: 255, b: 255 });
+const NAMED_CSS_COLORS = Object.freeze({
+  white: [255, 255, 255, 1], black: [0, 0, 0, 1], transparent: [0, 0, 0, 0],
+  red: [255, 0, 0, 1], green: [0, 128, 0, 1], blue: [0, 0, 255, 1],
+  gray: [128, 128, 128, 1], grey: [128, 128, 128, 1], yellow: [255, 255, 0, 1]
+});
+
+function parseHexColorString(hexBody) {
+  let full = hexBody;
+  if (hexBody.length === HEX_SHORT_LEN || hexBody.length === HEX_SHORT_ALPHA_LEN) {
+    full = [...hexBody].map((c) => c + c).join('');
+  }
+  if (full.length !== HEX_FULL_LEN && full.length !== HEX_FULL_ALPHA_LEN) return null;
+  if (!/^[0-9a-f]+$/i.test(full)) return null;
+  const r = parseInt(full.slice(0, HEX_PAIR_STEP), HEX_RADIX);
+  const g = parseInt(full.slice(HEX_PAIR_STEP, HEX_PAIR_STEP * HEX_PAIR_STEP), HEX_RADIX);
+  const b = parseInt(full.slice(HEX_PAIR_STEP * HEX_PAIR_STEP, HEX_FULL_LEN), HEX_RADIX);
+  const a = full.length === HEX_FULL_ALPHA_LEN ? parseInt(full.slice(HEX_FULL_LEN, HEX_FULL_ALPHA_LEN), HEX_RADIX) / SRGB_CHANNEL_MAX : 1;
+  return { r, g, b, a };
+}
+
+function parseRgbFuncString(raw) {
+  const m = raw.match(/^rgba?\(\s*([0-9.]+)\s*(?:,|\s)\s*([0-9.]+)\s*(?:,|\s)\s*([0-9.]+)(?:\s*(?:,|\/)\s*([0-9.]+))?\s*\)$/i);
+  if (!m) return null;
+  const clampCh = (v) => Math.max(0, Math.min(SRGB_CHANNEL_MAX, Number(v)));
+  const alpha = m[HEX_SHORT_ALPHA_LEN] !== undefined ? Math.max(0, Math.min(1, Number(m[HEX_SHORT_ALPHA_LEN]))) : 1;
+  return { r: clampCh(m[1]), g: clampCh(m[HEX_PAIR_STEP]), b: clampCh(m[HEX_SHORT_LEN]), a: alpha };
+}
+
+function parseCssColorToRgba(input) {
+  const raw = String(input || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (NAMED_CSS_COLORS[raw]) {
+    const [r, g, b, a] = NAMED_CSS_COLORS[raw];
+    return { r, g, b, a };
+  }
+  if (raw.startsWith('#')) return parseHexColorString(raw.slice(1));
+  if (raw.startsWith('rgb')) return parseRgbFuncString(raw);
+  return null;
+}
+
+function compositeOverBackdrop(fg, bg) {
+  if (fg.a >= 1) return { r: fg.r, g: fg.g, b: fg.b };
+  const inv = 1 - fg.a;
+  return { r: fg.r * fg.a + bg.r * inv, g: fg.g * fg.a + bg.g * inv, b: fg.b * fg.a + bg.b * inv };
+}
+
+function srgbToLinear(channel) {
+  const norm = channel / SRGB_CHANNEL_MAX;
+  if (norm <= SRGB_LINEAR_THRESHOLD) return norm / SRGB_LINEAR_DIVISOR;
+  return ((norm + SRGB_GAMMA_OFFSET) / SRGB_GAMMA_DIVISOR) ** SRGB_GAMMA_EXPONENT;
+}
+
+function computeRelativeLuminance(rgb) {
+  return REL_LUM_RED * srgbToLinear(rgb.r) + REL_LUM_GREEN * srgbToLinear(rgb.g) + REL_LUM_BLUE * srgbToLinear(rgb.b);
+}
+
+export function computeContrastRatio(fgHexOrRgb, bgHexOrRgb, opts = {}) {
+  const minReadableRatio = Number(opts.minReadableRatio || WCAG_MIN_READABLE_CONTRAST_RATIO), aaRatio = Number(opts.aaRatio || WCAG_AA_NORMAL_CONTRAST_RATIO);
+  const fgParsed = parseCssColorToRgba(fgHexOrRgb), bgParsed = parseCssColorToRgba(bgHexOrRgb);
+  if (!fgParsed || !bgParsed) return { valid: false, ratio: null, readable: false, severeUnreadable: false, passesAa: false, minReadableRatio, aaRatio };
+  const effectiveBg = compositeOverBackdrop(bgParsed, DEFAULT_CANVAS_RGB), effectiveFg = compositeOverBackdrop(fgParsed, effectiveBg);
+  const fgLum = computeRelativeLuminance(effectiveFg), bgLum = computeRelativeLuminance(effectiveBg);
+  const rawRatio = (Math.max(fgLum, bgLum) + CONTRAST_LUM_OFFSET) / (Math.min(fgLum, bgLum) + CONTRAST_LUM_OFFSET);
+  const ratio = Math.round(rawRatio * CONTRAST_PRECISION_FACTOR) / CONTRAST_PRECISION_FACTOR;
+  return { valid: true, ratio, readable: ratio >= minReadableRatio, severeUnreadable: ratio < minReadableRatio, passesAa: ratio >= aaRatio, minReadableRatio, aaRatio };
+}
+
+function auditInlineLowContrastStyles(src, warnings) {
+  for (const m of src.matchAll(/(?:style\s*=\s*["']([^"']+)["']|\{([^{}]{8,320})\})/gi)) {
+    const decl = m[1] || m[HEX_PAIR_STEP] || '';
+    const fgM = decl.match(/(?:^|;)\s*color\s*:\s*([^;!]+)/i);
+    const bgM = decl.match(/(?:^|;)\s*background(?:-color)?\s*:\s*([^;!]+)/i);
+    if (!fgM || !bgM) continue;
+    const bgVal = bgM[1].trim().split(/\s+/)[0];
+    const c = computeContrastRatio(fgM[1].trim(), bgVal);
+    if (c.valid && c.severeUnreadable) {
+      warnings.push(`检出严重低对比度不可读文本 (${c.ratio}:1 < ${WCAG_MIN_READABLE_CONTRAST_RATIO}:1)，疑似白底白字或黑底黑字`);
+      break;
+    }
+  }
+}
+
 export function auditHtmlAntiAiSlop(htmlText) {
   const src = String(htmlText || '');
   const warnings = [];
@@ -281,6 +371,7 @@ export function auditHtmlAntiAiSlop(htmlText) {
   if (/<button[^>]*>[\s]*(?:🚀|✨|🔥|🎉|💡)[\s]*<\/button>/u.test(src)) {
     warnings.push('检出纯 Emoji 充当按钮图标，建议替换为 SVG 矢量图标');
   }
+  auditInlineLowContrastStyles(src, warnings);
   return { pass: warnings.length === 0, warnings };
 }
 
@@ -296,35 +387,42 @@ export const UI_RUBRIC_FEW_SHOT_CALIBRATION = Object.freeze({
   badExample: '紫粉霓虹线性渐变卡片 + 纯 Emoji 按钮 + 点击后零反应的空壳按钮 + 控制台未捕获异常'
 });
 
+const RUBRIC_MAX_SCORE = 100, RUBRIC_PASS_FLOOR = 75, RUBRIC_DIM_COUNT = 4;
+const MISSING_CSS_VARS_PENALTY = 15, MISSING_SEMANTIC_PENALTY = 10, SLOP_WARNING_PENALTY = 35, MISSING_FOCUS_PENALTY = 10, MISSING_OWNER_PENALTY = 10;
+const CONSOLE_ERR_PENALTY = 25, PAGE_ERR_PENALTY = 35, HTTP_ERR_PENALTY = 20, DEAD_BTN_PENALTY = 25, LOW_CONTRAST_PENALTY = 35, VIEWPORT_OVERFLOW_PENALTY = 25;
+
+function appendRuntimeVisualWarnings(lowContrastCount, overflowCount, warnings) {
+  if (lowContrastCount > 0) warnings.push(`运行态检出 ${lowContrastCount} 处严重低对比度不可读元素 (< ${WCAG_MIN_READABLE_CONTRAST_RATIO}:1)`);
+  if (overflowCount > 0) warnings.push(`运行态检出 ${overflowCount} 处双视口横向布局溢出`);
+}
+
 export function evaluateUiAestheticsRubric(htmlText, runtime = {}) {
   const src = String(htmlText || '');
   const antiSlop = auditHtmlAntiAiSlop(src);
   const warnings = [...antiSlop.warnings];
+  const lowContrastCount = Number(runtime.lowContrastCount || 0);
+  const overflowCount = Number(runtime.overflowCount || 0);
+  appendRuntimeVisualWarnings(lowContrastCount, overflowCount, warnings);
 
   const usesCssVars = /--[a-z0-9-]+\s*:/i.test(src) || /var\(--[a-z0-9-]+\)/i.test(src);
   const hasFocusStyle = /:focus(?:-visible)?\b/i.test(src);
   const hasUiOwner = /data-ui-owner=/i.test(src);
   const hasSemanticMain = /<(?:main|header|nav|section)\b/i.test(src);
 
-  const designQuality = Math.max(0, 100 - (usesCssVars ? 0 : 15) - (hasSemanticMain ? 0 : 10));
-  const originality = Math.max(0, 100 - antiSlop.warnings.length * 35);
-  const craft = Math.max(0, 100 - (hasFocusStyle ? 0 : 10) - (hasUiOwner ? 0 : 10));
+  const cssPen = (usesCssVars ? 0 : MISSING_CSS_VARS_PENALTY) + (hasSemanticMain ? 0 : MISSING_SEMANTIC_PENALTY);
+  const designQuality = Math.max(0, RUBRIC_MAX_SCORE - cssPen - lowContrastCount * LOW_CONTRAST_PENALTY - overflowCount * VIEWPORT_OVERFLOW_PENALTY);
+  const originality = Math.max(0, RUBRIC_MAX_SCORE - antiSlop.warnings.length * SLOP_WARNING_PENALTY);
+  const craft = Math.max(0, RUBRIC_MAX_SCORE - (hasFocusStyle ? 0 : MISSING_FOCUS_PENALTY) - (hasUiOwner ? 0 : MISSING_OWNER_PENALTY));
 
-  const consoleErrs = Number(runtime.consoleErrorCount || 0);
-  const pageErrs = Number(runtime.pageErrorCount || 0);
-  const httpErrs = Number(runtime.httpErrorCount || 0);
-  const deadBtns = Number(runtime.deadButtonCount || 0);
-  const functionality = Math.max(0, 100 - consoleErrs * 25 - pageErrs * 35 - httpErrs * 20 - deadBtns * 25);
+  const runtimePenalty = Number(runtime.consoleErrorCount || 0) * CONSOLE_ERR_PENALTY +
+    Number(runtime.pageErrorCount || 0) * PAGE_ERR_PENALTY +
+    Number(runtime.httpErrorCount || 0) * HTTP_ERR_PENALTY +
+    Number(runtime.deadButtonCount || 0) * DEAD_BTN_PENALTY +
+    overflowCount * VIEWPORT_OVERFLOW_PENALTY;
+  const functionality = Math.max(0, RUBRIC_MAX_SCORE - runtimePenalty);
 
   const dimensions = { designQuality, originality, craft, functionality };
-  const totalScore = Math.round((designQuality + originality + craft + functionality) / 4);
-  const pass = antiSlop.pass && functionality >= 75 && totalScore >= 75;
-  return {
-    pass,
-    totalScore,
-    dimensions,
-    warnings,
-    antiSlopChecklist: ANTI_AI_SLOP_RULES,
-    calibration: UI_RUBRIC_FEW_SHOT_CALIBRATION
-  };
+  const totalScore = Math.round((designQuality + originality + craft + functionality) / RUBRIC_DIM_COUNT);
+  const pass = antiSlop.pass && lowContrastCount === 0 && overflowCount === 0 && functionality >= RUBRIC_PASS_FLOOR && totalScore >= RUBRIC_PASS_FLOOR;
+  return { pass, totalScore, dimensions, warnings, antiSlopChecklist: ANTI_AI_SLOP_RULES, calibration: UI_RUBRIC_FEW_SHOT_CALIBRATION };
 }

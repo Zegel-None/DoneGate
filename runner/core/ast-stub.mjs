@@ -8,6 +8,7 @@ import { maskCommentsAndStrings } from './js-mask-lexer.mjs';
 import { extractPythonExportsBalanced, pyInitHasPublicSurface } from './python-imports.mjs';
 
 export { maskCommentsAndStrings };
+export { computeSignatureChangeObligations, extractExportedSymbolFingerprints, verifyAllowedModifiedSymbols } from './ast-stub/modifies-guard.mjs';
 
 const CODE_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go']);
 const SKIP_DIRS = ['node_modules', '.git', '.donegate', '.dsh', '.deps', '.codegraph', '.stryker-tmp', 'vendor', 'dist', '_dist', 'coverage', 'reports'];

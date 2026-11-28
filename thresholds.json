@@ -54,6 +54,21 @@
       "contextWindowTokens": 1000000,
       "zeroHopSourceBudgetTokens": 160000,
       "compactDefault": false
+    },
+    "deepseek-v4.1-flash-1017": {
+      "contextWindowTokens": 1048576,
+      "zeroHopSourceBudgetTokens": 160000,
+      "compactDefault": false,
+      "preserveReasoningWithTools": true,
+      "reasoningEffortByRole": {
+        "explore": 50,
+        "implement": 75,
+        "judge": 100
+      },
+      "thinkingTokenBudget": 3072,
+      "stallRepeatWindowTokens": 20,
+      "stallRepeatMinCycles": 3,
+      "pingPongHistoryWindow": 4
     }
   },
   "autopilotLimits": {

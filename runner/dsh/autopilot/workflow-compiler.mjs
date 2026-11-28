@@ -4,7 +4,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from '../../../skill/hash.mjs';
-import { readJsonStrict } from '../../../skill/io.mjs';
+import { readJsonStrict, readMaybe } from '../../../skill/io.mjs';
 import {
   GOVERNANCE_OVERRIDES_REL,
   gdFormatIntegrityBannerText,
@@ -12,6 +12,9 @@ import {
 } from '../../core/contract.mjs';
 import { uleResolvePlaywrightModule } from '../uiboard/index.mjs';
 import { aosProbeOsSandbox } from './autopilot-os-sandbox.mjs';
+import { isPrivateNetworkAddress, validateEgressAllowlist } from './egress-allowlist-proxy.mjs';
+
+const DEFAULT_HTTPS_PORT = 443, DEFAULT_HTTP_PORT = 80;
 
 const DG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const GOVERNANCE_DEFAULTS_REL = 'workflows/defaults';
@@ -341,7 +344,7 @@ function wfcComputeWorkflowHash(baseDoc, effectiveNodes, effectiveLinks) {
     presetVersion: baseDoc.presetVersion || '1.0.0',
     nodes: effectiveNodes.map((n) => ({
       id: n.id,
-      tier: n.tier,
+      tier: n.tier || 'recommended',
       mode: n.mode || 'enforce',
       bypassed: Boolean(n.bypassed),
       activeBrick: n.activeBrick || n.tplId || '',
@@ -361,6 +364,7 @@ export function wfcCompileWorkflow(projectRoot, flowIdOrDoc, opts = {}) {
   }
   const overlay = opts.overlay !== undefined ? opts.overlay : wfcReadProjectOverlay(root, baseDoc.id);
   const coeffects = opts.coeffects || wfcProbeEnvCoeffects(root);
+  if (!wfcHasActiveOverlay(overlay)) return wfcCompileNoOverlayFastPath(baseDoc, coeffects);
   const overrideDiff = [];
   const effectiveNodes = baseDoc.nodes.map((n) => wfcApplyNodeOverlay(n, overlay, coeffects, overrideDiff));
   wfcAppendInsertedNodes(effectiveNodes, overlay, coeffects, overrideDiff);
@@ -382,6 +386,7 @@ export function wfcCompileWorkflow(projectRoot, flowIdOrDoc, opts = {}) {
     workflowHash,
     coeffects,
     customized: overrideDiff.length > 0,
+    identityPassthrough: false,
     overrideDiff,
     newOfficialNodes,
     disabledIntegrityRules,
@@ -535,4 +540,86 @@ export function wfcResetProjectOverlay(projectRoot, flowId, opts = {}) {
   const ovPath = join(root, GOVERNANCE_OVERRIDES_REL, `${safeId}.overlay.json`);
   if (existsSync(ovPath)) rmSync(ovPath, { force: true });
   return wfcCompileWorkflow(root, safeId);
+}
+
+function wfcHasActiveOverlay(overlay) {
+  if (!overlay || typeof overlay !== 'object') return false;
+  const mapKeys = ['toggleNodes', 'patchMode', 'patchConfig', 'swapBrick'];
+  if (mapKeys.some((k) => overlay[k] && Object.keys(overlay[k]).length > 0)) return true;
+  return ['insertNodes', 'patchLinks', 'seenNodeIds'].some((k) => Array.isArray(overlay[k]) && overlay[k].length > 0);
+}
+
+function wfcCompileNoOverlayFastPath(baseDoc, coeffects) {
+  let hasEnvSkip = false;
+  const nodes = baseDoc.nodes.map((n) => {
+    const co = wfcCheckNodeCoeffects(n, coeffects);
+    if (!co.skippedByEnv && !(n.tier === 'integrity' && n.mode === 'observe')) return n;
+    hasEnvSkip = true;
+    return { ...n, ...(n.tier === 'integrity' && n.mode === 'observe' ? { mode: 'enforce' } : {}), ...(co.skippedByEnv ? { envSkipped: true } : {}) };
+  });
+  const baseLinks = Array.isArray(baseDoc.links) ? baseDoc.links : [];
+  const identityPassthrough = !hasEnvSkip && Array.isArray(baseDoc.links);
+  const effectivePack = identityPassthrough ? baseDoc : { ...baseDoc, nodes, links: baseLinks };
+  return {
+    ok: true, exitCode: 0, flowId: baseDoc.id, presetVersion: baseDoc.presetVersion || '1.0.0',
+    effectivePack, workflowHash: wfcComputeWorkflowHash(baseDoc, effectivePack.nodes, baseLinks),
+    coeffects, customized: false, identityPassthrough, overrideDiff: [],
+    newOfficialNodes: [], disabledIntegrityRules: [],
+    disclosureBanner: gdFormatIntegrityBannerText({ hasDisabledIntegrity: false, count: 0, items: [] })
+  };
+}
+
+const EGRESS_URL_CALL_RE = /\b(?:fetch|got|ky|urlopen|(?:axios|undici|requests|httpx)\s*\.\s*[a-zA-Z]+|https?\s*\.\s*(?:request|get)|new\s+(?:URL|WebSocket|EventSource))\s*\(\s*(['""`])((?:https?|wss?):\/\/[^'""`\s]+)\1/g;
+const NODE_HTTP_OBJ_RE = /\b(https?)\s*\.\s*(?:request|get)\s*\(\s*\{([\s\S]{1,360}?)\}/g;
+
+function wfcStripCommentsKeepStrings(code) {
+  return String(code || '').replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => (m.startsWith('/') ? ' ' : m));
+}
+
+function wfcRecordCandidateHost(map, rawHost, rawPort, scheme, fileLabel, callKind, includeLoopback) {
+  if (!rawHost || rawHost.includes('${') || rawHost.includes('*')) return;
+  const cleanHost = rawHost.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!includeLoopback && (cleanHost === 'localhost' || cleanHost.endsWith('.localhost') || isPrivateNetworkAddress(cleanHost))) return;
+  const port = rawPort ? Number(rawPort) : ((scheme === 'http' || scheme === 'ws') ? DEFAULT_HTTP_PORT : DEFAULT_HTTPS_PORT);
+  const hostPort = `${cleanHost}:${port}`;
+  if (!validateEgressAllowlist([hostPort]).ok) return;
+  const cur = map.get(hostPort) || { hostPort, host: cleanHost, port, sources: new Set(), callKinds: new Set() };
+  cur.sources.add(fileLabel);
+  cur.callKinds.add(callKind);
+  map.set(hostPort, cur);
+}
+
+function wfcScanSingleSourceFile(fileLabel, rawCode, map, includeLoopback) {
+  const code = wfcStripCommentsKeepStrings(rawCode);
+  for (const m of code.matchAll(EGRESS_URL_CALL_RE)) {
+    try {
+      const u = new URL(m[2].split('${')[0]);
+      wfcRecordCandidateHost(map, u.hostname, u.port, u.protocol.replace(/:$/, '').toLowerCase(), fileLabel, 'url-literal', includeLoopback);
+    } catch (err) { void err; }
+  }
+  for (const m of code.matchAll(NODE_HTTP_OBJ_RE)) {
+    const hostMatch = m[2].match(/\b(?:hostname|host)\s*:\s*(['""])([^'"\s]+)\1/);
+    if (!hostMatch) continue;
+    const portMatch = m[2].match(/\bport\s*:\s*(\d{1,5})\b/);
+    const [hPart, inlinePort] = hostMatch[2].split(':');
+    wfcRecordCandidateHost(map, hPart, portMatch ? portMatch[1] : inlinePort, m[1].toLowerCase(), fileLabel, `${m[1].toLowerCase()}.request`, includeLoopback);
+  }
+}
+
+export function extractStaticEgressHostCandidates(sourceFiles = [], opts = {}) {
+  if (!Array.isArray(sourceFiles) || sourceFiles.length === 0) return { hosts: [], candidates: [], requiresHumanReview: true, fileCount: 0 };
+  const baseRoot = resolve(opts.projectRoot || process.cwd()), includeLoopback = opts.includeLoopback === true, map = new Map();
+  let fileCount = 0;
+  for (const item of sourceFiles) {
+    if (typeof item === 'string') {
+      const txt = readMaybe(resolve(baseRoot, item));
+      if (txt !== null) { fileCount++; wfcScanSingleSourceFile(item, txt, map, includeLoopback); }
+    } else if (item && typeof item === 'object') {
+      fileCount++;
+      wfcScanSingleSourceFile(String(item.path || item.file || `inline-${fileCount}`), String(item.content ?? item.code ?? item.source ?? ''), map, includeLoopback);
+    }
+  }
+  const candidates = [...map.values()].sort((a, b) => a.hostPort.localeCompare(b.hostPort))
+    .map((c) => ({ hostPort: c.hostPort, host: c.host, port: c.port, sources: [...c.sources].sort(), callKinds: [...c.callKinds].sort() }));
+  return { hosts: candidates.map((c) => c.hostPort), candidates, requiresHumanReview: true, fileCount };
 }

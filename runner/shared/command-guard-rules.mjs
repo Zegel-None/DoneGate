@@ -1,18 +1,36 @@
-// L0 宿主工具层 Shell 命令安全审计原语（拦截 --no-verify 绕钩子、保护控制信道与禁 AI 代签人类命令，<= 195 行）
+// L0 宿主工具层 Shell 命令安全审计原语（CaMeL 污点汇点阻断、FORK 双模拒绝回执与控制信道守卫，<= 280 行）
+import { isUntrustedTainted } from './untrusted-envelope.mjs';
 
 export const FORBIDDEN_AGENT_MCP_MUTATIONS = Object.freeze(['freeze', 'promote', 'verify-apply', 'retire', 'overlay-confirm']);
+export const OPAQUE_GUARD_REFUSAL = '[GUARD_BLOCKED: Policy violation]';
 
+const MAX_SHELL_WRAPPER_DEPTH = 2;
+const MIN_WRAPPER_TOKENS = 3;
 const CGR_GIT_VALUE_FLAGS = new Set(['-m', '--message', '-F', '--file', '--author', '--date', '-c', '-C', '--cleanup', '--pathspec-from-file']);
 const CGR_HOOK_SUBCMDS = new Set(['commit', 'merge', 'cherry-pick', 'rebase', 'am', 'push']);
 const CGR_SHELL_BINS = new Set(['sh', 'bash', 'zsh', 'pwsh', 'powershell', 'powershell.exe', 'pwsh.exe', 'cmd', 'cmd.exe']);
 const CGR_DELETE_BINS = new Set(['rm', 'del', 'erase', 'rmdir', 'mv', 'move', 'remove-item', 'move-item']);
 const CGR_CTRL_BINS = new Set(['rm', 'del', 'erase', 'rmdir', 'unlink', 'mv', 'move', 'ren', 'rename', 'cp', 'copy', 'touch', 'truncate', 'tee', 'dd', 'shred', 'remove-item', 'move-item', 'rename-item', 'copy-item', 'set-content', 'add-content', 'out-file', 'clear-content', 'new-item']);
 const CGR_RUNTIMES = new Set(['node', 'node.exe', 'nodejs', 'python', 'python3', 'py', 'ruby', 'perl', 'deno', 'bun']);
+const CGR_TAINT_EXFIL_BINS = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'rsync', 'nc', 'ncat', 'netcat', 'telnet', 'ftp', 'invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm']);
+const CGR_TAINT_MUTATION_BINS = new Set(['rm', 'del', 'erase', 'rmdir', 'shred', 'unlink', 'remove-item', 'chmod', 'chown', 'icacls']);
+const CGR_TAINT_EXEC_BINS = new Set(['eval', 'exec', 'source']);
+const CGR_GIT_TAINT_SUBCMDS = new Set(['push', 'remote', 'send-email']);
+const CGR_INLINE_EVAL_FLAGS = new Set(['-e', '--eval', '-c', '/c', '-command']);
 const CGR_LEDGER_SENSITIVE_RE = /\.donegate[\\/](?:chain\.jsonl|evidence\b|stubs[\\/][^"'\s]*\.frozen\.json)/i;
 const CGR_CTRL_RE = /(?:^|[\\/"'\s=])\.donegate[\\/](?:STOP|STEER\.md|guard-events\.jsonl)(?:$|["'\s\\/])/i;
 const CGR_CTRL_TOK_RE = /(?:^|[\\/])\.donegate[\\/](?:STOP|STEER\.md|guard-events\.jsonl)$/i;
 const CGR_WRITE_OPS_RE = /(?:>>?|<<|\b(?:tee|cp|copy|mv|move|rm|del|remove-item|set-content|add-content|out-file|clear-content)\b)/i;
 const CGR_FS_API_RE = /\b(?:rmSync|unlinkSync|unlink|writeFileSync|writeFile|appendFileSync|appendFile|truncateSync|truncate|renameSync|rename|copyFileSync|createWriteStream|remove|rmtree|write_text|write_bytes)\b/i;
+
+const CGR_SAFE_RECIPE_BY_CODE = Object.freeze({
+  HOOK_BYPASS_DENIED: '移除 --no-verify / -n 标志，先运行 node runner/donegate.mjs lint-edit 修复报错再正常提交',
+  HUMAN_AUTHORITY_DENIED: '改用只读诊断命令 node runner/donegate.mjs status，将签字确认命令交由业主在终端执行',
+  CONTROL_CHANNEL_TAMPER_DENIED: '保持 .donegate 控制信道文件只读，通过标准 CLI 命令查看运行状态',
+  TAINTED_COMMAND_SINK_DENIED: '剥离外源不可信参数后改用受控本地只读文件解析，严禁将外源输入拼入网络或执行命令',
+  UNTRUSTED_GOAL_DRIFT_DETECTED: '停止执行偏离契约范围的敏感操作，严格回到初始契约声明的文件范围内修补'
+});
+const DEFAULT_SAFE_RECIPE = '请改用契约白名单内的本地确定性只读校验命令';
 
 export function isForbiddenAgentMcpMutation(subcmd) {
   const n = String(subcmd || '').trim().toLowerCase().replace(/^(?:mcp__donegate__|donegate[_-]|dg[_-])/, '').replace(/[_\s]+/g, '-');
@@ -43,10 +61,19 @@ function cgrStripQuotedText(seg) {
   return String(seg || '').replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, '""');
 }
 
+function cgrNormalizeBinName(rawTok) {
+  return String(rawTok || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+}
+
+function cgrSkipLeadingEnvVars(tokens) {
+  let idx = 0;
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx].unquoted)) idx++;
+  return idx;
+}
+
 function cgrExtractGitCommandHead(tokens) {
-  let start = 0;
-  while (start < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[start].unquoted)) start++;
-  const bin = (tokens[start]?.unquoted || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+  const start = cgrSkipLeadingEnvVars(tokens);
+  const bin = cgrNormalizeBinName(tokens[start]?.unquoted);
   if (bin !== 'git' && bin !== 'git.exe') return null;
 
   for (let i = start + 1; i < tokens.length; i++) {
@@ -140,7 +167,7 @@ function cgrHitsControlChannel(seg, tokens, firstBin) {
 }
 
 function cgrAuditHooksAndLedgerTamper(seg, tokens) {
-  const firstBin = (tokens[0]?.unquoted || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+  const firstBin = cgrNormalizeBinName(tokens[0]?.unquoted);
   if (CGR_DELETE_BINS.has(firstBin) && tokens.some((t) => /(?:^|[\\/])\.githooks(?:[\\/]|$)/i.test(t.unquoted))) {
     return { allowed: false, code: 'HOOK_BYPASS_DENIED', reason: '严禁删除或移走 .githooks 守门钩子目录及脚本' };
   }
@@ -153,29 +180,98 @@ function cgrAuditHooksAndLedgerTamper(seg, tokens) {
   return null;
 }
 
-function cgrAuditNestedShellWrapper(tokens, depth) {
-  if (depth >= 2 || tokens.length < 3) return null;
-  const firstBin = (tokens[0]?.unquoted || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+function cgrAuditNestedShellWrapper(tokens, depth, opts) {
+  if (depth >= MAX_SHELL_WRAPPER_DEPTH || tokens.length < MIN_WRAPPER_TOKENS) return null;
+  const firstBin = cgrNormalizeBinName(tokens[0]?.unquoted);
   if (!CGR_SHELL_BINS.has(firstBin)) return null;
   for (let i = 1; i < tokens.length - 1; i++) {
     const flag = tokens[i].unquoted.toLowerCase();
     if (flag === '-c' || flag === '/c' || flag === '-command') {
-      return auditAgentShellCommand(tokens[i + 1].unquoted, depth + 1);
+      return auditAgentShellCommand(tokens[i + 1].unquoted, depth + 1, opts);
     }
   }
   return null;
 }
 
-export function auditAgentShellCommand(cmdLine, depth = 0) {
+function cgrClassifyDangerousSink(tokens) {
+  const start = cgrSkipLeadingEnvVars(tokens);
+  if (start >= tokens.length) return null;
+  const bin = cgrNormalizeBinName(tokens[start].unquoted).replace(/\.exe$/i, '');
+  if (CGR_TAINT_EXFIL_BINS.has(bin) || CGR_TAINT_MUTATION_BINS.has(bin) || CGR_TAINT_EXEC_BINS.has(bin)) return bin;
+  if (bin === 'git') {
+    const gitHead = cgrExtractGitCommandHead(tokens);
+    return gitHead?.sub && CGR_GIT_TAINT_SUBCMDS.has(gitHead.sub) ? `git ${gitHead.sub}` : null;
+  }
+  if (!CGR_RUNTIMES.has(bin) && !CGR_SHELL_BINS.has(bin)) return null;
+  const tail = tokens.slice(start + 1).map((t) => t.unquoted.toLowerCase());
+  if (bin === 'deno' && tail.includes('eval')) return 'deno eval';
+  const hitFlag = tail.find((f) => CGR_INLINE_EVAL_FLAGS.has(f) || /^--eval=/.test(f));
+  return hitFlag ? `${bin} ${hitFlag.startsWith('--eval=') ? '--eval' : hitFlag}` : null;
+}
+
+function cgrNormalizeTaintEntries(taintMeta) {
+  const rawList = Array.isArray(taintMeta) ? taintMeta : [taintMeta];
+  return rawList
+    .filter((item) => isUntrustedTainted(item))
+    .map((item) => (item.untrusted === true ? item : item.meta));
+}
+
+function cgrIsSinkExplicitlyAllowed(sink, taintEntries) {
+  const normSink = sink.toLowerCase();
+  const baseBin = normSink.split(' ')[0];
+  return taintEntries.every((entry) => {
+    const allowed = Array.isArray(entry.allowedSinks) ? entry.allowedSinks.map((x) => String(x).toLowerCase()) : [];
+    return allowed.includes(normSink) || allowed.includes(baseBin);
+  });
+}
+
+export function evaluateTaintedCommandSink(command, taintMeta) {
+  const taintEntries = cgrNormalizeTaintEntries(taintMeta);
+  const text = String(command || '').trim();
+  if (!text || taintEntries.length === 0) return { allowed: true, sink: null, source: null };
+
+  const primarySource = String(taintEntries[0].source || 'external');
+  for (const seg of splitShellSegments(text)) {
+    const tokens = cgrTokenizeSegment(seg);
+    const sink = cgrClassifyDangerousSink(tokens);
+    if (sink && !cgrIsSinkExplicitlyAllowed(sink, taintEntries)) {
+      return {
+        allowed: false,
+        code: 'TAINTED_COMMAND_SINK_DENIED',
+        sink,
+        source: primarySource,
+        reason: `CaMeL 污点汇点阻断：外源不可信污点 (${primarySource}) 严禁流入高危命令汇点「${sink}」`
+      };
+    }
+  }
+  return { allowed: true, sink: null, source: primarySource };
+}
+
+export function formatGuardRefusalReceipt(violation, opts = {}) {
+  if (!violation || violation.allowed === true) return '';
+  if (opts.hasUntrustedInput === true || isUntrustedTainted(opts.taintMeta)) {
+    return OPAQUE_GUARD_REFUSAL;
+  }
+  const code = String(violation.code || violation.reasonCode || 'POLICY_VIOLATION');
+  const reason = String(violation.reason || '触发宿主安全守卫拦截规则');
+  const recipe = String(violation.remediation || CGR_SAFE_RECIPE_BY_CODE[code] || DEFAULT_SAFE_RECIPE);
+  return `[GUARD_BLOCKED: ${code}] ${reason} | 安全替代配方：${recipe}`;
+}
+
+export function auditAgentShellCommand(cmdLine, depth = 0, opts = {}) {
   const text = String(cmdLine || '').trim();
   if (!text) return { allowed: true };
+  if (opts?.taintMeta) {
+    const taintRes = evaluateTaintedCommandSink(text, opts.taintMeta);
+    if (!taintRes.allowed) return taintRes;
+  }
   for (const seg of splitShellSegments(text)) {
     const tokens = cgrTokenizeSegment(seg);
     if (tokens.length === 0) continue;
     const hit = cgrAuditGitSegment(tokens)
       || cgrAuditDoneGateHumanCli(tokens)
       || cgrAuditHooksAndLedgerTamper(seg, tokens)
-      || cgrAuditNestedShellWrapper(tokens, depth);
+      || cgrAuditNestedShellWrapper(tokens, depth, opts);
     if (hit && !hit.allowed) return hit;
   }
   return { allowed: true };

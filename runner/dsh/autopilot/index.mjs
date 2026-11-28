@@ -22,12 +22,20 @@ export {
 export { planCampaignExecutionStrategy } from './campaign-routing.mjs';
 export { cmdGovernanceFlow } from './governance-flow-cli.mjs';
 export {
-  GOVERNANCE_SEAM_CATALOG, WFC_BRICK_EXEC_MAP, wfcCompileWorkflow, wfcConfirmProposal,
-  wfcCreateProposal, wfcListDefaultWorkflows, wfcListPendingProposals,
-  wfcProbeEnvCoeffects, wfcResetProjectOverlay, wfcSaveProjectOverlay
+  GOVERNANCE_SEAM_CATALOG, WFC_BRICK_EXEC_MAP, extractStaticEgressHostCandidates,
+  wfcCompileWorkflow, wfcConfirmProposal, wfcCreateProposal, wfcListDefaultWorkflows,
+  wfcListPendingProposals, wfcProbeEnvCoeffects, wfcResetProjectOverlay, wfcSaveProjectOverlay
 } from './workflow-compiler.mjs';
 export {
-  tlComputeRestrainedSuggestions, tlDismissSuggestion,
+  evaluateGateRuleUnhelpfulLedger, tlComputeRestrainedSuggestions, tlDismissSuggestion,
   tlLoadTrustLedger, tlRecordEscapeRelapse, tlRecordRuleOutcomes
 } from './trust-ladder.mjs';
+export {
+  computeGovernancePolicyDigest, evaluateInFlightPolicyEffects,
+  runAutopilotGcWithPolicySweep, verifyMonotonicPolicyOverlay
+} from './policy-effects.mjs';
+export {
+  buildPrivateNetworkBlockList, createStreamingCredentialSubstitutor,
+  isEgressTargetAllowed, isPrivateNetworkAddress, startEgressAllowlistProxy, validateEgressAllowlist
+} from './egress-allowlist-proxy.mjs';
 export { gtApplyPersonalTemplate, gtListPersonalTemplates, gtSavePersonalTemplate } from './governance-templates.mjs';

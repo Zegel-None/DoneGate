@@ -1,9 +1,13 @@
-// OpenAI Codex CLI 原生宿主适配器（config.toml MCP + 官方 Schema hooks.json + 技能与网络通配符校验，L5，<= 115 行）
+// OpenAI Codex CLI 原生宿主适配器（config.toml MCP + hooks.json + STEER 热纠偏与网络校验，L5，<= 130 行）
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { validateHarnessAdapter } from './protocol.mjs';
-import { HARNESS_SKILL_DIRS, buildAntigravityMcpConfig, formatHarnessDetection, hasManagedHooksReady, installHarnessSkills, pruneEmptyDir, readJsonObjectSafe, syncManagedHooksConfig, uninstallHarnessSkills } from './antigravity-assets.mjs';
+import { HARNESS_SKILL_DIRS, appendLiveSteerTail as appendSharedSteerTail, buildAntigravityMcpConfig, formatHarnessDetection, hasManagedHooksReady, installHarnessSkills, pruneEmptyDir, readJsonObjectSafe, syncManagedHooksConfig, uninstallHarnessSkills } from './antigravity-assets.mjs';
+
+export function appendLiveSteerTail(projectRoot, baseInput = '', opts = {}) {
+  return appendSharedSteerTail(projectRoot, baseInput, { ...opts, host: 'codex' });
+}
 
 const TOML_START = '# >>> donegate-managed-start >>>';
 const TOML_END = '# <<< donegate-managed-end <<<';
@@ -65,7 +69,10 @@ export const codexHarnessAdapter = validateHarnessAdapter({
   displayName: 'OpenAI Codex CLI',
   description: 'OpenAI Codex CLI 原生宿主适配器：生成官方 Schema hooks.json、挂载 config.toml [mcp_servers.donegate]、部署三套技能与网络规则校验。',
   implemented: true,
-  capabilities: ['mcp-require-root', 'lifecycle-hooks', 'skills', 'network-policy-guard'],
+  capabilities: ['mcp-require-root', 'lifecycle-hooks', 'skills', 'network-policy-guard', 'live-steer-tail'],
+  appendLiveSteerTail(projectRoot, baseInput = '', opts = {}) {
+    return appendLiveSteerTail(projectRoot, baseInput, opts);
+  },
   detect(opts = {}) {
     const codexDir = resolveCodexConfigRoot(opts);
     return formatHarnessDetection(inspectCodex(codexDir).installed, existsSync(codexDir), codexDir, '未检测到 ~/.codex');

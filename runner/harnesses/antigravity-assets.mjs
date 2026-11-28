@@ -1,5 +1,5 @@
-// Antigravity / Claude / Codex 共享插件清单、MCP 配置、随身守护钩子脚本与多宿主公共原语（<= 405 行）
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+// Antigravity / Claude / Codex 共享插件清单、MCP 配置、随身守护钩子脚本与多宿主公共原语（<= 435 行）
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { walk } from '../../skill/fs-walk.mjs';
@@ -393,4 +393,35 @@ export function installHarnessSkills(donegateRoot, skillsParentDir, linkBoundary
 
 export function uninstallHarnessSkills(skillsParentDir) {
   for (const name of HARNESS_SKILL_DIRS) rmSync(join(skillsParentDir, name), { recursive: true, force: true });
+}
+
+function consumeLiveSteerFile(rootAbs, steerPath, rawDirective, host) {
+  try {
+    rmSync(steerPath, { force: true });
+    const histPath = join(rootAbs, '.donegate', 'steer-history.jsonl');
+    mkdirSync(dirname(histPath), { recursive: true });
+    appendFileSync(histPath, JSON.stringify({ at: new Date().toISOString(), host: host || 'generic', directive: rawDirective }) + '\n', 'utf8');
+  } catch (err) { void err; }
+}
+
+function concatPrefixAndSteerTail(baseText, tailBlock) {
+  const baseStr = String(baseText ?? '');
+  const sep = baseStr.length === 0 ? '' : (baseStr.endsWith('\n') ? '\n' : '\n\n');
+  return `${baseStr}${sep}${tailBlock}\n`;
+}
+
+export function appendLiveSteerTail(projectRoot, baseInput = '', opts = {}) {
+  if (!projectRoot) return baseInput;
+  const rootAbs = resolve(projectRoot), steerPath = join(rootAbs, '.donegate', 'STEER.md');
+  if (!existsSync(steerPath)) return baseInput;
+  let rawDirective = '';
+  try { rawDirective = readFileSync(steerPath, 'utf8').trim(); } catch (err) { void err; return baseInput; }
+  if (!rawDirective) return baseInput;
+  if (opts.consume === true) consumeLiveSteerFile(rootAbs, steerPath, rawDirective, opts.host);
+  const spilled = maybeSpillHookOutput(rootAbs, rawDirective, { charBudget: Number(opts.charBudget) || 0 }).output;
+  const hostTag = opts.host ? ` [${opts.host}]` : '';
+  const tailBlock = `## [DoneGate 热纠偏指令 (.donegate/STEER.md)${hostTag}]\n${spilled}`;
+  if (!Array.isArray(baseInput)) return concatPrefixAndSteerTail(baseInput, tailBlock);
+  if (baseInput.length === 0) return [tailBlock];
+  return [...baseInput.slice(0, -1), concatPrefixAndSteerTail(baseInput[baseInput.length - 1], tailBlock)];
 }

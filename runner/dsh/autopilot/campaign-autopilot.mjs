@@ -12,7 +12,13 @@ import { DEFAULT_EGRESS_IDLE_TIMEOUT_MS, startEgressAllowlistProxy, validateEgre
 import { assignComponentWorkflow } from './workflow-jit.mjs';
 import { collectGitDiffStats, executeDeterministicWorkflowRun, getRunEventHub } from './workflow-runner.mjs';
 import { buildMicroVerdictCard } from './quote-protocol.mjs';
-import { planCampaignExecutionStrategy } from './campaign-routing.mjs';
+import { crLoadAutopilotLimits, planCampaignExecutionStrategy } from './campaign-routing.mjs';
+import { runAutopilotGcAudit } from './autopilot-gc.mjs';
+import {
+  captureGitWorkingTreeSha, evaluateAndApplyRatchetStep,
+  formatRejectedPatchesHandoff, loadRejectedPatchesLedger
+} from './ratchet-selector.mjs';
+import { projectCampaignSessionState, reconcileAutopilotWorktreesAndPids } from './session-reconciler.mjs';
 
 function campTopoIsActiveNode(n) {
   if (!n || !n.id) return false;
@@ -144,13 +150,93 @@ function campRunNodePreFlightPlug(cwd, nodeExec, sandboxPlan) {
   return { ok: true };
 }
 
-function campWrapSubAgentHook(rawAgentHook, sandboxPlan, activeProxyUrl) {
-  if (typeof rawAgentHook !== 'function') return undefined;
-  return async (stepArgs) => rawAgentHook({
-    ...stepArgs,
-    env: sandboxPlan.env,
-    sandbox: { mode: sandboxPlan.mode, egressMode: sandboxPlan.egressMode, proxyUrl: activeProxyUrl || null, policyPath: sandboxPlan.policyPath || null }
+function campMaybeSettleIntraLoopRatchet(ratchetCtx, stepArgs) {
+  if (!ratchetCtx || Number(stepArgs.round || 1) <= 1 || ratchetCtx.attemptRound > 1) return;
+  const touched = collectGitDiffStats(ratchetCtx.effectiveCwd).files.filter((f) => !ratchetCtx.baseSet.has(f));
+  evaluateAndApplyRatchetStep({
+    projectRoot: ratchetCtx.root, campaignId: ratchetCtx.campaignId, componentId: ratchetCtx.compId,
+    workCwd: ratchetCtx.effectiveCwd, ratchet: ratchetCtx.ratchet, round: stepArgs.round - 1,
+    touchedFiles: touched, subOut: { ok: false, handoff: stepArgs.handoff || '' }
   });
+}
+
+function campWrapSubAgentHook(rawAgentHook, sandboxPlan, activeProxyUrl, ratchetCtx = null) {
+  if (typeof rawAgentHook !== 'function') return undefined;
+  return async (stepArgs) => {
+    campMaybeSettleIntraLoopRatchet(ratchetCtx, stepArgs);
+    const ledger = ratchetCtx ? loadRejectedPatchesLedger(ratchetCtx.root, ratchetCtx.campaignId) : null;
+    const compEntries = ledger ? ledger.entries.filter((e) => e.componentId === ratchetCtx.compId) : [];
+    const mergedHandoff = [stepArgs.handoff || '', ratchetCtx?.attemptHandoff || '', formatRejectedPatchesHandoff(compEntries)].filter(Boolean).join('\n\n');
+    return rawAgentHook({
+      ...stepArgs,
+      round: ratchetCtx && ratchetCtx.attemptRound > 1 ? ratchetCtx.attemptRound : stepArgs.round,
+      handoff: mergedHandoff,
+      rejectedPatches: compEntries,
+      bestTreeSha: ratchetCtx?.ratchet?.bestTreeSha || null,
+      bestPassedGates: ratchetCtx?.ratchet?.bestPassedGates ?? 0,
+      env: sandboxPlan.env,
+      sandbox: { mode: sandboxPlan.mode, egressMode: sandboxPlan.egressMode, proxyUrl: activeProxyUrl || null, policyPath: sandboxPlan.policyPath || null }
+    });
+  };
+}
+
+function campResolveComponentRetryBudget(root, spec, comp, pack, rawAgentHook) {
+  if (typeof rawAgentHook !== 'function') return 1;
+  const hasInternalLoop = Array.isArray(pack?.links) && pack.links.some((lk) => Number(lk?.maxLoops) > 0);
+  const explicitRetries = comp?.maxSelfHealRounds ?? spec?.maxSelfHealRounds;
+  if (hasInternalLoop && explicitRetries === undefined) return 1;
+  const healRounds = Number(explicitRetries ?? crLoadAutopilotLimits(root).maxSelfHealRounds);
+  return 1 + (Number.isFinite(healRounds) && healRounds >= 0 ? Math.floor(healRounds) : 0);
+}
+
+function campBuildComponentTicket(comp, binding, effectiveCwd, sbPlan, activeProxyUrl, runIdForAttempt) {
+  return {
+    ticketId: runIdForAttempt, targetUri: `dg://sandbox/card/${encodeURIComponent(comp.id)}`,
+    headline: `组件「${comp.title}」(${binding.baseMacroName || binding.mode})`, worktreePath: effectiveCwd,
+    mandate: { allowedWriteScopes: Array.isArray(comp.scopePaths) ? comp.scopePaths : [] },
+    sandbox: { mode: sbPlan.mode, egressMode: sbPlan.egressMode, proxyUrl: activeProxyUrl || null }
+  };
+}
+
+function campIsHardStopOutcome(subOut) {
+  return Boolean(subOut.suspended || subOut.code === 'WRITE_SCOPE_VIOLATION' || subOut.code === 'DIRTY_WORKTREE_FAULT');
+}
+
+function campShouldStopComponentRetries(subOut, ratchet) {
+  if (subOut.ok || campIsHardStopOutcome(subOut)) return true;
+  return subOut.exitCode >= 2 && !ratchet.lastRollback;
+}
+
+function campFormatAttemptFailureHandoff(subOut) {
+  if (subOut.reason) return subOut.reason;
+  return (subOut.failedNodes || []).map((n) => `${n.title}: ${n.humanReason}`).join('；');
+}
+
+async function campRunComponentWithRatchet(ctx, comp, binding, effectiveCwd, subRunId, sbPlan, isResumingHere) {
+  const { root, campaignId, existing, spec, hooks, activeProxyUrl } = ctx;
+  const subHookMap = (hooks.componentHooks && hooks.componentHooks[comp.id]) || hooks;
+  const baselineFiles = collectGitDiffStats(effectiveCwd).files;
+  const baseSet = new Set(baselineFiles);
+  const ratchet = { bestTreeSha: captureGitWorkingTreeSha(effectiveCwd), bestPassedGates: Number(comp.baselinePassedGates ?? 0), rollbacks: 0, lastRollback: null };
+  const maxAttempts = isResumingHere ? 1 : campResolveComponentRetryBudget(root, spec, comp, binding.pack, subHookMap.runAgentStep);
+  let subOut = null, attemptHandoff = '';
+
+  const useCacheFirst = spec.useFingerprintCache !== false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const ticket = campBuildComponentTicket(comp, binding, effectiveCwd, sbPlan, activeProxyUrl, attempt === 1 ? subRunId : `${subRunId}-r${attempt}`);
+    const ratchetCtx = { root, campaignId, compId: comp.id, effectiveCwd, baseSet, ratchet, attemptRound: attempt, attemptHandoff };
+    subOut = await executeDeterministicWorkflowRun(root, ticket, binding.pack, {
+      resumeRunId: isResumingHere ? existing.suspendedSubRunId : null, useWorktreeSandbox: false,
+      useFingerprintCache: useCacheFirst && attempt === 1, enforceDeps: spec.enforceDeps, baselineTouchedFiles: baselineFiles,
+      runAgentStep: campWrapSubAgentHook(subHookMap.runAgentStep, sbPlan, activeProxyUrl, ratchetCtx)
+    });
+    if (campIsHardStopOutcome(subOut)) break;
+    const touchedNow = collectGitDiffStats(effectiveCwd).files.filter((f) => !baseSet.has(f));
+    evaluateAndApplyRatchetStep({ projectRoot: root, campaignId, componentId: comp.id, workCwd: effectiveCwd, ratchet, round: attempt, touchedFiles: touchedNow, subOut });
+    if (campShouldStopComponentRetries(subOut, ratchet)) break;
+    attemptHandoff = campFormatAttemptFailureHandoff(subOut);
+  }
+  return { subOut: { ...subOut, ratchet }, ratchet };
 }
 
 async function runSingleCampaignComponent(ctx, comp) {
@@ -194,20 +280,8 @@ async function runSingleCampaignComponent(ctx, comp) {
     hub.emit({ type: 'jit_workflow_updated', nodeId: comp.id, binding });
   }
   hub.emit({ type: 'node_enter', nodeId: comp.id, title: comp.title, campaignId, sandbox: nodeExec.sandbox, osSandboxMode: sbPlan.mode, egressMode: sbPlan.egressMode });
-  const baselineFiles = collectGitDiffStats(effectiveCwd).files;
-  const ticket = {
-    ticketId: subRunId, targetUri: `dg://sandbox/card/${encodeURIComponent(comp.id)}`,
-    headline: `组件「${comp.title}」(${binding.baseMacroName || binding.mode})`, worktreePath: effectiveCwd,
-    mandate: { allowedWriteScopes: Array.isArray(comp.scopePaths) ? comp.scopePaths : [] },
-    sandbox: { mode: sbPlan.mode, egressMode: sbPlan.egressMode, proxyUrl: activeProxyUrl || null }
-  };
-  const subHookMap = (hooks.componentHooks && hooks.componentHooks[comp.id]) || hooks;
-  const subOut = await executeDeterministicWorkflowRun(root, ticket, binding.pack, {
-    resumeRunId: isResumingHere ? existing.suspendedSubRunId : null, useWorktreeSandbox: false,
-    useFingerprintCache: spec.useFingerprintCache !== false, enforceDeps: spec.enforceDeps,
-    baselineTouchedFiles: baselineFiles, runAgentStep: campWrapSubAgentHook(subHookMap.runAgentStep, sbPlan, activeProxyUrl)
-  });
-  return { binding, subOut, sandboxUsed: nodeExec.sandbox, osSandboxMode: sbPlan.mode, egressMode: sbPlan.egressMode, effectiveCwd };
+  const { subOut, ratchet } = await campRunComponentWithRatchet(ctx, comp, binding, effectiveCwd, subRunId, sbPlan, isResumingHere);
+  return { binding, subOut, ratchet, sandboxUsed: nodeExec.sandbox, osSandboxMode: sbPlan.mode, egressMode: sbPlan.egressMode, effectiveCwd };
 }
 
 function campResolveInitialInputs(root, spec, hooks, existing) {
@@ -242,7 +316,7 @@ function campInitRunState(root, hub, spec, hooks, existing, inputs) {
   return {
     root, hub, campaignId, rawNodes, rawLinks, ordered, orderedIds: ordered.map((x) => x.id),
     toolsOpt, sharedExtOpt, executionPlan, wtInfo, workCwd, existing, spec, hooks, bindingsByNode,
-    activeProxyUrl: spec.proxyUrl || null,
+    activeProxyUrl: spec.proxyUrl || null, sessionEvents: [], reconciliation: spec.reconciliationResult || null,
     completedComponentIds: new Set(existing?.completedComponentIds || []),
     approvedOperatorNodes: new Set([...(existing?.approvedOperatorNodes || []), ...(spec.approvedOperatorNodes || [])]),
     componentReports: Array.isArray(existing?.componentReports) ? [...existing.componentReports] : [],
@@ -272,8 +346,10 @@ function campHandleFatalAssign(st, comp, fatalAssign) {
 }
 
 function campHandleSuspendedComponent(st, comp, subOut) {
+  st.hub.emit({ type: 'campaign_suspended', campaignId: st.campaignId, nodeId: comp.id });
+  const sessionProjection = projectCampaignSessionState(st.sessionEvents);
   const campState = saveCampaignState(st.root, {
-    ...campBuildSharedStateSnapshot(st), state: 'SUSPENDED_HUMAN_GATE', executionPlan: st.executionPlan,
+    ...campBuildSharedStateSnapshot(st), state: 'SUSPENDED_HUMAN_GATE', activePid: null, sessionProjection, executionPlan: st.executionPlan,
     suspendedComponentId: comp.id, suspendedComponentTitle: comp.title, suspendedSubRunId: subOut.runId,
     pendingHumanGate: subOut.pendingHumanGate, sandboxWorktree: finalizeAutopilotWorktree(st.root, st.wtInfo, 'SUSPENDED', st.campaignId),
     totalPassedGates: st.totalPassedGates, totalGates: st.totalGates
@@ -281,14 +357,16 @@ function campHandleSuspendedComponent(st, comp, subOut) {
   return {
     ok: true, suspended: true, exitCode: 0, campaignId: st.campaignId, state: campState.state,
     executionPlan: st.executionPlan, suspendedComponentId: comp.id, suspendedSubRunId: subOut.runId,
-    pendingHumanGate: subOut.pendingHumanGate, sandboxWorktree: campState.sandboxWorktree, campaign: campState
+    pendingHumanGate: subOut.pendingHumanGate, sandboxWorktree: campState.sandboxWorktree, sessionProjection, reconciliation: st.reconciliation, campaign: campState
   };
 }
 
 function campHandleFailedComponent(st, comp, subOut) {
+  st.hub.emit({ type: 'campaign_failed', campaignId: st.campaignId, failedComponentId: comp.id });
+  const sessionProjection = projectCampaignSessionState(st.sessionEvents);
   const quarantined = finalizeAutopilotWorktree(st.root, st.wtInfo, 'ABORTED', st.campaignId);
   const campState = saveCampaignState(st.root, {
-    ...campBuildSharedStateSnapshot(st), state: 'ABORTED_BREAKER', failedComponentId: comp.id, failedComponentTitle: comp.title,
+    ...campBuildSharedStateSnapshot(st), state: 'ABORTED_BREAKER', activePid: null, sessionProjection, failedComponentId: comp.id, failedComponentTitle: comp.title,
     code: subOut.code || 'COMPONENT_FAILED', reason: subOut.reason || subOut.breaker?.reason || `组件「${comp.title}」未通过工作流门禁`,
     sandboxWorktree: quarantined
   });
@@ -296,7 +374,7 @@ function campHandleFailedComponent(st, comp, subOut) {
     ok: false, exitCode: subOut.exitCode || 1, code: campState.code, reasonCode: subOut.reasonCode || null,
     verdictState: subOut.verdictState || null, reason: campState.reason,
     campaignId: st.campaignId, failedComponentId: comp.id, componentReports: st.componentReports,
-    sandboxWorktree: quarantined, campaign: campState
+    sandboxWorktree: quarantined, sessionProjection, reconciliation: st.reconciliation, campaign: campState
   };
 }
 
@@ -315,7 +393,9 @@ function campRecordSettledComponent(st, comp, step) {
     runId: subOut.runId, ok: Boolean(subOut.ok), exitCode: subOut.exitCode,
     verdictState: subOut.verdictState || denialCls?.state || (subOut.ok ? 'pass' : 'fail'),
     reasonCode: subOut.reasonCode || denialCls?.reasonCode || null,
-    code: subOut.code || null, reason: rawDiag || null
+    code: subOut.code || null, reason: rawDiag || null,
+    bestTreeSha: step.ratchet?.bestTreeSha || null, bestPassedGates: step.ratchet?.bestPassedGates ?? 0,
+    ratchetRollbacks: step.ratchet?.rollbacks || 0
   });
 }
 
@@ -325,11 +405,12 @@ function campFinalizeCompletedCampaign(st, egressSummary) {
   const hostDiff = (st.wtInfo.ok && hostUsed) ? collectGitDiffStats(st.root) : { files: [], added: 0, removed: 0 };
   const finalDiff = { files: [...new Set([...wtDiff.files, ...hostDiff.files])], added: wtDiff.added + hostDiff.added, removed: wtDiff.removed + hostDiff.removed };
   const finalizedWt = finalizeAutopilotWorktree(st.root, st.wtInfo, 'COMPLETED', st.campaignId);
+  const gcReport = st.spec?.runGcOnComplete ? runAutopilotGcAudit(st.root, st.spec.gcOptions || {}) : null;
   const campState = saveCampaignState(st.root, {
     campaignId: st.campaignId, state: 'COMPLETED', orderedIds: st.orderedIds,
     completedComponentIds: [...st.completedComponentIds], componentReports: st.componentReports,
     sandboxWorktree: finalizedWt, totalCacheHits: st.totalCacheHits,
-    totalPassedGates: st.totalPassedGates, totalGates: st.totalGates, executionPlan: st.executionPlan
+    totalPassedGates: st.totalPassedGates, totalGates: st.totalGates, executionPlan: st.executionPlan, gcReport
   });
   const summaryCard = buildMicroVerdictCard({
     ticketId: st.campaignId, targetUri: null, exitCode: 0, headline: `项目全看板 ${st.ordered.length} 个组件拓扑挂机全绿通关`,
@@ -344,10 +425,12 @@ function campFinalizeCompletedCampaign(st, egressSummary) {
       card: summaryCard
     }
   });
+  const sessionProjection = projectCampaignSessionState(st.sessionEvents);
+  const finalCamp = saveCampaignState(st.root, { ...campState, activePid: null, sessionProjection });
   return {
     ok: true, exitCode: 0, campaignId: st.campaignId, state: 'COMPLETED', orderedIds: st.orderedIds,
     executionPlan: st.executionPlan, completedCount: st.completedComponentIds.size, totalComponents: st.ordered.length,
-    cacheHits: st.totalCacheHits, componentReports: st.componentReports, sandboxWorktree: finalizedWt, egressProxy: egressSummary, campaign: campState
+    cacheHits: st.totalCacheHits, componentReports: st.componentReports, sandboxWorktree: finalizedWt, egressProxy: egressSummary, gcReport, sessionProjection, reconciliation: st.reconciliation, campaign: finalCamp
   };
 }
 
@@ -385,35 +468,58 @@ async function campSetupEgressAndProbe(root, st, spec) {
   return { ok: true, proxy };
 }
 
+async function campExecuteOrderedComponents(st) {
+  for (const comp of st.ordered) {
+    if (st.completedComponentIds.has(comp.id)) continue;
+    const step = await runSingleCampaignComponent(st, comp);
+    if (step.fatalAssign) return campHandleFatalAssign(st, comp, step.fatalAssign);
+    const { subOut } = step;
+    st.totalCacheHits += Number(subOut.cacheHits || 0);
+    if (subOut.suspended && subOut.pendingHumanGate) return campHandleSuspendedComponent(st, comp, subOut);
+    campRecordSettledComponent(st, comp, step);
+    if (!subOut.ok) return campHandleFailedComponent(st, comp, subOut);
+    st.completedComponentIds.add(comp.id);
+    st.totalPassedGates += Number(subOut.checkpoint?.passedGates || 1);
+    st.totalGates += Math.max(1, Number(subOut.checkpoint?.totalGates || 1));
+  }
+  return null;
+}
+
+function campResolveExistingWithReconcile(root, spec, reconciliation) {
+  const base = spec.resumeCampaignId ? loadCampaignCheckpoint(root, spec.resumeCampaignId) : null;
+  if (base) return { ...base, completedComponentIds: [...new Set([...(base.completedComponentIds || []), ...reconciliation.recoveredCompletedComponentIds])] };
+  const adopt = reconciliation.adoptableCampaign;
+  if (spec.autoAdoptReconciled === false || !adopt) return null;
+  if (spec.campaignId && adopt.campaignId !== spec.campaignId) return null;
+  return { ...adopt, completedComponentIds: [...new Set([...(adopt.completedComponentIds || []), ...reconciliation.recoveredCompletedComponentIds])] };
+}
+
 export async function executeProjectCampaignAutopilot(projectRoot, spec = {}, hooks = {}) {
-  const root = resolve(projectRoot);
-  const hub = getRunEventHub(root);
-  const existing = spec.resumeCampaignId ? loadCampaignCheckpoint(root, spec.resumeCampaignId) : null;
-  const inputs = campResolveInitialInputs(root, spec, hooks, existing);
+  const root = resolve(projectRoot), hub = getRunEventHub(root);
+  const reconciliation = reconcileAutopilotWorktreesAndPids(root, {
+    campaignId: spec.resumeCampaignId || spec.campaignId || null, killProbe: spec.killProbe, selfPid: spec.selfPid
+  });
+  const existing = campResolveExistingWithReconcile(root, spec, reconciliation);
+  const enrichedSpec = { ...spec, reconciliationResult: reconciliation };
+  const inputs = campResolveInitialInputs(root, enrichedSpec, hooks, existing);
   if (inputs.ordered.length === 0) {
     return { ok: false, exitCode: 3, code: 'EMPTY_PROJECT_COMPONENTS', reason: '当前项目看板无可挂机组件节点（已跳过空白与外部子仓节点）' };
   }
-  const st = campInitRunState(root, hub, spec, hooks, existing, inputs);
-  const netGuard = await campSetupEgressAndProbe(root, st, spec);
-  if (!netGuard.ok) return netGuard.failure;
+  const st = campInitRunState(root, hub, enrichedSpec, hooks, existing, inputs);
+  const onHubEvt = (evt) => st.sessionEvents.push(evt);
+  hub.listeners.add(onHubEvt);
+  hub.emit({ type: 'campaign_started', campaignId: st.campaignId, pid: process.pid });
+  saveCampaignState(root, { ...campBuildSharedStateSnapshot(st), state: 'RUNNING', activePid: process.pid });
+  const netGuard = await campSetupEgressAndProbe(root, st, enrichedSpec);
+  if (!netGuard.ok) { hub.listeners.delete(onHubEvt); return netGuard.failure; }
 
   try {
-    for (const comp of st.ordered) {
-      if (st.completedComponentIds.has(comp.id)) continue;
-      const step = await runSingleCampaignComponent(st, comp);
-      if (step.fatalAssign) return campHandleFatalAssign(st, comp, step.fatalAssign);
-      const { subOut } = step;
-      st.totalCacheHits += Number(subOut.cacheHits || 0);
-      if (subOut.suspended && subOut.pendingHumanGate) return campHandleSuspendedComponent(st, comp, subOut);
-      campRecordSettledComponent(st, comp, step);
-      if (!subOut.ok) return campHandleFailedComponent(st, comp, subOut);
-      st.completedComponentIds.add(comp.id);
-      st.totalPassedGates += Number(subOut.checkpoint?.passedGates || 1);
-      st.totalGates += Math.max(1, Number(subOut.checkpoint?.totalGates || 1));
-    }
+    const halted = await campExecuteOrderedComponents(st);
+    if (halted) return halted;
     const egressSummary = netGuard.proxy ? { proxyUrl: netGuard.proxy.proxyUrl, deniedCount: netGuard.proxy.deniedCount(), closed: true } : null;
     return campFinalizeCompletedCampaign(st, egressSummary);
   } finally {
+    hub.listeners.delete(onHubEvt);
     if (netGuard.proxy) await netGuard.proxy.close();
   }
 }

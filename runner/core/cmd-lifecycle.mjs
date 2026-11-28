@@ -95,6 +95,61 @@ export function collectOrderedIncompleteContractGaps(projectRoot) {
   return gaps;
 }
 
+const REPO_RECIPE_FILE_SEGMENTS = ['.donegate', 'repo-recipe.json'];
+const NO_PACKAGE_JSON_SENTINEL = 'no-package-json';
+
+function lcComputePackageJsonHash(projectRoot) {
+  const pkgPath = join(resolve(projectRoot), 'package.json');
+  if (!existsSync(pkgPath)) return NO_PACKAGE_JSON_SENTINEL;
+  return sha256(readFileSync(pkgPath));
+}
+
+export function saveVerifiedRepoRecipe(projectRoot, recipe = {}) {
+  const rootAbs = resolve(projectRoot);
+  const recipePath = join(rootAbs, ...REPO_RECIPE_FILE_SEGMENTS);
+  mkdirSync(join(rootAbs, '.donegate'), { recursive: true });
+  const payload = {
+    installCmd: String(recipe.installCmd ?? ''),
+    buildCmd: String(recipe.buildCmd ?? ''),
+    devServerCmd: String(recipe.devServerCmd ?? ''),
+    testCmd: String(recipe.testCmd ?? ''),
+    verifiedAt: String(recipe.verifiedAt || new Date().toISOString()),
+    packageJsonHash: String(recipe.packageJsonHash || lcComputePackageJsonHash(rootAbs))
+  };
+  writeFileSync(recipePath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  return payload;
+}
+
+export function loadCachedRepoRecipe(projectRoot) {
+  const rootAbs = resolve(projectRoot);
+  const recipePath = join(rootAbs, ...REPO_RECIPE_FILE_SEGMENTS);
+  if (!existsSync(recipePath)) return null;
+  const parsed = readJsonStrict(recipePath);
+  if (!parsed.ok || !parsed.value || typeof parsed.value !== 'object') return null;
+  if (parsed.value.packageJsonHash !== lcComputePackageJsonHash(rootAbs)) return null;
+  return parsed.value;
+}
+
+function lcInferInstallCmd(rootAbs, hasPkg) {
+  if (!hasPkg) return '';
+  if (existsSync(join(rootAbs, 'pnpm-lock.yaml'))) return 'pnpm install';
+  if (existsSync(join(rootAbs, 'yarn.lock'))) return 'yarn install';
+  return 'npm install';
+}
+
+function lcSaveInitialRepoRecipe(projectRoot, defaultSmokeCmd) {
+  const rootAbs = resolve(projectRoot);
+  const pkgPath = join(rootAbs, 'package.json');
+  const pkgRes = existsSync(pkgPath) ? readJsonStrict(pkgPath) : { ok: false };
+  const scripts = (pkgRes.ok && pkgRes.value?.scripts && typeof pkgRes.value.scripts === 'object') ? pkgRes.value.scripts : {};
+  return saveVerifiedRepoRecipe(rootAbs, {
+    installCmd: lcInferInstallCmd(rootAbs, pkgRes.ok),
+    buildCmd: scripts.build ? 'npm run build' : '',
+    devServerCmd: scripts.dev ? 'npm run dev' : (scripts.start ? 'npm start' : ''),
+    testCmd: defaultSmokeCmd
+  });
+}
+
 export function cmdInit(projectRoot, opts = {}) {
   if (existsSync(join(projectRoot, 'INTENT.md')) || existsSync(join(projectRoot, 'contracts'))) {
     return { exitCode: 3, stdout: '拒绝初始化：INTENT.md 或 contracts/ 已存在（§八 退 3，不覆盖）' };
@@ -104,8 +159,12 @@ export function cmdInit(projectRoot, opts = {}) {
   mkdirSync(join(projectRoot, 'decisions'), { recursive: true });
   mkdirSync(join(projectRoot, '.donegate', 'scratch'), { recursive: true });
 
+  const cachedRecipe = loadCachedRepoRecipe(projectRoot);
   const discovered = opts.discover ? discoverExistingRepoStarterContracts(projectRoot) : null;
-  const defaultSmokeCmd = discovered ? discovered.smokeCmd : detectRepoStackAndSmoke(projectRoot).smokeCmd;
+  const defaultSmokeCmd = discovered
+    ? discovered.smokeCmd
+    : (cachedRecipe?.testCmd || detectRepoStackAndSmoke(projectRoot).smokeCmd);
+  const repoRecipe = cachedRecipe || lcSaveInitialRepoRecipe(projectRoot, defaultSmokeCmd);
 
   writeFileSync(join(projectRoot, 'INTENT.md'), [
     '# 项目意图', '',
@@ -138,6 +197,7 @@ export function cmdInit(projectRoot, opts = {}) {
 
   return {
     exitCode: 0,
+    repoRecipe,
     ...(discovered ? { discovered } : {}),
     stdout: '已初始化：\n  INTENT.md\n  CONSTRAINTS.md\n  thresholds.json\n  contracts/\n  functions/\n  decisions/\n  .donegate/chain.jsonl\n  .donegate/escapes.jsonl\n  .githooks/pre-commit' +
       discoverLines + '\n\n' +

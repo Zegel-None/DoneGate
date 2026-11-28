@@ -15,10 +15,12 @@ import { analyzeCodeComplexityAndGolfing } from './cognitive-complexity.mjs';
 import { countEffectiveCodeLines, loadHygieneBudgets } from './commit-hygiene-metrics.mjs';
 import { scanTerminologyViolations } from './check-terminology.mjs';
 import { validateDecisionFiveSections } from './check-decisions.mjs';
-import { auditSubagentEditHazards } from './lint-edit/header-hazards.mjs';
+import { detectBareOmissionPlaceholders } from './lint-edit/flexible-patch.mjs';
+import { auditSubagentEditHazards, checkUnclosedBracketBalance } from './lint-edit/header-hazards.mjs';
 import { attachFixHints, resolveLintFixHint } from './lint-edit/remediation.mjs';
 
 const JS_LIKE_RE = /\.(mjs|cjs|js|ts|tsx|jsx)$/i;
+const DEFAULT_CORE_LINE_CAP = 350, ADAPTER_LINE_CAP = 90;
 const TEST_OR_FIXTURE_RE = /(^|\/)(tests?|__tests__)(\/|$)|\.(test|spec)\.[a-z0-9]+$|-fixtures\.mjs$/i;
 const SELF_META_EXEMPT_RE = /(^|\/)(skill\/lint-edit\.mjs|skill\/check-commit-hygiene\.mjs|skill\/check-ai-habits\.mjs|skill\/check-escapes\.mjs|skill\/check-module-integrity\.mjs)$/i;
 const ALLOW_TAG_RE = /(?:\/\/|#)\s*dg-allow\s*:\s*(.+)$/;
@@ -27,7 +29,7 @@ const RAW_SHA_CALL_RE = new RegExp('\\bcreateHash\\s*\\(\\s*[\'"]sha256[\'"]\\s*
 const SLOP_RULES = [
   { id: 'C3:todo', label: '未完成占位符 (TODO/FIXME/XXX/HACK)', re: /(?:\/\/|#|\/\*)\s*(?:TODO|FIXME|XXX|HACK)\b/ },
   { id: 'C3:empty-catch', label: '空 catch 静默吞异常', re: /catch\s*(?:\([^)]*\))?\s*\{\s*\}/ },
-  { id: 'C3:elide', label: 'AI 省略删码注释', re: /(?:\/\/|#|\/\*)\s*(?:\.\.\.|…)?\s*(?:(?:existing|unchanged|remaining|rest\s+of(?:\s+the)?)\s+(?:code|implementation|logic|functions?)|(?:其余|剩余|原有)(?:代码|逻辑|实现)\s*(?:保持不变|不变|省略|略))/i }
+  { id: 'C3:elide', label: 'AI 省略删码注释', re: /(?:\/\/|#|\/\*)\s*(?:\.\.\.|…)?\s*(?:(?:existing|unchanged|remaining|rest\s+of(?:\s+the)?)\s+(?:code|implementation|logic|methods?|functions?)|(?:其余|剩余|原有)(?:代码|逻辑|实现)\s*(?:保持不变|不变|省略|略))/i }
 ];
 
 const TEST_CHEAT_RULES = [
@@ -39,6 +41,12 @@ function leNormalizeRel(projectRoot, rawFile) {
   const abs = resolve(projectRoot, rawFile);
   const rel = relative(projectRoot, abs).split(sep).join('/');
   return { abs, rel };
+}
+
+function leResolvePhysicalLineCap(rel, budgets) {
+  if (/^runner\/core\/[^/]+\.mjs$/.test(rel)) return Number(budgets.maxCoreFileLines) || DEFAULT_CORE_LINE_CAP;
+  if (/^skill\/adapters\/(?!_)[^/]+\.mjs$/.test(rel)) return ADAPTER_LINE_CAP;
+  return budgets.maxFileLines;
 }
 
 function leLoadContractScopeOwners(projectRoot) {
@@ -84,6 +92,7 @@ function leCheckSyntax(abs, rel, raw, fails) {
     }
     return;
   }
+  if (JS_LIKE_RE.test(rel) && !SELF_META_EXEMPT_RE.test(rel)) checkUnclosedBracketBalance(rel, raw, fails);
   if (/\.(mjs|cjs|js)$/i.test(rel)) {
     const chk = spawnSync(process.execPath, ['--check', abs], { encoding: 'utf8' });
     if (chk.status !== 0) {
@@ -137,8 +146,15 @@ function leCheckScaleAndComplexity(root, rel, raw, isTestOrFixture, budgets, war
 }
 
 function leAuditSingleProdLine(rel, line, lineNo, isConcreteAdapter, fails) {
+  let elideHit = false;
   for (const r of SLOP_RULES) {
-    if (r.re.test(line)) fails.push(`${r.id} ${r.label} (${rel}:L${lineNo})：${line.trim().slice(0, 90)}`);
+    if (r.re.test(line)) {
+      if (r.id === 'C3:elide') elideHit = true;
+      fails.push(`${r.id} ${r.label} (${rel}:L${lineNo})：${line.trim().slice(0, 90)}`);
+    }
+  }
+  if (!elideHit && detectBareOmissionPlaceholders(line).length > 0) {
+    fails.push(`C3:elide AI 省略删码注释 (${rel}:L${lineNo})：${line.trim().slice(0, 90)}`);
   }
   if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
   if (isConcreteAdapter && /from\s+['"](?:node:)?(?:crypto|child_process)['"]/.test(line)) {
@@ -277,13 +293,17 @@ export function lintEditedFiles(projectRoot, targetFiles = [], opts = {}) {
     if (scopeEntries.length > 0 && JS_LIKE_RE.test(rel) && !isTestOrFixture && !/^[^/]+\.(?:config|rc)\.[a-z0-9]+$/i.test(rel) && owners.length === 0) {
       warnings.push(`契约归属提示 (${rel})：当前未被任何活跃契约 scope[] 认领（提交前需归入对应契约或伴生子模块目录）`);
     }
+    const physicalCapLines = leResolvePhysicalLineCap(rel, budgets);
+    const physLines = raw.replace(/\r?\n$/, '').split(/\r?\n/).length;
     fileReports.push({
       file: rel,
       ok: fails.length === fileFailsBefore,
       owners,
       effectiveLines: lm.effectiveLines,
       rawLines: lm.rawLines,
-      headroomLines: Math.max(0, budgets.maxEffectiveFileLines - lm.effectiveLines)
+      headroomLines: Math.max(0, budgets.maxEffectiveFileLines - lm.effectiveLines),
+      physicalCapLines,
+      physicalHeadroomLines: Math.max(0, physicalCapLines - physLines)
     });
   }
 
@@ -304,7 +324,7 @@ export function cmdLintEdit(projectRoot, opts = {}) {
   if (res.exitCode === 3) return { exitCode: 3, stderr: res.fails.join('\n') };
   if (opts.json) return { exitCode: res.exitCode, report: res, stdout: JSON.stringify(res, null, 2) };
   const lines = res.files.map(
-    (f) => `${f.ok ? '✓' : '✗'} ${f.file} [有效 ${f.effectiveLines} 行 | 余量 ${f.headroomLines} 行 | 归属 ${f.owners.join(',') || '共享/测试'}]`
+    (f) => `${f.ok ? '✓' : '✗'} ${f.file} [有效 ${f.effectiveLines} 行 (余量 ${f.headroomLines}) | 物理 ${f.rawLines}/${f.physicalCapLines} 行 (余量 ${f.physicalHeadroomLines}) | 归属 ${f.owners.join(',') || '共享/测试'}]`
   );
   for (const w of res.warnings) lines.push(`  ⚠ ${w}`);
   for (const fl of res.fails) {

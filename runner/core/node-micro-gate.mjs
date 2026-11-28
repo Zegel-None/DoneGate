@@ -3,13 +3,15 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readJsonStrict } from '../../skill/io.mjs';
-import { buildNodeInterfaceStub } from './ast-stub.mjs';
+import { readFileSync } from 'node:fs';
+import { buildNodeInterfaceStub, verifyAllowedModifiedSymbols } from './ast-stub.mjs';
 import { discoverHermeticGraph, fileBelongsToScopes, resolveSubagentBudgetProfile } from './context-router.mjs';
 import { diffAgainstFrozenStub, freezeNodeStubBaseline } from './hermetic-capsule.mjs';
 import { loadThresholds } from './gates.mjs';
 import { collectOtherContractsFrozenTests } from './heldout-test-guard.mjs';
 import { hvBuildConfessionReport, verifyHeldOutContract } from './heldout-verifier.mjs';
 import { buildSanitizedEnv, checkCommandBans } from './isolation.mjs';
+import { attachFailureContextAndProbe, evaluateAnteExpectationCollision } from './node-micro-gate/probe-and-callers.mjs';
 
 const isNonMetaFile = (f) => Boolean(f && !f.startsWith('.donegate/') && f !== 'node_modules' && !f.startsWith('node_modules/'));
 
@@ -141,6 +143,14 @@ function evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresho
       fails.push(`越过门面私引邻居内部实现：${v.fromFile} -> ${v.toFile}（只准引 ${v.expectedFacades.join('/')}）`);
     }
   }
+  if (Array.isArray(contract.modifiesSymbols) && contract.modifiesSymbols.length > 0 && gitState.baseRef) {
+    for (const rel of gitState.touchedFiles.filter((f) => fileBelongsToScopes(f, contract.scope || []))) {
+      const prevR = spawnSync('git', ['-C', projectRoot, 'show', `${gitState.baseRef}:${rel}`], { encoding: 'utf8', windowsHide: true });
+      if (prevR.status !== 0 || !existsSync(join(projectRoot, rel))) continue;
+      const modChk = verifyAllowedModifiedSymbols(prevR.stdout, readFileSync(join(projectRoot, rel), 'utf8'), contract.modifiesSymbols, { relPath: rel });
+      for (const v of modChk.violations) fails.push(`${rel}: ${v.reason}`);
+    }
+  }
   if (currentStub.maxFileEffectiveLines > thresholds.maxEffectiveFileLines) {
     fails.push(`单文件有效代码超硬顶：${currentStub.maxFile} (${currentStub.maxFileEffectiveLines} > ${thresholds.maxEffectiveFileLines})`);
   }
@@ -169,9 +179,9 @@ function executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, f
     DONEGATE_MICRO_NODE: id
   }, { cwd: projectRoot, envPassthrough: contract?.execution?.envPassthrough });
   const plugRes = nmgRunPreFlightPlug(projectRoot, contract, sanitizedEnv, fails);
-  if (!plugRes.ok) return { passed: 0, unknown: plugRes.unknown, passedObligations: [] };
+  if (!plugRes.ok) return { passed: 0, unknown: plugRes.unknown, passedObligations: [], failedObligations: [] };
   let passed = 0, unknown = 0;
-  const passedObligations = [];
+  const passedObligations = [], failedObligations = [];
   for (const o of cmdObs) {
     const r = spawnSync(o.command, {
       cwd: projectRoot, shell: true, env: sanitizedEnv, encoding: 'utf8',
@@ -183,20 +193,23 @@ function executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, f
     const errDetail = String(r.stderr || stdoutTrim || '').trim();
     if (timedOut || spawnFailed) {
       unknown++;
+      failedObligations.push({ id: o.id, command: o.command });
       fails.push(`判据 ${o.id} 无法执行或超时${errDetail ? `：${errDetail}` : ''}`);
     } else if (r.status !== o.expect?.exitCode) {
+      failedObligations.push({ id: o.id, command: o.command });
       fails.push(`判据 ${o.id} 退出码 ${r.status} !== 期望 ${o.expect?.exitCode}${errDetail ? `：${errDetail}` : ''}`);
     } else if (o.expect?.stdoutMatches !== undefined && stdoutTrim !== o.expect.stdoutMatches) {
+      failedObligations.push({ id: o.id, command: o.command });
       fails.push(`判据 ${o.id} 输出不匹配期望值（实际：${stdoutTrim}）`);
     } else {
       passed++;
       passedObligations.push(o.id);
     }
   }
-  return { passed, unknown, passedObligations };
+  return { passed, unknown, passedObligations, failedObligations };
 }
 
-function persistMicroGateReceipt(projectRoot, id, currentStub, receipt) {
+function persistMicroGateReceipt(projectRoot, id, contract, currentStub, gitState, failedObligations, receipt) {
   const stubsDir = join(projectRoot, '.donegate', 'stubs');
   mkdirSync(stubsDir, { recursive: true });
   writeFileSync(join(stubsDir, `${id}.stub.d.ts`), currentStub.stubText, 'utf8');
@@ -207,6 +220,7 @@ function persistMicroGateReceipt(projectRoot, id, currentStub, receipt) {
   const prevRes = existsSync(rcptPath) ? readJsonStrict(rcptPath) : { ok: false };
   const prevStreak = (prevRes.ok && prevRes.value && prevRes.value.exitCode !== 0) ? Number(prevRes.value.retryStreak || 1) : 0;
   receipt.retryStreak = receipt.exitCode === 0 ? 0 : prevStreak + 1;
+  attachFailureContextAndProbe(projectRoot, contract, currentStub, gitState, failedObligations, receipt);
   writeFileSync(rcptPath, JSON.stringify(receipt, null, 2), 'utf8');
 
   const rsiDir = join(projectRoot, '.donegate', 'rsi-candidates');
@@ -296,7 +310,9 @@ export function cmdCheckNode(projectRoot, opts = {}) {
   const budget = resolveSubagentBudgetProfile(thresholds, opts);
   const currentStub = buildNodeInterfaceStub(projectRoot, contract);
   const { fails, stubDiff, crossScopeAllowed, crossScopeFiles } = evaluateMicroGateFences(projectRoot, id, contract, currentStub, thresholds, gitState, opts);
-  const { passed, unknown, passedObligations } = executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, fails);
+  const { passed, unknown, passedObligations, failedObligations } = executeNodeObligations(projectRoot, id, contract, cmdObs, thresholds, fails);
+  const anteAnchor = evaluateAnteExpectationCollision(opts.expectedPassingIds ?? opts.expectPass ?? process.env.DONEGATE_EXPECTED_PASSING_IDS, cmdObs, passedObligations);
+  if (anteAnchor?.collision) fails.push(anteAnchor.summary);
   const exitCode = fails.length === 0 ? 0 : (unknown > 0 && fails.length === unknown ? 3 : 1);
   const verdict = exitCode === 0 ? 'PASS' : (exitCode === 1 ? 'FAIL' : 'UNKNOWN');
   const confession = hvBuildConfessionReport(opts.confession, `${id}|${currentStub.stubHash}|${exitCode}`);
@@ -308,12 +324,11 @@ export function cmdCheckNode(projectRoot, opts = {}) {
     stubHash: currentStub.stubHash, stubChanged: Boolean(stubDiff.stubChanged), addedExports: stubDiff.addedExports || [],
     effectiveLines: currentStub.effectiveLines, baseRef: gitState.baseRef,
     touchedFiles: gitState.touchedFiles, committedFiles: gitState.committedFiles, uncommittedFiles: gitState.uncommittedFiles,
-    crossScopeAllowed, crossScopeFiles,
-    ...(confession ? { confession } : {}),
+    crossScopeAllowed, crossScopeFiles, ...(anteAnchor ? { anteAnchor } : {}), ...(confession ? { confession } : {}),
     sessionBudgetTokens: budget.totalSessionBudgetTokens, receiptBudgetTokens: budget.receiptBudgetTokens,
     durationMs: Date.now() - t0, ...(fails.length > 0 ? { fails } : {})
   };
-  persistMicroGateReceipt(projectRoot, id, currentStub, receipt);
+  persistMicroGateReceipt(projectRoot, id, contract, currentStub, gitState, failedObligations, receipt);
 
   const deltaFields = {
     exitCode, receipt, baseRef: gitState.baseRef,

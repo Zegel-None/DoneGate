@@ -1,15 +1,25 @@
-// L0 回合级增量代码快照、文件指纹去重缓存与 Stop 连续 3 次拦截防死锁熔断器（<= 205 行）
+// L0 回合级增量代码快照、工作树哈希乒乓环检测、流式复读 Stall 熔断与 Stop 防死锁熔断器（<= 300 行）
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { walkByExt } from '../../skill/fs-walk.mjs';
-import { sha256 } from '../../skill/hash.mjs';
+import { materialFingerprintOf, sha256, sha256Short } from '../../skill/hash.mjs';
 
 export const TURN_STATE_TTL_MS = 30 * 60 * 1000;
 export const MAX_STOP_STRIKES = 3;
+export const DEFAULT_PING_PONG_HISTORY_WINDOW = 4;
+export const DEFAULT_STALL_REPEAT_WINDOW_TOKENS = 20;
+export const DEFAULT_STALL_REPEAT_MIN_CYCLES = 3;
+export const DEFAULT_STALL_MIN_PHRASE_TOKENS = 3;
+export const DEFAULT_STALL_MIN_DISTINCT_LEXICAL = 2;
 const TDS_CODE_EXTS = ['.mjs', '.cjs', '.js', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs'];
 const TDS_CODE_RE = /\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs)$/i;
 const TDS_SKIP_PREFIX_RE = /^(?:\.donegate\/|node_modules\/|workflows\/\.deps\/|\.git\/)/;
+const STALL_TOKEN_RE = /[A-Za-z0-9_$]+|[\u4e00-\u9fff]|[^\sA-Za-z0-9_$\u4e00-\u9fff]/g;
+const LEXICAL_TOKEN_RE = /[A-Za-z0-9_$\u4e00-\u9fff]/;
+const STALL_TAIL_BUFFER_CYCLES = 2;
+const STALL_SAMPLE_MAX_CHARS = 120;
+const MIN_RING_CAP = 2;
 
 function tdsSafeConvKey(conversationId) {
   const clean = String(conversationId || 'default').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48);
@@ -99,6 +109,79 @@ function tdsSaveTurnState(projectRoot, conversationId, state) {
   return next;
 }
 
+function tdsNormalizeHistoryEntry(raw = {}) {
+  const touchedFiles = (Array.isArray(raw.touchedFiles) ? raw.touchedFiles : []).map((f) => String(f || '').replace(/\\/g, '/').replace(/^\.\//, '').trim()).filter(Boolean).sort();
+  const lineRanges = (Array.isArray(raw.lineRanges) ? raw.lineRanges : []).map((r) => (typeof r === 'string' ? r.trim() : `${r?.start ?? ''}-${r?.end ?? ''}`)).filter(Boolean);
+  const filesDigest = String(raw.filesDigest || (raw.fileHashes ? materialFingerprintOf(raw.fileHashes) : '')).trim();
+  return { filesDigest, errorSignature: String(raw.errorSignature ?? '').trim(), touchedFiles, lineRanges };
+}
+
+function tdsResolveIncrementalExemption(priorList, cand) {
+  if (priorList.length === 0 || !cand.filesDigest || priorList.some((h) => h.filesDigest === cand.filesDigest)) return null;
+  const prev = priorList[priorList.length - 1], prevSet = new Set(prev.touchedFiles || []);
+  if (cand.touchedFiles.length > 0 && cand.touchedFiles.some((f) => !prevSet.has(f))) return 'cross-file-batch-progress';
+  const prevRanges = new Set(prev.lineRanges || []);
+  return (cand.lineRanges.length > 0 && cand.lineRanges.some((r) => !prevRanges.has(r))) ? 'distinct-line-range-progress' : null;
+}
+
+export function detectWorkspacePingPong(historyRing = [], candidate = {}, opts = {}) {
+  const winCap = Math.max(MIN_RING_CAP, Number(opts.pingPongHistoryWindow ?? opts.profile?.pingPongHistoryWindow) || DEFAULT_PING_PONG_HISTORY_WINDOW);
+  const prior = (Array.isArray(historyRing) ? historyRing : []).map(tdsNormalizeHistoryEntry).slice(-(winCap - 1));
+  const cand = tdsNormalizeHistoryEntry(candidate), nextHistory = [...prior, cand];
+  if (!cand.filesDigest) return { loopDetected: false, pingPong: false, exempted: false, exemptionReason: null, reasonCode: null, historyRing: nextHistory };
+  for (let i = prior.length - MIN_RING_CAP; i >= 0; i--) {
+    if (prior[i].filesDigest === cand.filesDigest && prior.slice(i + 1).some((mid) => mid.filesDigest !== cand.filesDigest)) {
+      return { loopDetected: true, pingPong: true, exempted: false, exemptionReason: null, reasonCode: 'WORKSPACE_PING_PONG_LOOP', cycleLength: prior.length - i, matchedErrorSignature: cand.errorSignature || prior[i].errorSignature || null, historyRing: nextHistory };
+    }
+  }
+  const exemption = tdsResolveIncrementalExemption(prior, cand);
+  return { loopDetected: false, pingPong: false, exempted: Boolean(exemption), exemptionReason: exemption, reasonCode: null, historyRing: nextHistory };
+}
+
+export function recordTurnStepHistory(projectRoot, conversationId = 'default', stepInfo = {}, opts = {}) {
+  const rootAbs = resolve(projectRoot), cur = loadTurnState(rootAbs, conversationId) || captureTurnBaseline(rootAbs, conversationId);
+  const snap = stepInfo.fileHashes ? { fileHashes: stepInfo.fileHashes } : tdsSnapshotWorkspaceCodeHashes(rootAbs, cur.headSha || null);
+  const prevMap = cur.lastStepHashes || cur.baselineHashes || {}, keys = new Set([...Object.keys(prevMap), ...Object.keys(snap.fileHashes)]);
+  const touchedFiles = Array.isArray(stepInfo.touchedFiles) ? stepInfo.touchedFiles : [...keys].filter((k) => prevMap[k] !== snap.fileHashes[k]).sort();
+  const rawErr = String(stepInfo.errorSignature ?? '').trim(), filesDigest = stepInfo.filesDigest || materialFingerprintOf(snap.fileHashes);
+  const errorSignature = rawErr && stepInfo.hashErrorSignature ? sha256Short(rawErr) : rawErr;
+  const loopRes = detectWorkspacePingPong(cur.historyRing || [], { filesDigest, errorSignature, touchedFiles, lineRanges: stepInfo.lineRanges || [] }, opts);
+  const saved = tdsSaveTurnState(rootAbs, conversationId, { ...cur, historyRing: loopRes.historyRing, lastStepHashes: snap.fileHashes });
+  return { ...loopRes, filesDigest, touchedFiles, state: saved };
+}
+
+function tdsHasRepeatingCycleAt(normTokens, endIdx, period, minCycles) {
+  const start = endIdx - period * minCycles, lexicalSet = new Set();
+  for (let j = 0; j < period; j++) {
+    const baseTok = normTokens[start + j];
+    if (LEXICAL_TOKEN_RE.test(baseTok)) lexicalSet.add(baseTok);
+    for (let c = 1; c < minCycles; c++) { if (normTokens[start + c * period + j] !== baseTok) return false; }
+  }
+  return lexicalSet.size >= DEFAULT_STALL_MIN_DISTINCT_LEXICAL;
+}
+
+function tdsScanTokenPeriods(tailRaw, tailNorm, minPhrase, windowTokens, minCycles) {
+  for (let period = minPhrase; period <= windowTokens; period++) {
+    const needed = period * minCycles;
+    if (tailNorm.length < needed) break;
+    for (let endIdx = needed; endIdx <= tailNorm.length; endIdx++) {
+      if (tdsHasRepeatingCycleAt(tailNorm, endIdx, period, minCycles)) return { period, sample: tailRaw.slice(endIdx - period, endIdx).join(' ').slice(0, STALL_SAMPLE_MAX_CHARS) };
+    }
+  }
+  return null;
+}
+
+export function detectStreamingReasoningStall(textChunk, opts = {}) {
+  const windowTokens = Math.max(DEFAULT_STALL_MIN_PHRASE_TOKENS, Number(opts.stallRepeatWindowTokens ?? opts.profile?.stallRepeatWindowTokens) || DEFAULT_STALL_REPEAT_WINDOW_TOKENS);
+  const minCycles = Math.max(MIN_RING_CAP, Number(opts.stallRepeatMinCycles ?? opts.profile?.stallRepeatMinCycles) || DEFAULT_STALL_REPEAT_MIN_CYCLES);
+  const minPhrase = Math.max(MIN_RING_CAP, Number(opts.minPhraseTokens) || DEFAULT_STALL_MIN_PHRASE_TOKENS);
+  const cleaned = opts.scanCodeBlocks ? String(textChunk || '') : String(textChunk || '').replace(/```[\s\S]*?```/g, ' ');
+  const tailRaw = (cleaned.match(STALL_TOKEN_RE) || []).slice(-(windowTokens * (minCycles + STALL_TAIL_BUFFER_CYCLES)));
+  const hit = tdsScanTokenPeriods(tailRaw, tailRaw.map((t) => t.toLowerCase()), minPhrase, windowTokens, minCycles);
+  if (!hit) return { stalled: false, action: 'continue', reasonCode: null, periodTokens: 0, repeatCycles: 0, repeatedSample: '' };
+  return { stalled: true, action: 'abort-and-discard-turn', reasonCode: 'REASONING_LOOP_STALL', periodTokens: hit.period, repeatCycles: minCycles, repeatedSample: hit.sample };
+}
+
 export function captureTurnBaseline(projectRoot, conversationId = 'default', { forceReset = false } = {}) {
   const rootAbs = resolve(projectRoot);
   const existing = !forceReset ? loadTurnState(rootAbs, conversationId) : null;
@@ -112,6 +195,8 @@ export function captureTurnBaseline(projectRoot, conversationId = 'default', { f
     turnActive: true,
     headSha: snap.headSha,
     baselineHashes: snap.fileHashes,
+    lastStepHashes: snap.fileHashes,
+    historyRing: existing?.historyRing || [],
     verifiedHashes: existing?.verifiedHashes || {},
     stopStrikes: 0
   });
@@ -141,7 +226,7 @@ export function computeTurnDelta(projectRoot, conversationId = 'default') {
     allTouchedFiles.push(rel);
     if (verifiedHashes[rel] !== curHash) unverifiedFiles.push(rel);
   }
-  return { allTouchedFiles, unverifiedFiles, currentHashes: snap.fileHashes, hasBaseline: Boolean(state) };
+  return { allTouchedFiles, unverifiedFiles, currentHashes: snap.fileHashes, filesDigest: materialFingerprintOf(snap.fileHashes), hasBaseline: Boolean(state) };
 }
 
 export function finishTurnCleanly(projectRoot, conversationId = 'default', verifiedRels = []) {
@@ -172,17 +257,18 @@ function tdsAppendCircuitBreakerWorryNote(rootAbs, conversationId, failingFiles)
   appendFileSync(notesPath, JSON.stringify(entry) + '\n', 'utf8');
 }
 
-export function consumeStopStrike(projectRoot, conversationId = 'default', failingFiles = [], maxStrikes = MAX_STOP_STRIKES) {
+export function consumeStopStrike(projectRoot, conversationId = 'default', failingFiles = [], maxStrikes = MAX_STOP_STRIKES, opts = {}) {
   const rootAbs = resolve(projectRoot);
-  const cur = loadTurnState(rootAbs, conversationId) || captureTurnBaseline(rootAbs, conversationId);
+  const stepRes = recordTurnStepHistory(rootAbs, conversationId, { errorSignature: failingFiles.slice().sort().join(',') }, opts);
+  const cur = stepRes.state;
   const nextStrike = Number(cur.stopStrikes || 0) + 1;
   if (nextStrike <= maxStrikes) {
     tdsSaveTurnState(rootAbs, conversationId, { ...cur, turnActive: true, stopStrikes: nextStrike });
-    return { shouldBlock: true, strike: nextStrike, maxStrikes, circuitBroken: false };
+    return { shouldBlock: true, strike: nextStrike, maxStrikes, circuitBroken: false, pingPong: stepRes.pingPong, reasonCode: stepRes.reasonCode };
   }
   tdsSaveTurnState(rootAbs, conversationId, { ...cur, turnActive: false, stopStrikes: 0 });
   try { tdsAppendCircuitBreakerWorryNote(rootAbs, conversationId, failingFiles); } catch (err) { void err; }
-  return { shouldBlock: false, strike: nextStrike, maxStrikes, circuitBroken: true };
+  return { shouldBlock: false, strike: nextStrike, maxStrikes, circuitBroken: true, pingPong: stepRes.pingPong, reasonCode: stepRes.reasonCode };
 }
 
 export function clearTurnState(projectRoot, conversationId = 'default') {

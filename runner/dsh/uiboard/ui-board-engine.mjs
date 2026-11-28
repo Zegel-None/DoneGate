@@ -5,9 +5,11 @@ import { createServer } from 'node:http';
 import { basename, join, resolve } from 'node:path';
 import { readJsonStrict } from '../../../skill/io.mjs';
 import {
-  AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, auditHtmlAntiAiSlop, buildCssVariablesStyleText,
-  readDesignSystemLock, recommendAestheticProposals
+  AESTHETIC_GROUPS, AESTHETIC_PROPOSALS, WCAG_MIN_READABLE_CONTRAST_RATIO, auditHtmlAntiAiSlop,
+  buildCssVariablesStyleText, computeContrastRatio, readDesignSystemLock, recommendAestheticProposals
 } from './ui-aesthetics.mjs';
+
+export { WCAG_MIN_READABLE_CONTRAST_RATIO, computeContrastRatio };
 import { ARCHETYPE_CSS, renderProposalArchetypeBody, resolveProposalArchetype } from './ui-archetypes.mjs';
 import { buildInjectedUiBridgeScript } from './ui-board-bridge.mjs';
 import { renderPuckInteractiveEditorHtml } from './ui-puck-editor.mjs';
@@ -622,6 +624,62 @@ async function uibRunAgentBrowserProbe(localAbBin, liveUrl, html) {
   }
 }
 
+export const UI_DUAL_VIEWPORTS = Object.freeze({
+  desktop: Object.freeze({ id: 'desktop', label: '桌面端 (1280x800)', width: 1280, height: 800 }),
+  mobile: Object.freeze({ id: 'mobile', label: '移动端 (390x844)', width: 390, height: 844 })
+});
+const DEFAULT_OVERFLOW_TOLERANCE_PX = 0;
+
+function uibCollectViewportOverflowElements(rawElements, viewportId, viewportWidth, tolerancePx) {
+  const out = [];
+  if (!Array.isArray(rawElements)) return out;
+  for (const el of rawElements) {
+    if (!el || typeof el !== 'object') continue;
+    const edge = Math.max(Number(el.scrollWidth || 0), Number(el.right || 0), Number(el.width || 0));
+    const overflowPx = edge - viewportWidth;
+    if (overflowPx > tolerancePx) {
+      out.push({ viewport: viewportId, selector: String(el.selector || el.id || el.tag || 'element'), scrollWidth: edge, viewportWidth, overflowPx });
+    }
+  }
+  return out;
+}
+
+function uibEvaluateSingleViewport(vpInput, preset, tolerancePx) {
+  if (!vpInput || typeof vpInput !== 'object') {
+    return { id: preset.id, viewportWidth: preset.width, viewportHeight: preset.height, scrollWidth: preset.width, overflowPx: 0, overflowed: false, elements: [] };
+  }
+  const viewportWidth = Number(vpInput.viewportWidth || vpInput.width || preset.width);
+  const viewportHeight = Number(vpInput.viewportHeight || vpInput.height || preset.height);
+  const scrollWidth = Number(vpInput.scrollWidth || viewportWidth);
+  const overflowPx = Math.max(0, scrollWidth - viewportWidth);
+  const rawEls = vpInput.elements || vpInput.overflowElements || [];
+  const elements = uibCollectViewportOverflowElements(rawEls, preset.id, viewportWidth, tolerancePx);
+  const overflowed = overflowPx > tolerancePx || elements.length > 0;
+  return { id: preset.id, viewportWidth, viewportHeight, scrollWidth, overflowPx, overflowed, elements };
+}
+
+export function evaluateDualViewportOverflow(metrics = {}, opts = {}) {
+  const tolerancePx = Math.max(0, Number(opts.tolerancePx ?? DEFAULT_OVERFLOW_TOLERANCE_PX));
+  let deskIn = metrics?.desktop;
+  let mobIn = metrics?.mobile;
+  if (Array.isArray(metrics)) {
+    deskIn = metrics.find((m) => m?.id === 'desktop' || m?.viewport === 'desktop');
+    mobIn = metrics.find((m) => m?.id === 'mobile' || m?.viewport === 'mobile');
+  } else if (!deskIn && !mobIn && metrics && typeof metrics === 'object' && ('scrollWidth' in metrics || 'elements' in metrics)) {
+    const w = Number(metrics.viewportWidth || metrics.width || UI_DUAL_VIEWPORTS.desktop.width);
+    if (w <= UI_DUAL_VIEWPORTS.mobile.width) mobIn = metrics;
+    else deskIn = metrics;
+  }
+  const desktop = uibEvaluateSingleViewport(deskIn, UI_DUAL_VIEWPORTS.desktop, tolerancePx);
+  const mobile = uibEvaluateSingleViewport(mobIn, UI_DUAL_VIEWPORTS.mobile, tolerancePx);
+  const overflowElements = [...desktop.elements, ...mobile.elements];
+  const issues = [];
+  if (desktop.overflowed) issues.push(`${UI_DUAL_VIEWPORTS.desktop.label} 横向溢出 (${desktop.scrollWidth}px > ${desktop.viewportWidth}px)`);
+  if (mobile.overflowed) issues.push(`${UI_DUAL_VIEWPORTS.mobile.label} 横向溢出 (${mobile.scrollWidth}px > ${mobile.viewportWidth}px)`);
+  const overflowCount = (desktop.overflowed ? 1 : 0) + (mobile.overflowed ? 1 : 0);
+  return { ok: overflowCount === 0, hasOverflow: overflowCount > 0, desktop, mobile, overflowCount, overflowElements, issues };
+}
+
 export async function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
   const root = resolve(projectRoot);
   const proto = renderPrototypeHtml(root, opts);
@@ -629,13 +687,14 @@ export async function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
   const interactiveTags = [...html.matchAll(/<(button|a|input|select|textarea)\b[^>]*>/gi)].map((m) => m[0]);
   const actionMatches = [...html.matchAll(/data-dg-action="([^"]+)"/g)].map((m) => m[1]);
   const slopAudit = auditHtmlAntiAiSlop(html);
+  const viewportOverflow = opts.viewportMetrics ? evaluateDualViewportOverflow(opts.viewportMetrics) : null;
   const tc = proto.toolchain || readUiToolchainStatus(root);
   const localAbBin = tc.agentBrowserBin;
   const abReport = (localAbBin && existsSync(localAbBin))
     ? await uibRunAgentBrowserProbe(localAbBin, opts.liveUrl, html)
     : { cliUsed: 'builtin-dom-probe', cliExitCode: null, cliSnapSummary: null, cliDiagnostic: null };
 
-  const issues = [...slopAudit.warnings];
+  const issues = [...slopAudit.warnings, ...(viewportOverflow ? viewportOverflow.issues : [])];
   if (interactiveTags.length === 0) issues.push('页面未检出任何可交互按钮或输入控件');
   let engineNote = '';
   if (abReport.cliUsed === 'agent-browser') engineNote = '（agent-browser 实机快照通过）';
@@ -646,7 +705,7 @@ export async function runUiAgentSelfPlayCheck(projectRoot, opts = {}) {
     cliExitCode: abReport.cliExitCode, cliDiagnostic: abReport.cliDiagnostic, checkedControls: interactiveTags.length,
     interactiveActions: actionMatches, mockCount: proto.wiring.actions.filter((a) => a.status === 'mock').length,
     wiredCount: proto.wiring.actions.filter((a) => a.status !== 'mock').length, aestheticsPass: slopAudit.pass,
-    cliSnapSummary: abReport.cliSnapSummary, issues,
+    viewportOverflow, cliSnapSummary: abReport.cliSnapSummary, issues,
     summary: issues.length === 0
       ? `🤖 Agent 自测通过${engineNote}：已巡检 ${interactiveTags.length} 个交互控件与 ${actionMatches.length} 条动作链路，0 遮挡死点，美学反套路核查通过`
       : `🤖 Agent 自测发现 ${issues.length} 项待修问题：${issues.join('；')}`

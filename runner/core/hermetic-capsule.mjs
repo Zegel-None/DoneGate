@@ -6,9 +6,11 @@ import { UNTRUSTED_SYSTEM_CLAUSE, buildUntrustedEnvelopeSection, makeUntrustedNo
 import { extractFileInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { extractPythonImportTargets } from './python-imports.mjs';
 import { inspectCrossCardFocusPatterns, writeProjectRouter } from './context-router.mjs';
-import { buildDomWiringGraph, computeFileLineMetrics, formatDomWiringStubComment, resolveSubpackFocusPatterns } from './dom-wiring-graph.mjs';
+import { buildDomWiringGraph, computeFileLineMetrics, expandScopeWithWebAssets, formatDomWiringStubComment, resolveSubpackFocusPatterns } from './dom-wiring-graph.mjs';
 import { adviseCapsuleModularitySplit } from './capsule-shard-advisor.mjs';
 import { assembleDynamicBodyWithToc, hcapBuildCapsulePayload, hcapBuildStaticPrefixLines } from './capsule-markdown.mjs';
+import { buildViewerFocusedFileSlice } from './hermetic-capsule/viewer-slicer.mjs';
+import { loadVerifiedJitMemories } from './hermetic-capsule/jit-memory-loader.mjs';
 
 const HCAP_GENERIC_STEMS = new Set(['index', 'contract', 'main', 'types', 'utils', '_shared']);
 const HCAP_IMPORT_RE = /(?:import\s+(?:[^\n;]*?\s+from\s+)?|export\s+(?:\*|\{[^}]*\})\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
@@ -166,17 +168,18 @@ function hcapOrderCandidates(metaByFile, isPriority) {
 }
 
 function hcapSelectZeroHopSources(metaByFile, domGraph, selCtx) {
-  const { narrowMode, closureSet, seedSources, lexicalSources, zeroHopCharCap } = selCtx;
+  const { narrowMode, closureSet, seedSources, lexicalSources, lexicalTerms, viewerSliceLineCap, zeroHopCharCap } = selCtx;
   const isPriority = (f) => seedSources.has(f) || lexicalSources.has(f);
   const zeroHopMap = new Map(), siblingStubs = [], truncatedFiles = [];
   let usedChars = 0;
   for (const rel of hcapOrderCandidates(metaByFile, isPriority)) {
     const meta = metaByFile.get(rel), wiring = domGraph.byFile.get(rel);
     if (narrowMode && !closureSet.has(rel)) { siblingStubs.push(hcapBuildSiblingStub(rel, meta, wiring)); continue; }
-    if (usedChars + meta.content.length <= zeroHopCharCap) {
-      usedChars += meta.content.length;
-      const { lm, headroom, content } = meta, role = hcapResolveZeroHopRole(narrowMode, seedSources.has(rel), lexicalSources.has(rel));
-      zeroHopMap.set(rel, { path: rel, kind: 'source', role, isSeed: !narrowMode || isPriority(rel), content, effectiveLines: lm.effectiveLines, physicalLines: lm.physicalLines, maxProceduralFnLines: lm.maxProceduralFnLines, headroom });
+    const view = buildViewerFocusedFileSlice(rel, meta.content, { isFocusSeed: seedSources.has(rel), maxFullLines: viewerSliceLineCap, lexicalTerms });
+    if (usedChars + view.content.length <= zeroHopCharCap) {
+      usedChars += view.content.length;
+      const { lm, headroom } = meta, role = view.sliced ? view.role : hcapResolveZeroHopRole(narrowMode, seedSources.has(rel), lexicalSources.has(rel));
+      zeroHopMap.set(rel, { path: rel, kind: 'source', role, isSeed: !narrowMode || isPriority(rel), content: view.content, effectiveLines: lm.effectiveLines, physicalLines: lm.physicalLines, maxProceduralFnLines: lm.maxProceduralFnLines, headroom });
     } else {
       truncatedFiles.push(rel);
       if (narrowMode) siblingStubs.push(hcapBuildSiblingStub(rel, meta, wiring));
@@ -214,7 +217,7 @@ function hcapSelectZeroHopTests(projectRoot, candidateTests, testCtx) {
 function partitionZeroHopAssets(projectRoot, target, graph, budget, focusPatterns, lexicalTerms, hasCrossCardWarn) {
   const maxEff = graph.thresholds?.maxEffectiveFileLines || 850, zeroHopCharCap = budget.zeroHopSourceBudgetTokens * 4;
   const focusMode = focusPatterns.length > 0, lexicalMode = lexicalTerms.length > 0, narrowMode = focusMode || lexicalMode;
-  const { rawByFile, metaByFile, cardMaxProcFn } = hcapLoadScopeSources(projectRoot, target.stub.scopeFiles, maxEff);
+  const { rawByFile, metaByFile, cardMaxProcFn } = hcapLoadScopeSources(projectRoot, expandScopeWithWebAssets(projectRoot, target.scope, target.stub.scopeFiles), maxEff);
   const scopeSet = new Set(rawByFile.keys());
   const seedSources = new Set([...scopeSet].filter((rel) => focusMode && matchesFocusPattern(rel, focusPatterns)));
   const lexicalSources = new Set([...scopeSet].filter((rel) => lexicalMode && lexicalTerms.some((t) => (rawByFile.get(rel) || '').includes(t))));
@@ -224,7 +227,7 @@ function partitionZeroHopAssets(projectRoot, target, graph, budget, focusPattern
   const domGraph = buildDomWiringGraph(rawByFile);
   const closureSet = computeIntraHopFocusClosure(scopeSet, rawByFile, seedSources, target.stub.facadeFiles, domGraph);
   for (const lx of lexicalSources) closureSet.add(lx);
-  const { zeroHopFiles, siblingStubs, truncatedFiles, usedChars } = hcapSelectZeroHopSources(metaByFile, domGraph, { narrowMode, closureSet, seedSources, lexicalSources, zeroHopCharCap });
+  const { zeroHopFiles, siblingStubs, truncatedFiles, usedChars } = hcapSelectZeroHopSources(metaByFile, domGraph, { narrowMode, closureSet, seedSources, lexicalSources, lexicalTerms, viewerSliceLineCap: graph.thresholds?.maxCoreFileLines, zeroHopCharCap });
   const shardAdvice = adviseCapsuleModularitySplit(target, rawByFile, domGraph, budget, truncatedFiles.length);
   const obHints = (target.obligations || []).map((o) => String(o.command || ''));
   const zeroHopTests = hcapSelectZeroHopTests(projectRoot, candidateTests, { maxEff, narrowMode, lexicalMode, lexicalTerms, seedTests, obHints, closureHints: hcapBuildSeedHints(zeroHopFiles), zeroHopCharCap, usedChars });
@@ -311,14 +314,16 @@ export function cmdSlice(projectRoot, opts = {}) {
     return { exitCode: 3, warnings, stderr: `--focus 未匹配到节点「${target.id}」内的任何 0-Hop 源码或测试文件：${focusPatterns.join(', ')}` };
   }
   const untrusted = hcapCollectUntrustedEntries(projectRoot, target, opts);
+  const jitMem = loadVerifiedJitMemories(projectRoot, { scopes: target.scope, disabled: opts.includeMemory === false });
   const rawPrefix = hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNodeIds, warnings, microGateCommand);
   const prefixLines = untrusted.hasUntrusted ? [rawPrefix[0], '', `> 🛡️ ${UNTRUSTED_SYSTEM_CLAUSE}`, ...rawPrefix.slice(1)] : rawPrefix;
   const { fullLines, tocEntries } = assembleDynamicBodyWithToc(prefixLines, assets, target, budget);
-  const capsuleMarkdown = [...fullLines, ...untrusted.lines].join('\n') + '\n';
+  const capsuleMarkdown = [...fullLines, ...jitMem.lines, ...untrusted.lines].join('\n') + '\n';
+  const projectMemory = { loadedCount: jitMem.entries.length, entries: jitMem.entries, staleEvicted: jitMem.staleEvicted, blockedEntries: jitMem.blockedEntries, budgetTruncated: Boolean(jitMem.budgetTruncated) };
   const capsulePayload = { ...hcapBuildCapsulePayload({
     target, budget, routerPayload, hiddenNodeIds, neighbors, assets, tocEntries,
     focusPatterns, lexicalTerms, warnings, crossCardRoutes, microGateCommand, capsuleMarkdown
-  }), untrustedEnvelope: { enabled: untrusted.hasUntrusted, count: untrusted.count } };
+  }), projectMemory, untrustedEnvelope: { enabled: untrusted.hasUntrusted, count: untrusted.count } };
 
   const capDir = join(projectRoot, '.donegate', 'capsules');
   const defaultMdPath = join(capDir, `${target.id}.capsule.md`);

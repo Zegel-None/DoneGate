@@ -19,12 +19,38 @@
       "x": 50,
       "y": 90,
       "w": 265,
-      "config": { "tier": "ACH", "requireShaRestore": true },
+      "config": {
+        "tier": "ACH",
+        "requireShaRestore": true
+      },
       "configSchema": [
-        { "key": "tier", "label": "变异档位", "type": "enum", "options": ["A", "B", "ACH"], "default": "ACH" },
-        { "key": "requireShaRestore", "label": "变异后强制校验 SHA-256 原样还原", "type": "boolean", "default": true }
+        {
+          "key": "tier",
+          "label": "变异档位",
+          "type": "enum",
+          "options": [
+            "A",
+            "B",
+            "ACH"
+          ],
+          "default": "ACH"
+        },
+        {
+          "key": "requireShaRestore",
+          "label": "变异后强制校验 SHA-256 原样还原",
+          "type": "boolean",
+          "default": true
+        }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "runner/self-test.mjs", "args": [], "passRoot": false, "requireFile": "runner/self-test.mjs" }
+      "exec": {
+        "kind": "donegate_cmd",
+        "args": [
+          "teeth",
+          "--tier",
+          "ACH"
+        ],
+        "passRoot": true
+      }
     },
     {
       "id": "dv-jit-catch",
@@ -37,11 +63,25 @@
       "x": 360,
       "y": 90,
       "w": 265,
-      "config": { "enableRubFakeFilter": true },
+      "config": {
+        "enableRubFakeFilter": true
+      },
       "configSchema": [
-        { "key": "enableRubFakeFilter", "label": "开启 RubFake 假阳性过滤", "type": "boolean", "default": true }
+        {
+          "key": "enableRubFakeFilter",
+          "label": "开启 RubFake 假阳性过滤",
+          "type": "boolean",
+          "default": true
+        }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-escapes.mjs", "args": [], "passRoot": false, "requireFile": "escapes.jsonl" }
+      "exec": {
+        "kind": "donegate_cmd",
+        "args": [
+          "catch",
+          "--focus-hint"
+        ],
+        "passRoot": true
+      }
     },
     {
       "id": "dv-ui-live",
@@ -50,18 +90,43 @@
       "tier": "optional",
       "slot": "gate:ui-eval",
       "activeBrick": "builtin-ui-live-eval",
-      "requires": ["hasPlaywright"],
+      "requires": [
+        "hasPlaywright"
+      ],
       "onMissing": "degrade",
       "bypassed": false,
       "x": 670,
       "y": 90,
       "w": 265,
-      "config": { "minRubricScore": 75, "maxButtons": 8 },
+      "config": {
+        "minRubricScore": 75,
+        "maxButtons": 8
+      },
       "configSchema": [
-        { "key": "minRubricScore", "label": "四维美学最低及格分", "type": "number", "min": 50, "max": 100, "default": 75 },
-        { "key": "maxButtons", "label": "自动探针最多点击按钮数", "type": "number", "min": 2, "max": 30, "default": 8 }
+        {
+          "key": "minRubricScore",
+          "label": "四维美学最低及格分",
+          "type": "number",
+          "min": 50,
+          "max": 100,
+          "default": 75
+        },
+        {
+          "key": "maxButtons",
+          "label": "自动探针最多点击按钮数",
+          "type": "number",
+          "min": 2,
+          "max": 30,
+          "default": 8
+        }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [], "passRoot": true }
+      "exec": {
+        "kind": "builtin_gate",
+        "scriptRel": "runner/dsh/uiboard/ui-live-evaluator.mjs",
+        "args": [],
+        "passRoot": false,
+        "requireFile": "runner/dsh/uiboard/ui-live-evaluator.mjs"
+      }
     },
     {
       "id": "dv-judge-consensus",
@@ -74,17 +139,61 @@
       "x": 980,
       "y": 90,
       "w": 265,
-      "config": { "maxVoteRounds": 3, "escapesRegression": true },
+      "config": {
+        "maxVoteRounds": 3,
+        "escapesRegression": true
+      },
       "configSchema": [
-        { "key": "maxVoteRounds", "label": "多模型盲审最大轮次/票数上限", "type": "number", "min": 1, "max": 5, "default": 3 },
-        { "key": "escapesRegression", "label": "打包时附带历史漏网回归校准集", "type": "boolean", "default": true }
+        {
+          "key": "maxVoteRounds",
+          "label": "多模型盲审最大轮次/票数上限",
+          "type": "number",
+          "min": 1,
+          "max": 5,
+          "default": 3
+        },
+        {
+          "key": "escapesRegression",
+          "label": "打包时附带历史漏网回归校准集",
+          "type": "boolean",
+          "default": true
+        }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "tools/judge-canary-eval.mjs", "args": ["--json"], "passRoot": false, "requireFile": "tools/judge-canary-eval.mjs" }
+      "exec": {
+        "kind": "builtin_gate",
+        "scriptRel": "tools/judge-canary-eval.mjs",
+        "args": [
+          "--json"
+        ],
+        "passRoot": false,
+        "requireFile": "tools/judge-canary-eval.mjs"
+      }
     }
   ],
   "links": [
-    { "id": "lk-dv-1", "fromNode": "dv-mutation", "fromSlot": "out", "toNode": "dv-jit-catch", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-dv-2", "fromNode": "dv-jit-catch", "fromSlot": "out", "toNode": "dv-ui-live", "toSlot": "in", "type": "SIGNAL" },
-    { "id": "lk-dv-3", "fromNode": "dv-ui-live", "fromSlot": "out", "toNode": "dv-judge-consensus", "toSlot": "in", "type": "SIGNAL" }
+    {
+      "id": "lk-dv-1",
+      "fromNode": "dv-mutation",
+      "fromSlot": "out",
+      "toNode": "dv-jit-catch",
+      "toSlot": "in",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "lk-dv-2",
+      "fromNode": "dv-jit-catch",
+      "fromSlot": "out",
+      "toNode": "dv-ui-live",
+      "toSlot": "in",
+      "type": "SIGNAL"
+    },
+    {
+      "id": "lk-dv-3",
+      "fromNode": "dv-ui-live",
+      "fromSlot": "out",
+      "toNode": "dv-judge-consensus",
+      "toSlot": "in",
+      "type": "SIGNAL"
+    }
   ]
 }

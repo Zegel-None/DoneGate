@@ -1,4 +1,4 @@
-// 零开局选档 · 模型信任阶梯与观察期采纳率度量（按实绩建议减负、观察期规则晋升/修剪与安全带回系提醒，<= 265 行）
+// 零开局选档 · 模型信任阶梯、观察期采纳率与门禁误拦无助率账本评估（<= 335 行）
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../../skill/io.mjs';
@@ -10,7 +10,12 @@ export const OBSERVE_MIN_PROMOTE_FIRES = 3;
 export const OBSERVE_PROMOTE_FIX_RATE = 0.75;
 export const OBSERVE_MIN_PRUNE_FIRES = 5;
 export const OBSERVE_PRUNE_MAX_FIX_RATE = 0.2;
+export const RULE_UNHELPFUL_MIN_SAMPLES = 4;
+export const RULE_UNHELPFUL_DOWNGRADE_RATE = 0.5;
+export const RULE_UNHELPFUL_PRUNE_RATE = 0.75;
+const RATE_DECIMALS = 4, PERCENT_SCALE = 100;
 const TL_LEDGER_REL = '.donegate/trust-ledger.json';
+const UNHELPFUL_OUTCOMES = new Set(['overridden', 'reverted', 'dismissed', 'bypassed', 'false-positive']);
 
 function tlKey(modelId, flowId, nodeId) {
   return `${String(modelId || 'default').trim()}::${flowId}::${nodeId}`;
@@ -251,4 +256,68 @@ export function tlComputeRestrainedSuggestions(projectRoot, opts = {}) {
     reenableAlerts: allReenable.slice(0, 3),
     observeDecisions: allObserve
   };
+}
+
+function tlExtractEntryCounts(entry) {
+  if (typeof entry.totalFires === 'number' || typeof entry.fired === 'number') {
+    const fires = Math.max(0, Number(entry.totalFires ?? entry.fired ?? 0));
+    const badRaw = entry.unhelpfulCount ?? entry.overriddenCount ?? (typeof entry.unhelpful === 'number' ? entry.unhelpful : 0);
+    return { fires, bad: Math.min(fires, Math.max(0, Number(badRaw || 0))) };
+  }
+  const outcome = String(entry.outcome || entry.action || '').trim().toLowerCase();
+  const isUnhelpful = entry.unhelpful === true || entry.overridden === true || entry.reverted === true
+    || entry.falsePositive === true || entry.helpful === false || UNHELPFUL_OUTCOMES.has(outcome);
+  return { fires: 1, bad: isUnhelpful ? 1 : 0 };
+}
+
+function tlClassifyRuleLedgerAction(stat, minSamples, downgradeRate, pruneRate) {
+  if (stat.tier === 'integrity') return { action: 'keep-integrity', flagged: false };
+  if (stat.totalFires < minSamples) return { action: 'keep', flagged: false };
+  if (stat.unhelpfulRate >= pruneRate) return { action: 'prune', flagged: true };
+  if (stat.unhelpfulRate >= downgradeRate) return { action: 'downgrade-observe', flagged: true };
+  return { action: 'keep', flagged: false };
+}
+
+function tlResolveEntryRuleId(entry) {
+  if (!entry || typeof entry !== 'object') return '';
+  return String(entry.ruleId ?? entry.nodeId ?? entry.id ?? '').trim();
+}
+
+function tlAccumulateRuleStats(list) {
+  const byRule = new Map();
+  for (const entry of list) {
+    const ruleId = tlResolveEntryRuleId(entry);
+    if (!ruleId) continue;
+    const prev = byRule.get(ruleId) || { ruleId, title: String(entry.title ?? ruleId), tier: String(entry.tier ?? 'recommended'), totalFires: 0, unhelpfulCount: 0 };
+    if (entry.tier === 'integrity') prev.tier = 'integrity';
+    const { fires, bad } = tlExtractEntryCounts(entry);
+    prev.totalFires += fires;
+    prev.unhelpfulCount += bad;
+    byRule.set(ruleId, prev);
+  }
+  return [...byRule.values()];
+}
+
+function tlBuildRecommendation(r) {
+  const actionLabel = r.action === 'prune' ? '修剪关闭 (prune)' : '降级观察 (downgrade-observe)';
+  const pct = Math.round(r.unhelpfulRate * PERCENT_SCALE);
+  return {
+    ruleId: r.ruleId, title: r.title, action: r.action, unhelpfulRate: r.unhelpfulRate,
+    totalFires: r.totalFires, unhelpfulCount: r.unhelpfulCount,
+    reason: `软门禁「${r.title}」触发 ${r.totalFires} 次中被撤销/覆盖 ${r.unhelpfulCount} 次（无助率 ${pct}%），建议执行 ${actionLabel}`
+  };
+}
+
+export function evaluateGateRuleUnhelpfulLedger(ledgerEntries = [], opts = {}) {
+  const list = Array.isArray(ledgerEntries) ? ledgerEntries : [];
+  const minSamples = Number(opts.minSamples ?? RULE_UNHELPFUL_MIN_SAMPLES);
+  const downgradeThreshold = Number(opts.maxUnhelpfulRate ?? opts.downgradeThreshold ?? RULE_UNHELPFUL_DOWNGRADE_RATE);
+  const pruneThreshold = Number(opts.pruneThreshold ?? RULE_UNHELPFUL_PRUNE_RATE);
+  const rules = tlAccumulateRuleStats(list).map((r) => {
+    const unhelpfulRate = r.totalFires > 0 ? Number((r.unhelpfulCount / r.totalFires).toFixed(RATE_DECIMALS)) : 0;
+    const cls = tlClassifyRuleLedgerAction({ ...r, unhelpfulRate }, minSamples, downgradeThreshold, pruneThreshold);
+    return { ...r, helpfulCount: r.totalFires - r.unhelpfulCount, unhelpfulRate, ...cls };
+  }).sort((a, b) => (b.unhelpfulRate - a.unhelpfulRate) || a.ruleId.localeCompare(b.ruleId));
+  const flaggedRules = rules.filter((r) => r.flagged);
+  return { ok: flaggedRules.length === 0, totalEntries: list.length, minSamples, downgradeThreshold, pruneThreshold, rules, flaggedRules, recommendations: flaggedRules.map(tlBuildRecommendation) };
 }

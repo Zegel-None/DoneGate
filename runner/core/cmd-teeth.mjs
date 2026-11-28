@@ -8,8 +8,8 @@ import { verifyClaimInMemory } from '../../skill/check-declarations.mjs';
 import { buildSanitizedEnv } from './isolation.mjs';
 import { execRunPreFlightPlug } from './cmd-execute.mjs';
 import { renderProgressBlock, renderWorryBlock } from './progress.mjs';
-import { cmdCatch, runAchSemanticMutants } from './teeth-ach.mjs';
-export { cmdCatch };
+import { cmdCatch, probeTargetFunctionVacuity, runAchSemanticMutants, runWorkflowAchMutationProbe } from './teeth-ach.mjs';
+export { cmdCatch, probeTargetFunctionVacuity };
 
 function teethIsFileInContractScope(projectRoot, contract, targetFile) {
   const rawRel = relative(projectRoot, targetFile);
@@ -171,6 +171,7 @@ function teethRunTierA(projectRoot, contract, ob, id, criterionId, cPath) {
 
 export function cmdTeeth(projectRoot, opts) {
   const { id, criterionId, tier = 'A' } = opts;
+  if (!id && !criterionId && String(tier).toUpperCase() === 'ACH') return runWorkflowAchMutationProbe(projectRoot, opts);
   if (!id || !criterionId) return { exitCode: 3, stderr: '用法：teeth <契约id> <判据id> [--tier A|B|ACH] [--mutants <json>]' };
   const cPath = join(projectRoot, 'contracts', id, 'contract.json');
   const res = readJsonStrict(cPath);
@@ -179,6 +180,10 @@ export function cmdTeeth(projectRoot, opts) {
   const ob = (contract.obligations || []).find((o) => o.id === criterionId);
   if (!ob) return { exitCode: 3, stderr: `契约 ${id} 中找不到判据 ${criterionId}` };
 
+  if (opts.vacuitySymbol || ob.vacuitySymbol) {
+    const vac = probeTargetFunctionVacuity(projectRoot, { file: opts.vacuityFile || ob.scope, functionName: opts.vacuitySymbol || ob.vacuitySymbol, command: ob.command, timeoutSec: ob.timeoutSec });
+    if (!vac.ok) return { exitCode: vac.exitCode, stderr: vac.reason, vacuity: vac };
+  }
   if (String(tier).toUpperCase() === 'ACH') return teethRunAchTier(projectRoot, contract, ob, opts, cPath);
   if (tier === 'B') return teethRunTierB(projectRoot, contract, ob, opts, cPath);
   return teethRunTierA(projectRoot, contract, ob, id, criterionId, cPath);

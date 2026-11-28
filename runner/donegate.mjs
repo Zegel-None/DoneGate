@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// DoneGate V4 · 十二条命令统一零依赖入口（四值退出码规范）及主控三级变焦驾驶舱、开源图谱追踪、密封契约切片与微门禁快捷入口
+// DoneGate V4 · 十二条主命令统一零依赖 CLI 入口与参数分发器（四值退出码规范）
 // 用法：node runner/donegate.mjs <command> [subcommand/args] [--root <dir>]
-// 命令：init / contract new / contract freeze / check / teeth / status / graph / gaps / handover / verify pack / verify apply / retire
-// 快捷入口转发映射：brief & zoom -> runner/cockpit/cockpit-commands.mjs | locate -> runner/cockpit/cockpit-locate.mjs | mcp -> runner/cockpit/cockpit-mcp.mjs | impact -> runner/core/impact-radar.mjs | slice -> runner/core/hermetic-capsule.mjs | check-node -> runner/core/node-micro-gate.mjs | lint-edit -> skill/lint-edit.mjs | preflight -> skill/preflight-subagent.mjs
+// 主命令：init / contract / check / teeth / catch / status / graph / gaps / handover / verify / retire
+// 子命令入口：donegate flow CLI (official default governance workflows) / harness / patch-edit / lint-edit / preflight / check-node
 import Module from 'node:module';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -22,7 +22,8 @@ import { cmdLocate } from './cockpit/cockpit-locate.mjs';
 import { startCockpitMcp } from './cockpit/cockpit-mcp.mjs';
 import { buildDoneGateGovernanceArgv, buildDoneGateGovernanceMcpTools } from './cockpit/adapters/donegate-mcp-tools.mjs';
 import { cmdHarness } from './harnesses/index.mjs';
-import { cmdLintEdit } from '../skill/lint-edit.mjs';
+import { cmdLintEdit, lintEditedFiles } from '../skill/lint-edit.mjs';
+import { executeFlexibleFilePatch } from '../skill/lint-edit/flexible-patch.mjs';
 import { cmdPreflight } from '../skill/preflight-subagent.mjs';
 
 const BOOLEAN_FLAGS = new Set([
@@ -30,7 +31,7 @@ const BOOLEAN_FLAGS = new Set([
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
   'stubs', 'decisions', 'full', 'skeleton', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human',
-  'require-root', 'governance-only', 'no-hooks', 'full-mcp', 'focus-hint'
+  'require-root', 'governance-only', 'no-hooks', 'full-mcp', 'focus-hint', 'dry-run'
 ]);
 
 const HELP_TEXT = [
@@ -61,6 +62,7 @@ const HELP_TEXT = [
   '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
+  '· patch-edit <file> --old <oldText> --new <newText> [--dry-run] [--json]   四级去空白保缩进容错替换并联动 lint-edit 校验',
   '· impact <file-or-anchor...> [--budget <n>] [--json]   跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断多跳单测与 ADR 预警）',
   '· mcp [--root <项目根>] [--require-root] [--governance-only]   启动零依赖 stdio MCP 服务（含 dg_status / dg_slice / dg_lint_edit / dg_check_node）',
   '· flow <list|plan|inspect|diff|run|reset> [flowId] [--staged] [--json]   声明式治理流查看、预演与一键运行（支持 workflow 别名）',
@@ -71,18 +73,21 @@ const HELP_TEXT = [
 function dgConsumeLongFlag(flags, argv, idx) {
   const k = argv[idx].slice(2);
   const nextTok = argv[idx + 1];
+  if ((k === 'old' || k === 'new') && nextTok !== undefined) {
+    flags[k] = nextTok;
+    return idx + 1;
+  }
   const isValuedPreflightNode = k === 'node' && argv[0] === 'preflight' && nextTok !== undefined && !nextTok.startsWith('--');
   if (BOOLEAN_FLAGS.has(k) && !isValuedPreflightNode) {
     flags[k] = true;
     return idx;
   }
-  const next = argv[idx + 1];
-  if (next === undefined || next.startsWith('--')) {
+  if (nextTok === undefined || nextTok.startsWith('--')) {
     flags[k] = true;
     return idx;
   }
   const isListFlag = k === 'focus' || k === 'lexical';
-  flags[k] = (isListFlag && flags[k]) ? `${flags[k]},${next}` : next;
+  flags[k] = (isListFlag && flags[k]) ? `${flags[k]},${nextTok}` : nextTok;
   return idx + 1;
 }
 
@@ -148,6 +153,12 @@ function dgCmdSubagentTools(cmd, root, pos, flags) {
     });
   }
   if (cmd === 'lint-edit') return cmdLintEdit(root, { files: pos.slice(1), json: Boolean(flags.json) });
+  if (cmd === 'patch-edit') {
+    return executeFlexibleFilePatch(root, {
+      file: pos[1], oldText: flags.old, newText: flags.new, specFile: flags.spec,
+      dryRun: Boolean(flags['dry-run']), json: Boolean(flags.json), runLint: lintEditedFiles
+    });
+  }
   if (cmd === 'impact') return cmdImpact(root, { targets: pos.slice(1), json: Boolean(flags.json), budget: flags.budget });
   if (cmd === 'preflight') {
     return cmdPreflight(root, {

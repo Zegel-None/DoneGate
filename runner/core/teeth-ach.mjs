@@ -6,7 +6,14 @@ import { readJsonStrict } from '../../skill/io.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { buildSanitizedEnv, checkCommandBans } from './isolation.mjs';
 import { execRunPreFlightPlug } from './cmd-execute.mjs';
+import {
+  EPHEMERAL_CATCH_REL_DIR, buildCatchFocusHint, findStagedEphemeralCatchFile,
+  probeTargetFunctionVacuity, resolveWorkflowAchTarget, stageEphemeralCatchTest
+} from './teeth-ach/vacuity-and-focus.mjs';
+export { EPHEMERAL_CATCH_REL_DIR, buildCatchFocusHint, probeTargetFunctionVacuity, stageEphemeralCatchTest };
 
+const DEFAULT_CATCH_TIMEOUT_SEC = 120;
+const BEHAVIOR_SUMMARY_MAX_LEN = 140;
 const TACH_ASSERT_RE = /\b(?:expect\s*\(|assert(?:\.[a-zA-Z]+)?\s*\(|process\.exit\s*\(\s*[1-9]|throw\s+new\s+Error)/;
 const TACH_MOCK_ONLY_RE = /\b(?:vi\.mock|jest\.mock|mock\.module)\s*\(/;
 const TACH_IMPORT_RE = /(?:from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
@@ -202,46 +209,63 @@ function tachCollectDiffFiles(projectRoot, baseRef, headRef) {
   return String(r.stdout || '').split(/\r?\n/).map(tachNormalizeRel).filter(Boolean);
 }
 
-export function cmdCatch(projectRoot, opts = {}) {
-  const root = resolve(projectRoot);
-  const testFile = opts.testFile ? resolve(root, opts.testFile) : null;
-  let code = typeof opts.code === 'string' ? opts.code : '';
-  if (!code && testFile) {
-    if (!existsSync(testFile)) return { exitCode: 3, stderr: '捕获测试文件不存在：' + opts.testFile };
-    code = readFileSync(testFile, 'utf8');
+export function runWorkflowAchMutationProbe(projectRoot, opts = {}) {
+  const resolved = resolveWorkflowAchTarget(projectRoot, opts);
+  if (!resolved) {
+    return { ok: true, skipped: true, exitCode: 0, results: [], stdout: 'teeth (tier ACH): 未配置活动单卡语义变异目标，安全早退 (exit 0)' };
   }
-  const command = opts.command || (testFile ? tachBuildTestFileCommand(testFile) : '');
-  if (!command) return { exitCode: 3, stderr: '用法：donegate catch --test <file> | --command <cmd> [--base <ref>] [--json]' };
+  return runAchSemanticMutants(resolve(projectRoot), resolved.contract, resolved.ob, { mutants: resolved.mutants });
+}
 
-  const diffFiles = Array.isArray(opts.diffFiles) ? opts.diffFiles : tachCollectDiffFiles(root, opts.base, opts.head);
-  const rubFake = tachFilterCatchingTest({ code, command }, diffFiles);
-  if (!rubFake.ok) {
-    const out = { ok: false, exitCode: 3, code: rubFake.code, reasons: rubFake.reasons, diffFiles };
-    return {
-      exitCode: 3,
-      ...out,
-      stderr: opts.json ? JSON.stringify(out, null, 2) : rubFake.reasons.join('\n')
-    };
+function tachResolveCatchTarget(root, opts) {
+  if (opts.testFile) return { testFile: resolve(root, opts.testFile), ephemeralPath: null };
+  if (typeof opts.code === 'string' && opts.code.trim() && !opts.command) {
+    const staged = stageEphemeralCatchTest(root, { id: opts.id, code: opts.code });
+    return { testFile: staged.absPath, ephemeralPath: staged.relPath };
   }
+  if (opts.focusHint || process.env.DG_NODE_ID) {
+    const found = findStagedEphemeralCatchFile(root);
+    if (found) return { testFile: found.absPath, ephemeralPath: found.relPath };
+  }
+  return { testFile: null, ephemeralPath: null };
+}
 
-  const run = spawnSync(command, { cwd: root, shell: true, encoding: 'utf8', timeout: Number(opts.timeoutSec || 120) * 1000 });
+function tachHandleMissingCatchCommand(opts, diffFiles, focusHint) {
+  if (opts.focusHint || process.env.DG_NODE_ID) {
+    const skipOut = { ok: true, skipped: true, exitCode: 0, caught: false, diffFiles, ephemeralDir: EPHEMERAL_CATCH_REL_DIR, ...(focusHint ? { focusHint } : {}) };
+    return { ...skipOut, stdout: opts.json ? JSON.stringify(skipOut, null, 2) : (focusHint || 'catch: 无待执行临时抓虫脚本，安全早退 (exit 0)') };
+  }
+  return { exitCode: 3, stderr: '用法：donegate catch --test <file> | --command <cmd> [--focus-hint] [--base <ref>] [--json]' };
+}
+
+function tachExecuteVerifiedCatch(root, command, opts, diffFiles, rubFake, ephemeralPath, focusHint) {
+  const run = spawnSync(command, { cwd: root, shell: true, encoding: 'utf8', timeout: Number(opts.timeoutSec || DEFAULT_CATCH_TIMEOUT_SEC) * 1000 });
   const caught = run.status !== 0;
   const diagLine = String(run.stderr || run.stdout || '').split(/\r?\n/).map((s) => s.trim()).find(Boolean) || `exit=${run.status}`;
-  const behaviorSummary = String(opts.behavior || diagLine).slice(0, 140);
+  const behaviorSummary = String(opts.behavior || diagLine).slice(0, BEHAVIOR_SUMMARY_MAX_LEN);
   const behaviorCard = caught
     ? `【行为确认卡】本次改动触发的新行为/回归：「${behaviorSummary}」。请确认这是否是你的预期？[是 / 否]`
     : '【捕获测试通过】未在本次 diff 中捕获到非预期行为回归。';
   const payload = {
-    ok: !caught,
-    exitCode: caught ? 1 : 0,
-    caught,
-    diffFiles,
-    rubFake,
-    behaviorCard,
-    diagnostic: diagLine
+    ok: !caught, exitCode: caught ? 1 : 0, caught, diffFiles, rubFake, behaviorCard, diagnostic: diagLine,
+    ...(ephemeralPath ? { ephemeralPath } : {}), ...(focusHint ? { focusHint } : {})
   };
-  return {
-    ...payload,
-    stdout: opts.json ? JSON.stringify(payload, null, 2) : behaviorCard
-  };
+  return { ...payload, stdout: opts.json ? JSON.stringify(payload, null, 2) : behaviorCard };
+}
+
+export function cmdCatch(projectRoot, opts = {}) {
+  const root = resolve(projectRoot);
+  const diffFiles = Array.isArray(opts.diffFiles) ? opts.diffFiles : tachCollectDiffFiles(root, opts.base, opts.head);
+  const focusHint = opts.focusHint ? buildCatchFocusHint(root, diffFiles, opts) : undefined;
+  const { testFile, ephemeralPath } = tachResolveCatchTarget(root, opts);
+  if (testFile && !existsSync(testFile)) return { exitCode: 3, stderr: '捕获测试文件不存在：' + opts.testFile };
+  const code = typeof opts.code === 'string' && opts.code ? opts.code : (testFile ? readFileSync(testFile, 'utf8') : '');
+  const command = opts.command || (testFile ? tachBuildTestFileCommand(testFile) : '');
+  if (!command) return tachHandleMissingCatchCommand(opts, diffFiles, focusHint);
+  const rubFake = tachFilterCatchingTest({ code, command }, diffFiles);
+  if (!rubFake.ok) {
+    const out = { ok: false, exitCode: 3, code: rubFake.code, reasons: rubFake.reasons, diffFiles, ...(focusHint ? { focusHint } : {}) };
+    return { exitCode: 3, ...out, stderr: opts.json ? JSON.stringify(out, null, 2) : rubFake.reasons.join('\n') };
+  }
+  return tachExecuteVerifiedCatch(root, command, opts, diffFiles, rubFake, ephemeralPath, focusHint);
 }

@@ -1,4 +1,4 @@
-// 已冻结契约测试基线快照、防删改重放校核与跨契约测试锁死守卫（<= 250 行聚焦子模块）
+// 已冻结契约测试基线快照、断言不减棘轮、防私有符号耦合与防删改重放守卫（<= 350 行聚焦子模块）
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +7,7 @@ import { readJsonStrict } from '../../skill/io.mjs';
 import { readAndVerifyChain } from './chain.mjs';
 import { fileBelongsToScopes } from './context-router.mjs';
 import { buildSanitizedEnv } from './isolation.mjs';
+import { maskCommentsAndStrings } from './js-mask-lexer.mjs';
 import { loadContracts, loadThresholds } from './project-loader.mjs';
 
 const HTG_MAX_INLINE_BYTES = 262144;
@@ -169,6 +170,71 @@ function htgDiffLockedTests(rootAbs, cid, lockedTests) {
   return { deleted, modified };
 }
 
+const HTG_MASKED_ASSERT_RE = /\b(?:expect(?:\.(?:soft|poll))?\s*\(|assert(?:\.[A-Za-z_$][\w$]*)?\s*\()|(?:^|[;\n])\s*assert(?!\s*[.(])\b/g;
+const HTG_ESM_NAMED_IMP_RE = /import\s+(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+const HTG_CJS_NAMED_REQ_RE = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+export function verifyTestAssertionNonDecrease(beforeSrc, afterSrc, opts = {}) {
+  const ext = opts.ext || '.mjs';
+  const beforeMasked = maskCommentsAndStrings(String(beforeSrc || ''), ext);
+  const afterMasked = maskCommentsAndStrings(String(afterSrc || ''), ext);
+  const beforeCount = (beforeMasked.match(HTG_MASKED_ASSERT_RE) || []).length;
+  const afterCount = (afterMasked.match(HTG_MASKED_ASSERT_RE) || []).length;
+  const ok = afterCount >= beforeCount;
+  return {
+    ok,
+    beforeCount,
+    afterCount,
+    delta: afterCount - beforeCount,
+    code: ok ? 'ASSERTION_COUNT_PRESERVED' : 'TEST_ASSERTION_DECREASED',
+    ...(ok ? {} : {
+      reason: `HELDOUT_TEST_WEAKENED: 既有测试断言计数下降 (${beforeCount} -> ${afterCount})，严禁删减或注释断言凑绿`
+    })
+  };
+}
+
+function htgNormalizePublicSymbolSet(facadeExports) {
+  const set = new Set();
+  const raw = facadeExports instanceof Set ? [...facadeExports] : (Array.isArray(facadeExports) ? facadeExports : []);
+  for (const item of raw) {
+    const sym = typeof item === 'string' ? item.trim() : String(item?.symbol || '').trim();
+    if (!sym) continue;
+    set.add(sym.includes('::') ? sym.split('::').pop() : sym);
+  }
+  return set;
+}
+
+function htgCollectCoupledSpecifiers(rawClause, spec, publicSet, couplings) {
+  for (const part of rawClause.split(',')) {
+    const cleaned = part.trim().split(/\s+(?:as|:)\s+/)[0].trim();
+    if (!cleaned || cleaned === 'type') continue;
+    if (!publicSet.has(cleaned) || (cleaned.startsWith('_') && !publicSet.has(cleaned))) {
+      couplings.push({
+        specifier: spec,
+        symbol: cleaned,
+        kind: 'private_symbol_coupled',
+        reason: `PRIVATE_SYMBOL_COUPLED: 验收测试从 "${spec}" 导入了契约门面未导出的内部私有符号 "${cleaned}"`
+      });
+    }
+  }
+}
+
+export function detectPrivateSymbolTestCoupling(testSrc, facadeExports = [], opts = {}) {
+  const src = String(testSrc || '');
+  const masked = maskCommentsAndStrings(src, opts.ext || '.mjs');
+  const publicSet = htgNormalizePublicSymbolSet(facadeExports);
+  const couplings = [];
+  for (const re of [HTG_ESM_NAMED_IMP_RE, HTG_CJS_NAMED_REQ_RE]) {
+    for (const m of src.matchAll(re)) {
+      if (masked[m.index] === ' ') continue;
+      const spec = m[2].trim();
+      const checkSpec = opts.includeSpecRegex ? opts.includeSpecRegex.test(spec) : spec.startsWith('.');
+      if (checkSpec) htgCollectCoupledSpecifiers(m[1], spec, publicSet, couplings);
+    }
+  }
+  return { ok: couplings.length === 0, coupled: couplings.length > 0, couplings, warnings: couplings.map((c) => c.reason) };
+}
+
 function htgSwapAndReplayModifiedTests(rootAbs, contract, latestFreeze, modified) {
   const cid = contract.id;
   const backups = new Map();
@@ -181,7 +247,15 @@ function htgSwapAndReplayModifiedTests(rootAbs, contract, latestFreeze, modified
         fails: [`HELDOUT_TEST_WEAKENED: 已冻结测试文件 ${item.rel} 被修改且无法提取冻结基线重放，请先恢复或由人类重新执行 contract freeze`]
       };
     }
-    backups.set(item.abs, readFileSync(item.abs));
+    const curBuf = readFileSync(item.abs);
+    const ratchet = verifyTestAssertionNonDecrease(baseBuf.toString('utf8'), curBuf.toString('utf8'));
+    if (!ratchet.ok) {
+      return {
+        ok: false, checked: true, exitCode: 2, code: 'HELDOUT_TEST_WEAKENED',
+        fails: [`HELDOUT_TEST_WEAKENED: 测试文件 (${item.rel}) 断言计数下降 (${ratchet.beforeCount} -> ${ratchet.afterCount})，禁止删减断言凑绿`]
+      };
+    }
+    backups.set(item.abs, curBuf);
     baselines.set(item.abs, baseBuf);
   }
   const cmdObs = (Array.isArray(contract.obligations) ? contract.obligations : []).filter((o) => o && o.kind === 'command');

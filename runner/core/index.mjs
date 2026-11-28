@@ -2,12 +2,15 @@
 export * from './contract.mjs';
 export { cmdContractFreeze, cmdContractNew, cmdContractPromote, cmdInit, cmdRetire } from './cmd-lifecycle.mjs';
 export { detectRepoStackAndSmoke, discoverExistingRepoStarterContracts } from './init-discover.mjs';
-export { cmdCheck } from './cmd-execute.mjs';
-export { cmdTeeth } from './cmd-teeth.mjs';
+export {
+  BLOCKED_IMPOSSIBLE_CATEGORIES, DEFAULT_F2P_BASE_REF, cmdCheck,
+  recordBlockedImpossible, verifyExpectedOutputFiles, verifyFailToPassOnBase
+} from './cmd-execute.mjs';
+export { cmdTeeth, probeTargetFunctionVacuity } from './cmd-teeth.mjs';
 export { cmdGaps, cmdStatus, collectGapsList, runHealthChecks } from './cmd-inspect.mjs';
 export { cmdGraph } from './graph-edges.mjs';
 export { cmdHandover, cmdVerifyApply, cmdVerifyPack } from './cmd-handover-verify.mjs';
-export { cmdCatch } from './teeth-ach.mjs';
+export { EPHEMERAL_CATCH_REL_DIR, buildCatchFocusHint, cmdCatch, stageEphemeralCatchTest } from './teeth-ach.mjs';
 export {
   UNTRUSTED_ACTION_SEAL, classifySandboxDenialOutput, excludeCompactionArtifacts,
   sanitizeMcpActionForReview, sanitizeReviewEvidence, stripCrossSessionReasoning
@@ -21,7 +24,11 @@ export {
 } from './context-router.mjs';
 export { adviseCapsuleModularitySplit } from './capsule-shard-advisor.mjs';
 export { cmdSlice, diffAgainstFrozenStub, freezeNodeStubBaseline, parseFocusPatterns, parseLexicalTerms } from './hermetic-capsule.mjs';
-export { collectOtherContractsFrozenTests, extractReferencedTestFiles, snapshotFrozenTests, verifyFrozenTestIntegrity } from './heldout-test-guard.mjs';
+export { computeSignatureChangeObligations, verifyAllowedModifiedSymbols } from './ast-stub.mjs';
+export {
+  collectOtherContractsFrozenTests, detectPrivateSymbolTestCoupling,
+  extractReferencedTestFiles, snapshotFrozenTests, verifyFrozenTestIntegrity, verifyTestAssertionNonDecrease
+} from './heldout-test-guard.mjs';
 export { cmdCheckNode, collectGitNodeChanges } from './node-micro-gate.mjs';
 export { collectMultiHopTestsFromReverseAdj, irInferMultiHopTests } from './impact-multihop.mjs';
 export { analyzeImpactRadar, cmdImpact } from './impact-radar.mjs';
