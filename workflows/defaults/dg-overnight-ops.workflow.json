@@ -64,7 +64,7 @@
     {
       "id": "ops-gc-audit",
       "title": "周期性文档与符号漂移 GC 巡检",
-      "tip": "长跑结束后自动检查是否堆积了重复函数、超载文档或漂移术语，产出 GC-REPORT.md",
+      "tip": "长跑结束后自动检查是否堆积了重复函数、超载文档、漂移术语与在途策略失配，产出 GC-REPORT.md",
       "tier": "optional",
       "slot": "gate:gc",
       "activeBrick": "builtin-autopilot-gc",
@@ -76,7 +76,7 @@
       "configSchema": [
         { "key": "writeGcReport", "label": "生成 GC-REPORT.md 体检简报", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-doc-budgets.mjs", "args": [] }
+      "exec": { "kind": "builtin_gate", "scriptRel": "runner/dsh/autopilot/policy-effects.mjs", "args": ["--gc-audit"], "passRoot": true }
     }
   ],
   "links": [

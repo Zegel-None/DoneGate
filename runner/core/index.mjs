@@ -8,6 +8,12 @@ export { cmdGaps, cmdStatus, collectGapsList, runHealthChecks } from './cmd-insp
 export { cmdGraph } from './graph-edges.mjs';
 export { cmdHandover, cmdVerifyApply, cmdVerifyPack } from './cmd-handover-verify.mjs';
 export { cmdCatch } from './teeth-ach.mjs';
+export {
+  UNTRUSTED_ACTION_SEAL, classifySandboxDenialOutput, excludeCompactionArtifacts,
+  sanitizeMcpActionForReview, sanitizeReviewEvidence, stripCrossSessionReasoning
+} from './review-evidence-sanitizer.mjs';
+export { vcAggregateVoteFiles, vcEvaluateVerdictMatrix, vcValidateExecutionEnvelope, vcValidateSemiFormalProof } from './verify-consensus.mjs';
+export { cmdVerifyAutoJudge, runAutoJudgeBridge } from './auto-judge-bridge.mjs';
 export { appendProgressNote, clearCustomNotes, renderProgressBlock, renderWorryBlock, verifyProjectNotes } from './progress.mjs';
 export {
   SHARED_GOVERNANCE_GLOBS, companionDirForFileScope, discoverHermeticGraph, fileBelongsToScopes,

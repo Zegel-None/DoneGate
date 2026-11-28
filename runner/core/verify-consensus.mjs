@@ -1,4 +1,4 @@
-// 门 5 多模型共识投票（3 轮上限）、半形式化推理校验与 escapes.jsonl 回归集构造器（<= 220 行）
+// 门 5 多模型共识投票（3 轮上限）、半形式化推理校验与 escapes.jsonl 回归集构造器（<= 350 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readJsonStrict } from '../../skill/io.mjs';
@@ -7,47 +7,83 @@ export const VC_ITEMS = ['V1', 'V2', 'V3', 'V4', 'V5'];
 export const VC_ALLOWED = new Set(['pass', 'fail', 'unknown']);
 export const VC_MAX_ROUNDS = 3;
 
-export function vcValidateSemiFormalProof(itemKey, entry) {
-  if (!entry || typeof entry !== 'object' || entry.proof === undefined) {
-    return { ok: true };
+const vcNonEmpty = (v) => typeof v === 'string' && v.trim().length > 0;
+const vcPlainObj = (v) => Boolean(v && typeof v === 'object' && !Array.isArray(v));
+
+export function vcValidateSemiFormalProof(itemKey, entry, verdictVal) {
+  const resolvedVal = verdictVal ?? (typeof entry === 'string' ? entry : entry?.verdict);
+  if (!vcPlainObj(entry) || entry.proof === undefined) {
+    return resolvedVal === 'fail'
+      ? { ok: false, exitCode: 3, code: 'MISSING_FAIL_EXECUTION_TRACE', reason: `${itemKey}=fail 必须附带包含非空 premise / executionTrace / conclusion 的 proof 反例追踪` }
+      : { ok: true };
   }
   const p = entry.proof;
-  if (!p || typeof p !== 'object') {
-    return { ok: false, reason: `${itemKey}.proof 必须是包含 premise / executionTrace / conclusion 的对象` };
+  if (!vcPlainObj(p)) {
+    return { ok: false, exitCode: 3, reason: `${itemKey}.proof 必须是包含 premise / executionTrace / conclusion 的对象` };
   }
-  const hasPremise = typeof p.premise === 'string' && p.premise.trim().length > 0;
-  const hasTrace = (typeof p.executionTrace === 'string' && p.executionTrace.trim().length > 0) ||
-    (Array.isArray(p.executionTrace) && p.executionTrace.some((x) => typeof x === 'string' && x.trim().length > 0));
-  const hasConclusion = typeof p.conclusion === 'string' && p.conclusion.trim().length > 0;
-  if (!hasPremise || !hasTrace || !hasConclusion) {
-    return { ok: false, reason: `${itemKey}.proof 缺少必填半形式化字段（premise / executionTrace / conclusion）` };
+  const hasTrace = vcNonEmpty(p.executionTrace) || (Array.isArray(p.executionTrace) && p.executionTrace.some(vcNonEmpty));
+  if (!vcNonEmpty(p.premise) || !hasTrace || !vcNonEmpty(p.conclusion)) {
+    return { ok: false, exitCode: 3, reason: `${itemKey}.proof 缺少必填半形式化字段（premise / executionTrace / conclusion）` };
   }
   return { ok: true };
 }
 
-function vcInspectSingleVerdict(v, idx) {
+function vcCheckEnvelopeBody(env, opts) {
+  if (env.independent !== true) return { ok: false, exitCode: 2, code: 'NON_INDEPENDENT_JUDGE', stderr: '门 5 执行信封 independent 必须为 true，拒绝非独立自审（退 2）' };
+  const validPid = Number.isInteger(env.runnerPid) && env.runnerPid > 0;
+  if (![env.harness, env.modelId, env.packManifestSha256].every(vcNonEmpty) || !validPid) {
+    return { ok: false, exitCode: 2, code: 'INCOMPLETE_EXECUTION_ENVELOPE', stderr: 'executionEnvelope 缺少必填字段（harness / modelId / runnerPid / packManifestSha256，退 2）' };
+  }
+  if (vcNonEmpty(opts.expectedPackManifestSha256) && env.packManifestSha256.trim() !== opts.expectedPackManifestSha256.trim()) {
+    return { ok: false, exitCode: 2, code: 'PACK_MANIFEST_HASH_MISMATCH', stderr: 'executionEnvelope.packManifestSha256 与当前复核包不一致（退 2）' };
+  }
+  return { ok: true, present: true, envelope: env };
+}
+
+export function vcValidateExecutionEnvelope(verdictDoc, opts = {}) {
+  if (!vcPlainObj(verdictDoc)) return { ok: false, exitCode: 2, code: 'INVALID_VERDICT_DOC', stderr: '判定书顶层必须是 JSON 对象（退 2）' };
+  const env = verdictDoc.executionEnvelope;
+  const writerSid = String(opts.writerSessionId || env?.writerSessionId || verdictDoc.writerSessionId || '').trim();
+  const judgeSid = String(env?.sessionId || env?.judgeSessionId || verdictDoc.sessionId || '').trim();
+  if (writerSid && judgeSid && writerSid === judgeSid) {
+    return { ok: false, exitCode: 2, code: 'SAME_SESSION_SELF_REVIEW', stderr: `门 5 独立性事故：裁判会话 (${judgeSid}) 与写方会话相同，拒绝同源自我盲审（退 2）` };
+  }
+  if (env === undefined) {
+    return (opts.requireEnvelope || opts.requiresHeterogeneousJudge)
+      ? { ok: false, exitCode: 2, code: 'MISSING_EXECUTION_ENVELOPE', stderr: '必判档门 5 裁决缺少 executionEnvelope 独立运行信封（退 2）' }
+      : { ok: true, present: false };
+  }
+  return vcPlainObj(env) ? vcCheckEnvelopeBody(env, opts) : { ok: false, exitCode: 2, code: 'INVALID_EXECUTION_ENVELOPE', stderr: 'executionEnvelope 必须是 JSON 对象（退 2）' };
+}
+
+function vcInspectVoteItem(k, v, requireFailProof) {
+  const entry = v[k];
+  const val = typeof entry === 'string' ? entry : entry?.verdict;
+  const reason = String(vcPlainObj(entry) ? (entry.reason || entry.rationale || '') : (v.reasons?.[k] || ''));
+  if (!VC_ALLOWED.has(val)) return { ok: false, exitCode: 3, stderr: `非法作答词 ${k}=${val}（只允许 pass/fail/unknown，退 3）` };
+  const hasProof = vcPlainObj(entry) && entry.proof !== undefined;
+  const pChk = vcValidateSemiFormalProof(k, entry, val);
+  if ((hasProof || requireFailProof) && !pChk.ok) return { ok: false, exitCode: 3, code: pChk.code, stderr: `${pChk.reason}（退 3）` };
+  if (val === 'unknown' && !/(缺失|缺|矛盾|不一致|对不上|不可读|材料)/.test(reason.trim())) {
+    return { ok: false, exitCode: 3, stderr: `invalid-abstain：${k}=unknown 未指明缺失或矛盾材料（退 3）` };
+  }
+  return { ok: true, val, reason, proof: (pChk.ok && hasProof) ? entry.proof : undefined };
+}
+
+function vcInspectSingleVerdict(v, idx, opts = {}) {
   const label = `vote#${idx + 1}`;
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     return { ok: false, exitCode: 2, stderr: `${label} 判定书顶层必须是 JSON 对象（退 2）` };
   }
+  const envChk = vcValidateExecutionEnvelope(v, opts);
+  if (!envChk.ok) return { ok: false, exitCode: envChk.exitCode, code: envChk.code, stderr: `${label} ${envChk.stderr}` };
   const vals = {};
   const contradictionItems = new Set();
   for (const k of VC_ITEMS) {
-    const entry = v[k];
-    const val = typeof entry === 'string' ? entry : entry?.verdict;
-    const reason = typeof entry === 'object' ? (entry?.reason || entry?.rationale || '') : (v.reasons?.[k] || '');
-    if (!VC_ALLOWED.has(val)) {
-      return { ok: false, exitCode: 3, stderr: `${label} 非法作答词 ${k}=${val}（只允许 pass/fail/unknown，退 3）` };
-    }
-    const proofChk = vcValidateSemiFormalProof(k, entry);
-    if (!proofChk.ok) return { ok: false, exitCode: 3, stderr: `${label} ${proofChk.reason}（退 3）` };
-    if (val === 'unknown') {
-      if (!String(reason).trim() || !/(缺失|缺|矛盾|不一致|对不上|不可读|材料)/.test(String(reason))) {
-        return { ok: false, exitCode: 3, stderr: `${label} invalid-abstain：${k}=unknown 未指明缺失或矛盾材料（退 3）` };
-      }
-      if (/(矛盾|不一致|对不上)/.test(String(reason))) contradictionItems.add(k);
-    }
-    vals[k] = { val, reason: String(reason || '') };
+    const it = vcInspectVoteItem(k, v, Boolean(opts.strictAllVotes));
+    if (!it.ok) return { ok: false, exitCode: it.exitCode, stderr: `${label} ${it.stderr}` };
+    if (it.val === 'unknown' && /(矛盾|不一致|对不上)/.test(it.reason)) contradictionItems.add(k);
+    vals[k] = { val: it.val, reason: it.reason, proof: it.proof };
   }
   return { ok: true, judge: String(v.judge || `judge-${idx + 1}`), contractId: String(v.contractId || '').trim(), vals, contradictionItems };
 }
@@ -55,11 +91,12 @@ function vcInspectSingleVerdict(v, idx) {
 function vcAggregateSingleItem(k, parsed) {
   const counts = { pass: 0, fail: 0, unknown: 0 };
   const reasonsByVal = { pass: [], fail: [], unknown: [] };
-  let itemContradiction = false;
+  let firstFailProof, itemContradiction = false;
   for (const p of parsed) {
     const val = p.vals[k].val;
     counts[val]++;
     if (p.vals[k].reason) reasonsByVal[val].push(p.vals[k].reason);
+    if (val === 'fail' && p.vals[k].proof && !firstFailProof) firstFailProof = p.vals[k].proof;
     if (p.contradictionItems.has(k)) itemContradiction = true;
   }
   if (itemContradiction && counts.unknown > 0) {
@@ -69,12 +106,12 @@ function vcAggregateSingleItem(k, parsed) {
     return { verdict: 'pass', reason: `多数共识通过 (${counts.pass}/${parsed.length})` };
   }
   if (counts.fail > 0 && counts.fail >= counts.unknown) {
-    return { verdict: 'fail', reason: reasonsByVal.fail[0] || `多模型驳回 (${counts.fail}/${parsed.length})` };
+    return { verdict: 'fail', reason: reasonsByVal.fail[0] || `多模型驳回 (${counts.fail}/${parsed.length})`, ...(firstFailProof ? { proof: firstFailProof } : {}) };
   }
   return { verdict: 'unknown', reason: reasonsByVal.unknown[0] || '多模型未能对缺失材料达成多数共识' };
 }
 
-export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_ROUNDS) {
+export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_ROUNDS, opts = {}) {
   const list = Array.isArray(votePaths)
     ? votePaths.map((s) => String(s || '').trim()).filter(Boolean)
     : String(votePaths || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -95,7 +132,7 @@ export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_
     if (!existsSync(abs)) return { ok: false, exitCode: 3, stderr: `投票判定书不存在：${list[i]}` };
     const r = readJsonStrict(abs);
     if (!r.ok || !r.value) return { ok: false, exitCode: r.error === 'parse' ? 2 : 3, stderr: `投票判定书解析失败：${list[i]}` };
-    const checked = vcInspectSingleVerdict(r.value, i);
+    const checked = vcInspectSingleVerdict(r.value, i, opts);
     if (!checked.ok) return checked;
     parsed.push(checked);
   }
@@ -112,33 +149,25 @@ export function vcAggregateVoteFiles(projectRoot, votePaths, maxRounds = VC_MAX_
   for (const k of VC_ITEMS) {
     merged[k] = vcAggregateSingleItem(k, parsed);
   }
-  return { ok: true, merged, judges: parsed.map((p) => p.judge) };
+  const finalChk = vcEvaluateVerdictMatrix(merged);
+  return finalChk.ok ? { ok: true, merged, judges: parsed.map((p) => p.judge) } : finalChk;
 }
 
-export function vcEvaluateVerdictMatrix(v) {
+export function vcEvaluateVerdictMatrix(v, opts = {}) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     return { ok: false, exitCode: 2, stderr: '判定书顶层必须是 JSON 对象（退 2）' };
   }
+  const envChk = vcValidateExecutionEnvelope(v, opts);
+  if (!envChk.ok) return envChk;
   let hasFail = false;
   let hasUnknown = false;
   let isContradiction = false;
   for (const k of VC_ITEMS) {
-    const entry = v[k];
-    const val = typeof entry === 'string' ? entry : entry?.verdict;
-    const reason = typeof entry === 'object' ? (entry?.reason || entry?.rationale || '') : (v.reasons?.[k] || '');
-    if (!VC_ALLOWED.has(val)) {
-      return { ok: false, exitCode: 3, stderr: `非法作答词 ${k}=${val}（只允许 pass/fail/unknown，退 3）` };
-    }
-    const pChk = vcValidateSemiFormalProof(k, entry);
-    if (!pChk.ok) return { ok: false, exitCode: 3, stderr: `${pChk.reason}（退 3）` };
-    if (val === 'fail') hasFail = true;
-    if (val === 'unknown') {
-      hasUnknown = true;
-      if (!String(reason).trim() || !/(缺失|缺|矛盾|不一致|对不上|不可读|材料)/.test(String(reason))) {
-        return { ok: false, exitCode: 3, stderr: `invalid-abstain：${k}=unknown 未指明缺失或矛盾材料（退 3）` };
-      }
-      if (/(矛盾|不一致|对不上)/.test(String(reason))) isContradiction = true;
-    }
+    const it = vcInspectVoteItem(k, v, true);
+    if (!it.ok) return it;
+    if (it.val === 'fail') hasFail = true;
+    if (it.val === 'unknown') hasUnknown = true;
+    if (it.val === 'unknown' && /(矛盾|不一致|对不上)/.test(it.reason)) isContradiction = true;
   }
   return { ok: true, hasFail, hasUnknown, isContradiction };
 }

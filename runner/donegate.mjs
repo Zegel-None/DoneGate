@@ -15,7 +15,7 @@ import './atlas/dashboard.mjs';
 import {
   cmdCatch, cmdCheck, cmdCheckNode, cmdContractFreeze, cmdContractNew, cmdContractPromote,
   cmdGaps, cmdGraph, cmdHandover, cmdImpact, cmdInit, cmdRetire, cmdSlice, cmdStatus,
-  cmdTeeth, cmdVerifyApply, cmdVerifyPack
+  cmdTeeth, cmdVerifyApply, cmdVerifyAutoJudge, cmdVerifyPack
 } from './core/index.mjs';
 import { cmdBrief, cmdZoom } from './cockpit/cockpit-commands.mjs';
 import { cmdLocate } from './cockpit/cockpit-locate.mjs';
@@ -30,7 +30,7 @@ const BOOLEAN_FLAGS = new Set([
   'open', 'serve', 'skip-gates', 'force-batch', 'legacy', 'json', 'help', 'h',
   'router', 'router-only', 'freeze-stub', 'allow-stub-change', 'allow-cross-scope', 'skip-scope-check', 'receipt', 'node', 'stamp-lease',
   'stubs', 'decisions', 'full', 'skeleton', 'source', 'trace', 'compact', 'fast-sample', 'escapes-regression', 'staged', 'confirm-human',
-  'require-root', 'governance-only', 'no-hooks', 'full-mcp'
+  'require-root', 'governance-only', 'no-hooks', 'full-mcp', 'focus-hint'
 ]);
 
 const HELP_TEXT = [
@@ -43,13 +43,15 @@ const HELP_TEXT = [
   '  contract freeze <id> --by <签字人> [--legacy] [--force-batch]   冻结判据并签字（有判据缺 expect 或 kind 退 1）',
   '  contract freeze <id> --by <签字人> --signoff --attest <口头复述>   实现后裁方签收（记录复核包哈希与链上位置）',
   '  check <id> [--criterion <oid>] [--allow-dirty] [--human-pass] [--skip-gates] [--node]   跑判据并落证据（有未通过退 1，跑不起来退 3）',
-  '  teeth <id> <criterionId> [--tier A|B] [--claim <path>]   有牙实验：改坏实现看判据红不红（无牙退 1，还原失败退 2，未知退 3）',
+  '  teeth <id> <criterionId> [--tier A|B|ACH] [--claim <path>]   有牙实验：改坏实现看判据红不红（无牙退 1，还原失败退 2，未知退 3）',
+  '  catch <id> [--focus-hint]                       针对改动跑捕获测试并执行 RubFake 假警报过滤（捕获回归退 1，假测试退 3）',
   '  status [--tree] [--flow] [--html <path>] [--open] [--pending <c1,c2>]   现算五状态六栏总账（契约读不出退 3）',
   '  graph [--router]                                输出覆盖率与三色依赖图（--router 生成 .donegate/ROUTER.md 与接口存根）',
   '  gaps [--json]                                   输出实时缺口清单',
   '  handover [--out <path>] [--receiver <name>]     生成六节交接包',
   '  verify pack <id> [--base <rev>] [--head <rev>] [--out <dir>]   生成判方复核包（证据不全退 3）',
   '  verify apply <packDir> --verdict <verdict.json>   记录门 5 裁决（不过退 1，材料被篡改退 2，材料不全退 3）',
+  '  verify auto-judge <packDir> [--contract <id>] [--judges <cli1,cli2>]   跨进程只读异构自动盲审与负评二次元验证消噪（不过退 1，异常退 2/3）',
   '  retire <id> --reason <理由>                      退役契约（理由为空退 1）',
   '',
   '主控三级变焦驾驶舱、开源图谱追踪、密封契约切片与子代理微门禁快捷入口（默认 1M 窗口 × 40% = 400k Tokens 五段配额）：',
@@ -223,15 +225,30 @@ function dgCmdCheckOrTeeth(cmd, root, pos, flags) {
   }
   if (cmd === 'catch') {
     return cmdCatch(root, {
+      id: pos[1],
       testFile: flags.test || pos[1],
       command: flags.command,
       base: typeof flags.base === 'string' ? flags.base : undefined,
       head: typeof flags.head === 'string' ? flags.head : undefined,
       behavior: flags.behavior,
+      focusHint: Boolean(flags['focus-hint']),
       json: Boolean(flags.json)
     });
   }
   return null;
+}
+
+async function dgRunVerifyAutoJudge(root, pos, flags) {
+  const firstJudge = typeof flags.judges === 'string' ? flags.judges.split(',').map((s) => s.trim()).find(Boolean) : undefined;
+  const res = await cmdVerifyAutoJudge(root, pos, {
+    ...flags,
+    pack: pos[2] || flags.pack,
+    judgeBin: flags['judge-bin'] || flags.judgeBin || firstJudge,
+    judgeArgs: flags['judge-args'] || flags.judgeArgs
+  });
+  const stdout = res.stdout || (res.verdict ? JSON.stringify({ ok: res.ok, exitCode: res.exitCode, contractId: res.contractId, verdict: res.verdict }) : '');
+  const stderr = res.stderr || (!res.ok && res.reasonCode ? `自动盲审未通过：${res.reasonCode}` : '');
+  return { ...res, exitCode: res.exitCode ?? 3, stdout, stderr };
 }
 
 function dgCmdStatusAndGovernance(cmd, sub, root, pos, flags) {
@@ -259,6 +276,7 @@ function dgCmdStatusAndGovernance(cmd, sub, root, pos, flags) {
   if (cmd === 'verify' && sub === 'apply') {
     return cmdVerifyApply(root, { packDir: pos[2], verdict: flags.verdict, votes: flags.votes });
   }
+  if (cmd === 'verify' && sub === 'auto-judge') return dgRunVerifyAutoJudge(root, pos, flags);
   if (cmd === 'retire') return cmdRetire(root, { id: pos[1], reason: flags.reason });
   return null;
 }
@@ -325,7 +343,7 @@ async function runCliEntry(argv) {
       buildExtraArgv: buildDoneGateGovernanceArgv
     });
   }
-  const res = dispatchCommand(argv);
+  const res = await dispatchCommand(argv);
   if (res.stdout) console.log(res.stdout);
   if (res.stderr) console.error(res.stderr);
   return res.exitCode;

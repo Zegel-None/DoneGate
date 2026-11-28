@@ -1,11 +1,16 @@
 // 交接包文档渲染与门 5 复核包 diff/打包构建子模块（供 cmd-handover-verify.mjs 委托，<= 350 行）
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readMaybe } from '../../skill/io.mjs';
 import { sha256 } from '../../skill/hash.mjs';
 import { readAndVerifyChain } from './chain.mjs';
 import { hvResolveHeldOutBaselineRef, verifyHeldOutContract } from './heldout-verifier.mjs';
+import { sanitizeReviewEvidence, stripCrossSessionReasoning } from './review-evidence-sanitizer.mjs';
+
+const HPB_SECURITY_PATH_RE = /(?:^|\/)(?:\.githooks\/|hooks?\/|auth|security|sandbox|isolation|egress|proxy|guard|crypto|token|secret|permission|acl)|(?:auth|guard|sandbox|isolation|egress|proxy|verify-consensus|heldout)[^/]*\.[a-z0-9]+$/i;
+const HPB_UI_PATH_RE = /(?:^|\/)(?:uiboard|atlas|frontend|web|ui|components|views|pages|public|assets|styles)\/|\.(?:html|css|scss|less|tsx|jsx|vue|svelte)$/i;
+const HPB_MAX_ANCESTOR_HOPS = 6;
 
 function hvReadLastEscapePitfall(projectRoot) {
   const fallback = '不要跳过冻结判据或用 || true 吞掉失败退出码，因为核侧会直接拒收。';
@@ -60,14 +65,14 @@ export function hvRenderHandoverMarkdown(st, gaps, decs, smokeCmd, nextContract,
 }
 
 export function hvBuildNextTurnInjectBlock(projectRoot, st, gaps, intent, smokeCmd, nextContract, dgBin) {
-  const intentLines = intent.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith('（'));
+  const intentLines = stripCrossSessionReasoning(intent).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith('（'));
   const intentBrief = intentLines[0] || '按当前契约与判据推进开发';
   const consText = readMaybe(join(projectRoot, 'CONSTRAINTS.md')) || '';
   const consRules = consText.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^(不许|必须)/.test(l)).slice(0, 2);
-  const lastPitfall = hvReadLastEscapePitfall(projectRoot);
+  const lastPitfall = stripCrossSessionReasoning(hvReadLastEscapePitfall(projectRoot));
   const completed = st.contractSummaries.filter((c) => !c.retired && c.state === '通过');
   const doneText = completed.length ? completed.map((c) => `${c.id}（${c.title}）`).join('、') : '尚无已通关模块，刚完成项目基线初始化';
-  const focusGap = gaps[0]?.detail || `推进契约 ${nextContract} 并补齐全部验收项`;
+  const focusGap = stripCrossSessionReasoning(gaps[0]?.detail || `推进契约 ${nextContract} 并补齐全部验收项`);
   const ruleText = consRules.length ? consRules.join('；') : '子进程直读退出码、不许改判据凑绿';
   return [
     '### 📋 下一棒直接注入上下文块（高熵完整句 · 防缺主谓宾瞎猜）',
@@ -117,10 +122,64 @@ export function hvBuildPackGitDiff(projectRoot, id, contract, opts) {
   if (!diffText.trim()) {
     return { ok: false, exitCode: 3, stderr: 'base..head 无任何实际改动 diff（可能是空提交或冻结后未改动），拒绝生成空复核包，请指定 --base <commit>' };
   }
-  return { ok: true, diffText, versText };
+  return { ok: true, diffText, versText, touchedFiles };
 }
 
-export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, versText, evPairs) {
+function hvReadJsonl(filePath) {
+  if (!existsSync(filePath)) return [];
+  const out = [];
+  for (const line of readFileSync(filePath, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
+    try {
+      const obj = JSON.parse(line);
+      if (obj && typeof obj === 'object') out.push(obj);
+    } catch (err) {
+      void err;
+    }
+  }
+  return out;
+}
+
+function hvCountGuardEvent(ev, counters) {
+  const code = String(ev.code || ev.reasonCode || ev.ruleId || ev.kind || ev.event || '').toUpperCase();
+  const detail = String(ev.reason || ev.detail || ev.command || '');
+  if (/SELF_SIGN|HUMAN_CLI|SOVEREIGN/.test(code) || /(?:contract\s+(?:freeze|promote)|verify\s+apply|代签|自签)/i.test(detail)) counters.selfSignAttemptCount++;
+  else if (/FROZEN_TEST|HELDOUT_TEST|REVERTED_FROZEN/.test(code) || ev.revertedFrozenTest === true || /冻结测试|frozen.?test/i.test(detail)) counters.revertedFrozenTestTouches++;
+  else if (/STOP_CIRCUIT|CIRCUIT_BREAK|MAX_STOP_STRIKES/.test(code)) counters.stopCircuitTrips++;
+  else if (/BYPASS|NO_VERIFY|SKIP_GATES|TAMPER|DENY|BLOCK/.test(code) || ev.decision === 'deny' || ev.blocked === true) counters.blockedBypassCount++;
+}
+
+function hvFindRepoRoot(startPath, id) {
+  let cur = startPath ? resolve(startPath) : '';
+  for (let i = 0; cur && i <= HPB_MAX_ANCESTOR_HOPS; i++) {
+    if (basename(cur) === '.donegate') return dirname(cur);
+    if ((id && existsSync(join(cur, 'contracts', id, 'contract.json'))) || (existsSync(join(cur, 'INTENT.md')) && existsSync(join(cur, 'contracts')))) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return null;
+}
+
+function hvEmitCompanionPackMeta(rootAbs, contractId, manifestBody, diffText) {
+  const paths = [...String(diffText || '').matchAll(/^(?:diff --git a\/.+? b\/|\+\+\+ b\/)(.+)$/gm)].map((m) => m[1].trim()).filter((p) => p && p !== '/dev/null');
+  const requiredDimensions = ['core-rubric'];
+  if (paths.some((f) => HPB_SECURITY_PATH_RE.test(f))) requiredDimensions.push('security');
+  if (paths.some((f) => HPB_UI_PATH_RE.test(f))) requiredDimensions.push('ui-live');
+  const incidentCounters = { blockedBypassCount: 0, selfSignAttemptCount: 0, stopCircuitTrips: 0, revertedFrozenTestTouches: 0 };
+  for (const ev of hvReadJsonl(join(rootAbs, '.donegate', 'guard-events.jsonl'))) hvCountGuardEvent(ev, incidentCounters);
+  for (const note of hvReadJsonl(join(rootAbs, '.donegate', 'notes.jsonl'))) {
+    if (note.kind !== 'worry') continue;
+    const text = `${note.title || ''} ${note.detail || ''}`;
+    if (/(?:防死锁放行|自动熔断|熔断放行|stopStrikes|circuit)/i.test(text)) incidentCounters.stopCircuitTrips++;
+    if (/(?:冻结测试|frozen.?test)/i.test(text)) incidentCounters.revertedFrozenTestTouches++;
+  }
+  const requiresHeterogeneousJudge = Object.values(incidentCounters).some((n) => n > 0) || requiredDimensions.includes('security');
+  const outDir = join(rootAbs, '.donegate', 'verify');
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, `pack-meta-${contractId}.json`), JSON.stringify({ schema: 'donegate-pack-meta/v1', contractId, packManifestSha256: sha256(manifestBody), requiredDimensions, incidentCounters, requiresHeterogeneousJudge }, null, 2) + '\n', 'utf8');
+}
+
+export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, versText, evPairs, opts = {}) {
   const filesWritten = [];
   const emit = (rel, content) => {
     const abs = join(packDir, rel);
@@ -128,9 +187,11 @@ export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, ver
     writeFileSync(abs, content, 'utf8');
     filesWritten.push(rel.replace(/\\/g, '/'));
   };
+  const defClaim = `# 完成声称（原文）\n\n本轮完成：契约 ${id} 全部 ${obs.length} 条判据已运行并留存三件套证据。`;
+  const [cleanWhy, cleanClaim] = sanitizeReviewEvidence([String(contract.why ?? ''), String(opts.completionClaim ?? defClaim)]);
   emit(`criterion/${id}.json`, JSON.stringify({ id: contract.id, obligations: obs }, null, 2) + '\n');
-  emit('contract-scope-why.md', `# 契约 ${id} 的 scope 与 why\n\n## scope\n${JSON.stringify(contract.scope)}\n\n## why\n${contract.why}\n`);
-  emit('完成声称.md', `# 完成声称（原文）\n\n本轮完成：契约 ${id} 全部 ${obs.length} 条判据已运行并留存三件套证据。\n`);
+  emit('contract-scope-why.md', `# 契约 ${id} 的 scope 与 why\n\n## scope\n${JSON.stringify(contract.scope)}\n\n## why\n${cleanWhy}\n`);
+  emit('完成声称.md', `${cleanClaim}\n`);
   emit(`diff/${id}.diff`, diffText);
   emit('diff/versions.txt', versText);
   for (const ev of evPairs) {
@@ -140,5 +201,7 @@ export function hvWriteVerifyPackFiles(packDir, id, contract, obs, diffText, ver
   }
   const manifestBody = filesWritten.map((r) => sha256(readFileSync(join(packDir, r))) + '  ' + r).join('\n') + '\n';
   writeFileSync(join(packDir, 'MANIFEST.txt'), manifestBody, 'utf8');
+  const rootAbs = opts.projectRoot ? resolve(opts.projectRoot) : (hvFindRepoRoot(evPairs?.[0]?.latestRunDir, id) || hvFindRepoRoot(packDir, id));
+  if (rootAbs && resolve(join(rootAbs, '.donegate', 'verify')) !== resolve(packDir)) hvEmitCompanionPackMeta(rootAbs, id, manifestBody, diffText);
   return manifestBody;
 }

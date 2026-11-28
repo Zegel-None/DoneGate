@@ -83,22 +83,30 @@ export function inspectCrossCardFocusPatterns(target, rawPatterns, graph) {
   return { warnings, crossCardRoutes };
 }
 
+function ctxRtrLookupProfile(thresholds, opts) {
+  const name = String(opts.harnessProfile || process.env.DG_HARNESS_PROFILE || '').trim();
+  const raw = name ? thresholds?.harnessProfiles?.[name] : null;
+  return (raw && typeof raw === 'object') ? { harnessProfile: name, prof: raw } : { harnessProfile: null, prof: null };
+}
+
 export function resolveSubagentBudgetProfile(thresholds, opts = {}) {
   const base = { ...DEFAULT_SUBAGENT_BUDGET, ...(thresholds?.subagentContextBudget || {}) };
-  const win = Number(opts.contextWindow) > 0 ? Math.round(Number(opts.contextWindow)) : base.contextWindowTokens;
-  const utilRaw = Number(opts.utilization);
+  const { harnessProfile, prof } = ctxRtrLookupProfile(thresholds, opts);
+  const expWin = Number(opts.contextWindowTokens ?? opts.contextWindow);
+  const win = Math.round([expWin, prof?.contextWindowTokens, base.contextWindowTokens].find((v) => Number(v) > 0));
+  const utilRaw = Number(opts.utilizationRatio ?? opts.utilization ?? prof?.utilizationRatio ?? prof?.targetUtilization);
   const util = (utilRaw > 0 && utilRaw <= 0.9) ? utilRaw : base.targetUtilization;
-  const hasCustomScale = Number(opts.contextWindow) > 0 || (utilRaw > 0 && utilRaw <= 0.9);
+  const hasCustomScale = expWin > 0 || (utilRaw > 0 && utilRaw <= 0.9) || Boolean(prof);
   const total = hasCustomScale ? Math.round(win * util) : (base.totalSessionBudgetTokens || Math.round(win * util));
 
   const routerBudgetTokens = hasCustomScale ? Math.max(800, Math.round(total * 0.02)) : base.routerBudgetTokens;
-  const zeroHopSourceBudgetTokens = Number(opts.maxTokens) > 0
-    ? Math.round(Number(opts.maxTokens))
-    : (hasCustomScale ? Math.round(total * 0.40) : base.zeroHopSourceBudgetTokens);
+  const zeroHopFall = hasCustomScale ? Math.round(total * 0.40) : base.zeroHopSourceBudgetTokens;
+  const zeroHopSourceBudgetTokens = Math.round([opts.maxTokens, opts.zeroHopSourceBudgetTokens, expWin > 0 ? 0 : prof?.zeroHopSourceBudgetTokens, zeroHopFall].find((v) => Number(v) > 0));
   const oneHopContractBudgetTokens = hasCustomScale ? Math.round(total * 0.12) : base.oneHopContractBudgetTokens;
   const onDemandExpandBudgetTokens = hasCustomScale ? Math.round(total * 0.16) : base.onDemandExpandBudgetTokens;
   const multiTurnReserveTokens = hasCustomScale ? Math.round(total * 0.30) : base.multiTurnReserveTokens;
   return {
+    harnessProfile, compactDefault: typeof prof?.compactDefault === 'boolean' ? prof.compactDefault : Boolean(base.compactDefault),
     contextWindowTokens: win,
     targetUtilization: util,
     totalSessionBudgetTokens: total,
@@ -134,8 +142,6 @@ function loadCanvasExtraNodes(projectRoot, existingIds) {
     .filter((e) => e.from && e.to && e.from !== e.to);
   return { extraNodes, canvasEdges };
 }
-
-
 
 function ctxRtrResolveRelativeImport(cf, spec, allScopedFiles) {
   if (!spec.startsWith('.')) return null;

@@ -1,11 +1,23 @@
-// L0 宿主工具层 Shell 命令安全审计原语（拦截 --no-verify 绕钩子、篡改 .githooks 与 AI 代签人类命令，<= 165 行）
+// L0 宿主工具层 Shell 命令安全审计原语（拦截 --no-verify 绕钩子、保护控制信道与禁 AI 代签人类命令，<= 195 行）
+
+export const FORBIDDEN_AGENT_MCP_MUTATIONS = Object.freeze(['freeze', 'promote', 'verify-apply', 'retire', 'overlay-confirm']);
 
 const CGR_GIT_VALUE_FLAGS = new Set(['-m', '--message', '-F', '--file', '--author', '--date', '-c', '-C', '--cleanup', '--pathspec-from-file']);
 const CGR_HOOK_SUBCMDS = new Set(['commit', 'merge', 'cherry-pick', 'rebase', 'am', 'push']);
 const CGR_SHELL_BINS = new Set(['sh', 'bash', 'zsh', 'pwsh', 'powershell', 'powershell.exe', 'pwsh.exe', 'cmd', 'cmd.exe']);
 const CGR_DELETE_BINS = new Set(['rm', 'del', 'erase', 'rmdir', 'mv', 'move', 'remove-item', 'move-item']);
+const CGR_CTRL_BINS = new Set(['rm', 'del', 'erase', 'rmdir', 'unlink', 'mv', 'move', 'ren', 'rename', 'cp', 'copy', 'touch', 'truncate', 'tee', 'dd', 'shred', 'remove-item', 'move-item', 'rename-item', 'copy-item', 'set-content', 'add-content', 'out-file', 'clear-content', 'new-item']);
+const CGR_RUNTIMES = new Set(['node', 'node.exe', 'nodejs', 'python', 'python3', 'py', 'ruby', 'perl', 'deno', 'bun']);
 const CGR_LEDGER_SENSITIVE_RE = /\.donegate[\\/](?:chain\.jsonl|evidence\b|stubs[\\/][^"'\s]*\.frozen\.json)/i;
+const CGR_CTRL_RE = /(?:^|[\\/"'\s=])\.donegate[\\/](?:STOP|STEER\.md|guard-events\.jsonl)(?:$|["'\s\\/])/i;
+const CGR_CTRL_TOK_RE = /(?:^|[\\/])\.donegate[\\/](?:STOP|STEER\.md|guard-events\.jsonl)$/i;
 const CGR_WRITE_OPS_RE = /(?:>>?|<<|\b(?:tee|cp|copy|mv|move|rm|del|remove-item|set-content|add-content|out-file|clear-content)\b)/i;
+const CGR_FS_API_RE = /\b(?:rmSync|unlinkSync|unlink|writeFileSync|writeFile|appendFileSync|appendFile|truncateSync|truncate|renameSync|rename|copyFileSync|createWriteStream|remove|rmtree|write_text|write_bytes)\b/i;
+
+export function isForbiddenAgentMcpMutation(subcmd) {
+  const n = String(subcmd || '').trim().toLowerCase().replace(/^(?:mcp__donegate__|donegate[_-]|dg[_-])/, '').replace(/[_\s]+/g, '-');
+  return Boolean(n && (FORBIDDEN_AGENT_MCP_MUTATIONS.includes(n) || n === 'contract-freeze' || n === 'contract-promote' || n === 'flow-overlay-confirm' || n === 'workflow-overlay-confirm'));
+}
 
 export function splitShellSegments(cmdLine) {
   const quotes = [];
@@ -93,10 +105,10 @@ function cgrAuditGitSegment(tokens) {
 }
 
 function cgrResolveHumanOnlySubcmd(sub1, sub2) {
-  if (sub1 === 'contract' && (sub2 === 'freeze' || sub2 === 'promote')) return `contract ${sub2}`;
-  if (sub1 === 'verify' && sub2 === 'apply') return 'verify apply';
-  if (sub1 === 'retire') return 'retire';
-  return null;
+  if (sub1 === 'contract' && isForbiddenAgentMcpMutation(sub2)) return `contract ${sub2}`;
+  if (sub1 === 'verify' && sub2 === 'apply' && isForbiddenAgentMcpMutation('verify-apply')) return 'verify apply';
+  if ((sub1 === 'flow' || sub1 === 'workflow') && sub2 === 'overlay-confirm') return `${sub1} overlay-confirm`;
+  return isForbiddenAgentMcpMutation(sub1) ? sub1 : null;
 }
 
 function cgrAuditDoneGateHumanCli(tokens) {
@@ -118,10 +130,22 @@ function cgrAuditDoneGateHumanCli(tokens) {
   return null;
 }
 
+function cgrHitsControlChannel(seg, tokens, firstBin) {
+  if (!CGR_CTRL_RE.test(seg)) return false;
+  if ((firstBin === 'git' || firstBin === 'git.exe') && !tokens.some((t) => t.unquoted.toLowerCase() === 'clean')) return false;
+  const hasTok = tokens.some((t) => CGR_CTRL_TOK_RE.test(t.unquoted));
+  const inPlace = (firstBin === 'sed' || firstBin === 'perl') && tokens.some((t) => /^-[a-zA-Z]*i/.test(t.unquoted));
+  const direct = hasTok && (CGR_CTRL_BINS.has(firstBin) || inPlace || firstBin === 'git');
+  return direct || /(?:>>?|>\||<>)/.test(cgrStripQuotedText(seg)) || (CGR_RUNTIMES.has(firstBin) && CGR_FS_API_RE.test(seg));
+}
+
 function cgrAuditHooksAndLedgerTamper(seg, tokens) {
   const firstBin = (tokens[0]?.unquoted || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
   if (CGR_DELETE_BINS.has(firstBin) && tokens.some((t) => /(?:^|[\\/])\.githooks(?:[\\/]|$)/i.test(t.unquoted))) {
     return { allowed: false, code: 'HOOK_BYPASS_DENIED', reason: '严禁删除或移走 .githooks 守门钩子目录及脚本' };
+  }
+  if (cgrHitsControlChannel(seg, tokens, firstBin)) {
+    return { allowed: false, code: 'CONTROL_CHANNEL_TAMPER_DENIED', reason: 'REF-05 控制信道红线：严禁 Agent 通过 Shell 命令删改、覆盖、重命名、清空或伪造 .donegate/STOP、.donegate/STEER.md 或 .donegate/guard-events.jsonl' };
   }
   if (CGR_LEDGER_SENSITIVE_RE.test(seg) && CGR_WRITE_OPS_RE.test(cgrStripQuotedText(seg))) {
     return { allowed: false, code: 'HUMAN_AUTHORITY_DENIED', reason: 'INV-13 账本红线：严禁通过 Shell 命令直接覆写或删除 .donegate 防篡改哈希链、证据包与冻结快照' };

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dispatchCommand } from '../runner/donegate.mjs';
-import { listHarnessAdapters, registerHarnessAdapter } from '../runner/harnesses/index.mjs';
+import { createPlannedHarnessStub, listHarnessAdapters, registerHarnessAdapter } from '../runner/harnesses/index.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const CLI_PATH = join(REPO_ROOT, 'runner', 'donegate.mjs');
@@ -63,18 +63,24 @@ afterEach(() => {
 });
 
 describe('stage25: pluggable harness adapters, --require-root governance MCP, and Antigravity plugin', () => {
-  it('① harness list 列出 DSH / Antigravity 与 Claude Code / Codex 预留占位，支持动态插拔注册', () => {
+  it('① harness list 列出 DSH / Antigravity / Claude Code / Codex 四宿主适配器，支持占位桩与动态插拔注册', () => {
     const res = dispatchCommand(['harness', 'list', '--json'], REPO_ROOT);
     expect(res.exitCode).toBe(0);
     const data = JSON.parse(res.stdout);
     const ids = data.harnesses.map((h) => h.id);
     expect(ids).toEqual(expect.arrayContaining(['dsh', 'antigravity', 'claude-code', 'codex']));
     expect(data.harnesses.find((h) => h.id === 'antigravity').implemented).toBe(true);
-    expect(data.harnesses.find((h) => h.id === 'claude-code').implemented).toBe(false);
-    expect(data.harnesses.find((h) => h.id === 'codex').implemented).toBe(false);
+    expect(data.harnesses.find((h) => h.id === 'claude-code').implemented).toBe(true);
+    expect(data.harnesses.find((h) => h.id === 'codex').implemented).toBe(true);
 
-    const stubInstall = dispatchCommand(['harness', 'install', 'claude-code'], REPO_ROOT);
-    expect(stubInstall.exitCode).toBe(3);
+    const planned = createPlannedHarnessStub({
+      id: 'planned-stub',
+      displayName: 'Planned Stub',
+      description: 'reserved stub',
+      targetHint: '/workspace/repo/.planned'
+    });
+    expect(planned.implemented).toBe(false);
+    expect(planned.install().exitCode).toBe(3);
 
     registerHarnessAdapter({
       id: 'demo-harness',

@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { readJsonStrict, readMaybe } from '../../skill/io.mjs';
+import { UNTRUSTED_SYSTEM_CLAUSE, buildUntrustedEnvelopeSection, makeUntrustedNonce, wrapUntrustedBlock } from '../shared/untrusted-envelope.mjs';
 import { extractFileInterfaceStub, maskCommentsAndStrings } from './ast-stub.mjs';
 import { extractPythonImportTargets } from './python-imports.mjs';
 import { inspectCrossCardFocusPatterns, writeProjectRouter } from './context-router.mjs';
@@ -258,6 +259,29 @@ function hcapBuildOneHopNeighbors(projectRoot, target, graph, budget) {
   return { neighborIds, neighbors };
 }
 
+function hcapParseWorryLine(line, targetId) {
+  try {
+    const n = JSON.parse(line);
+    const isWorry = n.kind === 'worry' || n.kind === 'alert';
+    if (!isWorry || (n.contractId && n.contractId !== targetId)) return null;
+    return { kind: 'worry-note', text: [n.title, n.detail].filter(Boolean).join('：') };
+  } catch (err) { void err; return null; }
+}
+
+function hcapCollectUntrustedEntries(projectRoot, target, opts) {
+  const toArr = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+  const refs = toArr(opts.externalRefs || target.externalRefs).map((r) => (typeof r === 'object' ? r : { kind: 'external-ref', text: r }));
+  const diskRaw = opts.includeWorryNotes === false ? '' : (readMaybe(join(projectRoot, '.donegate', 'notes.jsonl')) || '');
+  const diskWorries = diskRaw.split(/\r?\n/).filter(Boolean).slice(-8).map((ln) => hcapParseWorryLine(ln, target.id)).filter(Boolean);
+  const optWorries = toArr(opts.worryNotes).map((w) => ({ kind: 'worry-note', text: String(w) }));
+  const errLog = String(opts.errorLog || opts.failureLog || readMaybe(join(projectRoot, '.donegate', 'capsules', `${target.id}.error.log`)) || '').trim();
+  const baseSec = buildUntrustedEnvelopeSection([...refs, ...diskWorries, ...optWorries]);
+  if (!errLog) return baseSec;
+  const errBlock = wrapUntrustedBlock('error-log', errLog, { nonce: makeUntrustedNonce() });
+  const head = baseSec.hasUntrusted ? baseSec.lines : ['', '## 6. 外源不可信参考、历史报忧与报错日志（Nonce 物理隔离区）', `> ${UNTRUSTED_SYSTEM_CLAUSE}`, ''];
+  return { hasUntrusted: true, count: baseSec.count + 1, blocks: [...baseSec.blocks, errBlock], lines: [...head, ...errBlock.split(/\r?\n/), ''] };
+}
+
 export function cmdSlice(projectRoot, opts = {}) {
   const routerRes = writeProjectRouter(projectRoot, opts);
   if (!routerRes.ok) return { exitCode: 3, stderr: '契约读取错误，无法生成路由与局部胶囊' };
@@ -286,13 +310,15 @@ export function cmdSlice(projectRoot, opts = {}) {
   if (assets.emptyFocusMatch) {
     return { exitCode: 3, warnings, stderr: `--focus 未匹配到节点「${target.id}」内的任何 0-Hop 源码或测试文件：${focusPatterns.join(', ')}` };
   }
-  const prefixLines = hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNodeIds, warnings, microGateCommand);
+  const untrusted = hcapCollectUntrustedEntries(projectRoot, target, opts);
+  const rawPrefix = hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNodeIds, warnings, microGateCommand);
+  const prefixLines = untrusted.hasUntrusted ? [rawPrefix[0], '', `> 🛡️ ${UNTRUSTED_SYSTEM_CLAUSE}`, ...rawPrefix.slice(1)] : rawPrefix;
   const { fullLines, tocEntries } = assembleDynamicBodyWithToc(prefixLines, assets, target, budget);
-  const capsuleMarkdown = fullLines.join('\n') + '\n';
-  const capsulePayload = hcapBuildCapsulePayload({
+  const capsuleMarkdown = [...fullLines, ...untrusted.lines].join('\n') + '\n';
+  const capsulePayload = { ...hcapBuildCapsulePayload({
     target, budget, routerPayload, hiddenNodeIds, neighbors, assets, tocEntries,
     focusPatterns, lexicalTerms, warnings, crossCardRoutes, microGateCommand, capsuleMarkdown
-  });
+  }), untrustedEnvelope: { enabled: untrusted.hasUntrusted, count: untrusted.count } };
 
   const capDir = join(projectRoot, '.donegate', 'capsules');
   const defaultMdPath = join(capDir, `${target.id}.capsule.md`);

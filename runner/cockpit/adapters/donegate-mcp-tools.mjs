@@ -1,4 +1,7 @@
 // DoneGate 宿主治理 MCP 扩展工具集（dg_status / dg_slice / dg_lint_edit / dg_check_node，L5 adapters/，<= 200 行）
+import { FORBIDDEN_AGENT_MCP_MUTATIONS, isForbiddenAgentMcpMutation } from '../../shared/command-guard-rules.mjs';
+
+export { FORBIDDEN_AGENT_MCP_MUTATIONS };
 
 const posIntProp = (description) => ({ type: 'integer', minimum: 1, description });
 const optRootProp = { type: 'string', minLength: 1, description: '可选目标代码仓库根目录（默认启动目录）' };
@@ -164,7 +167,13 @@ function buildCheckNodeArgv(args) {
   return { ok: true, argv };
 }
 
-export function buildDoneGateGovernanceArgv(name, args) {
+export function buildDoneGateGovernanceArgv(name, args = {}) {
+  const sub = typeof args?.subcommand === 'string' ? args.subcommand : (typeof args?.action === 'string' ? args.action : '');
+  if (isForbiddenAgentMcpMutation(name) || (sub && isForbiddenAgentMcpMutation(sub))) {
+    const err = new Error(`G-10 主权硬锁拒绝 (HUMAN_AUTHORITY_DENIED)：禁止 Agent MCP 触发人类专属签字命令「${name}」（禁令清单：${FORBIDDEN_AGENT_MCP_MUTATIONS.join(', ')}）`);
+    err.code = 'HUMAN_AUTHORITY_DENIED';
+    throw err;
+  }
   if (name === 'dg_status') return buildStatusArgv(args);
   if (name === 'dg_slice') return buildSliceArgv(args);
   if (name === 'dg_lint_edit') return buildLintEditArgv(args);

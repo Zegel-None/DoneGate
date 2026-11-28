@@ -5,7 +5,7 @@
   "timing": "交付深测与盲审",
   "name": "交付深测与独立盲审（防假绿 + 界面真机 + 多模型共识）",
   "tip": "发版或大功能交付前，用语义变异、Diff 捕获、属性随机测试、真实浏览器点击与异构盲审做深度兜底。",
-  "presetVersion": "1.0.0",
+  "presetVersion": "1.1.0",
   "deps": [],
   "nodes": [
     {
@@ -24,7 +24,7 @@
         { "key": "tier", "label": "变异档位", "type": "enum", "options": ["A", "B", "ACH"], "default": "ACH" },
         { "key": "requireShaRestore", "label": "变异后强制校验 SHA-256 原样还原", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["status", "--json"], "requireFile": "contracts" }
+      "exec": { "kind": "builtin_gate", "scriptRel": "runner/self-test.mjs", "args": [], "passRoot": false, "requireFile": "runner/self-test.mjs" }
     },
     {
       "id": "dv-jit-catch",
@@ -61,12 +61,12 @@
         { "key": "minRubricScore", "label": "四维美学最低及格分", "type": "number", "min": 50, "max": 100, "default": 75 },
         { "key": "maxButtons", "label": "自动探针最多点击按钮数", "type": "number", "min": 2, "max": 30, "default": 8 }
       ],
-      "exec": { "kind": "donegate_cmd", "args": ["status", "--json"], "requireFile": "contracts" }
+      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-terminology.mjs", "args": [], "passRoot": true }
     },
     {
       "id": "dv-judge-consensus",
-      "title": "独立盲审与多模型共识投票",
-      "tip": "严守写判分离，支持 <=3 轮异构多模型投票共识、半形式化推理校验与漏网回归集",
+      "title": "独立盲审与 Canary 20 例裁判校准",
+      "tip": "严守写判分离，内置正负 20 例 Canary 校准集、半形式化反例路径校验与负评二审消噪",
       "tier": "integrity",
       "slot": "gate:judge",
       "activeBrick": "builtin-judge-consensus",
@@ -79,7 +79,7 @@
         { "key": "maxVoteRounds", "label": "多模型盲审最大轮次/票数上限", "type": "number", "min": 1, "max": 5, "default": 3 },
         { "key": "escapesRegression", "label": "打包时附带历史漏网回归校准集", "type": "boolean", "default": true }
       ],
-      "exec": { "kind": "builtin_gate", "scriptRel": "skill/check-reviewpack.mjs", "args": [], "passRoot": false }
+      "exec": { "kind": "builtin_gate", "scriptRel": "tools/judge-canary-eval.mjs", "args": ["--json"], "passRoot": false, "requireFile": "tools/judge-canary-eval.mjs" }
     }
   ],
   "links": [

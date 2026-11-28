@@ -4,30 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { createPlannedHarnessStub, validateHarnessAdapter } from './protocol.mjs';
 import { dshHarnessAdapter } from './dsh-adapter.mjs';
 import { antigravityHarnessAdapter } from './antigravity-adapter.mjs';
+import { claudeCodeHarnessAdapter } from './claude-code-adapter.mjs';
+import { codexHarnessAdapter } from './codex-adapter.mjs';
+
+export { createPlannedHarnessStub, validateHarnessAdapter };
 
 const DONEGATE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-const claudeCodeStub = createPlannedHarnessStub({
-  id: 'claude-code',
-  displayName: 'Claude Code',
-  description: '预留适配器：后续对接 Claude Code 插件包（.claude/plugins + settings.json hooks + .mcp.json）。',
-  targetHint: '~/.claude/plugins/donegate/ + .mcp.json',
-  capabilities: ['mcp-require-root', 'hooks', 'skills']
-});
-
-const codexStub = createPlannedHarnessStub({
-  id: 'codex',
-  displayName: 'OpenAI Codex CLI',
-  description: '预留适配器：后续对接 Codex CLI（~/.codex/config.toml MCP + AGENTS.md + skills）。',
-  targetHint: '~/.codex/config.toml + ~/.codex/skills/donegate/',
-  capabilities: ['mcp-require-root', 'skills', 'rules']
-});
 
 const HARNESS_MAP = new Map([
   [dshHarnessAdapter.id, dshHarnessAdapter],
   [antigravityHarnessAdapter.id, antigravityHarnessAdapter],
-  [claudeCodeStub.id, claudeCodeStub],
-  [codexStub.id, codexStub]
+  [claudeCodeHarnessAdapter.id, claudeCodeHarnessAdapter],
+  [codexHarnessAdapter.id, codexHarnessAdapter]
 ]);
 
 export function registerHarnessAdapter(adapter) {
@@ -57,7 +45,7 @@ function formatListText(items) {
     const tag = !it.implemented ? '预留占位' : (it.detection.installed ? '已安装' : (it.detection.available ? '可安装' : '未检测到宿主'));
     lines.push(`  - ${it.id.padEnd(12)} [${tag}] ${it.displayName} — ${it.detection.detail}`);
   }
-  lines.push('用法：node runner/donegate.mjs harness <list|status|install|uninstall> <id> [--no-hooks] [--full-mcp] [--dir <path>] [--json]');
+  lines.push('用法：node runner/donegate.mjs harness <list|status|install|uninstall> <id> [--config-root <dir>] [--no-hooks] [--full-mcp] [--dir <path>] [--json]');
   return lines.join('\n');
 }
 
@@ -83,7 +71,8 @@ export function cmdHarness(projectRoot, opts = {}) {
     dir: opts.dir,
     configRoot: opts.configRoot,
     noHooks: Boolean(opts.noHooks),
-    fullMcp: Boolean(opts.fullMcp)
+    fullMcp: Boolean(opts.fullMcp),
+    allowedNetworkHosts: opts.allowedNetworkHosts
   };
   if (sub === 'list') {
     const items = listHarnessAdapters(ctx);

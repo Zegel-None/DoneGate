@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const AGC_CHECKS = [
-  { id: 'symbols', label: '符号与重复函数门禁', script: 'skill/check-symbols.mjs', args: ['--gate'], requireFile: 'skill/symbols.baseline.json' },
+export const AGC_CHECKS = [
+  { id: 'symbols', label: '符号与重复函数门禁', script: 'skill/check-symbols.mjs', args: ['--gate'], requireFile: 'skill/symbols-baseline.json' },
   { id: 'doc-budgets', label: '文档字节/行数与防废话预算', script: 'skill/check-doc-budgets.mjs', args: [] },
   { id: 'terminology', label: '工程名词归一化门禁', script: 'skill/check-terminology.mjs', args: [] }
 ];
