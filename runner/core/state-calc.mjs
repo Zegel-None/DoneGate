@@ -5,6 +5,7 @@ import { readJsonStrict } from '../../skill/io.mjs';
 import { frozenHashOf } from '../../skill/hash.mjs';
 import { verifyClaimInMemory } from '../../skill/check-declarations.mjs';
 import { classifyBySpecTable, propagateImpact } from '../engine.mjs';
+import { isInfraContract, validateProductFlowGraph } from '../shared/product-flow-schema.mjs';
 import { readAndVerifyChain } from './chain.mjs';
 import { ensureRunnerConfig } from './isolation.mjs';
 import { STATE_PRIORITY, isDeliveryContract, loadContracts, loadFunctions, loadThresholds, readEvidenceRuns } from './project-loader.mjs';
@@ -170,14 +171,17 @@ function scSummarizeSingleContract(projectRoot, c, ctx) {
 }
 
 function scAuditFunctionCoverage(contracts, functions) {
-  const activeContractIds = new Set(contracts.filter(isDeliveryContract).map((c) => c.id));
+  const deliveryContracts = contracts.filter(isDeliveryContract);
+  const infraContracts = deliveryContracts.filter(isInfraContract).map((c) => c.id).sort();
+  const productContractIds = new Set(deliveryContracts.filter((c) => !isInfraContract(c)).map((c) => c.id));
   const knownAllContractIds = new Set(contracts.map((c) => c.id));
   const referencedIds = new Set(functions.flatMap((f) => (Array.isArray(f.contracts) ? f.contracts : [])));
-  const orphanContracts = [...activeContractIds].filter((id) => !referencedIds.has(id));
+  const orphanContracts = [...productContractIds].filter((id) => !referencedIds.has(id));
   const orphanFunctions = functions.filter((f) => !Array.isArray(f.contracts) || f.contracts.length === 0 || f.contracts.some((cid) => !knownAllContractIds.has(cid)));
   const badSourceFunctions = functions.filter((f) => typeof f.source !== 'string' || f.source.trim() === '' || /(基于分析|根据规范|从代码推断|总结|概括)/.test(f.source));
   const badNameFunctions = functions.filter((f) => f.id && f._fileId !== f.id);
-  return { orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions };
+  const flowSchemaIssues = validateProductFlowGraph(functions);
+  return { infraContracts, orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions, flowSchemaIssues };
 }
 
 function scCountUnresolvedAdapterClaims(projectRoot) {
@@ -223,7 +227,7 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
   const ignoredList = [];
   const ctx = { thresholds, chainRes, effectivePending, ledger, humanStats, ignoredList };
   const contractSummaries = contracts.map((c) => scSummarizeSingleContract(projectRoot, c, ctx));
-  const { orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions } = scAuditFunctionCoverage(contracts, functions);
+  const { infraContracts, orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions, flowSchemaIssues } = scAuditFunctionCoverage(contracts, functions);
   const unresolvedTotal = scCountUnresolvedAdapterClaims(projectRoot);
   const brickEcosystems = scSummarizeBrickEcosystems(projectRoot);
 
@@ -238,7 +242,7 @@ export function computeProjectStatus(projectRoot, pendingContracts = new Set()) 
   return {
     thresholds, contracts, contractErrors, functions, functionErrors, chainRes,
     ledger, humanStats, ignoredList, contractSummaries, brickEcosystems,
-    orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions,
+    infraContracts, orphanContracts, orphanFunctions, badSourceFunctions, badNameFunctions, flowSchemaIssues,
     unresolvedTotal, ledgerLines, funcLine, j3Line, isolationNotice, autoImpact
   };
 }

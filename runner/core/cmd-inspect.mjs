@@ -97,6 +97,7 @@ export function collectGapsList(projectRoot, st) {
   for (const oc of st.orphanContracts) gaps.push({ kind: 'orphan-contract', contractId: oc, detail: `孤儿契约：${oc}（未挂功能）` });
   for (const ofn of st.orphanFunctions) gaps.push({ kind: 'orphan-function', id: ofn.id || ofn._fileId, detail: `孤儿功能：${ofn.id || ofn._fileId}（声明了没做）` });
   for (const bf of st.badSourceFunctions) gaps.push({ kind: 'bad-source', id: bf.id || bf._fileId, detail: `INV-18：功能 ${bf.id || bf._fileId} 缺原话 source 或含禁用转述` });
+  for (const fi of (st.flowSchemaIssues || [])) gaps.push({ kind: 'bad-flow-schema', id: fi.id, detail: `产品流三层契约违规 [${fi.code}]：${fi.message}` });
   const { codeFiles } = collectCodeFilesForCoverage(projectRoot);
   const deliveryContracts = st.contracts.filter((c) => !c.retired && c.track !== 'explore');
   const edges = computeThreeColorEdges(projectRoot, deliveryContracts, codeFiles);
@@ -118,6 +119,9 @@ function insCheckStatusPreconditions(health, st, opts) {
   if (opts.flow && st.badSourceFunctions.length > 0) {
     const badNames = st.badSourceFunctions.map((f) => f.id || f._fileId).join('、');
     return { exitCode: 1, stderr: `INV-18 拒绝渲染流程图：${badNames} 缺少人的原话 source 或含禁用转述` };
+  }
+  if (opts.flow && Array.isArray(st.flowSchemaIssues) && st.flowSchemaIssues.length > 0) {
+    return { exitCode: 1, stderr: `产品流三层契约违规拒绝渲染流程图：${st.flowSchemaIssues.map((x) => x.message).join('；')}` };
   }
   return null;
 }
@@ -162,19 +166,28 @@ function insScoreFunctionForTree(fn, summaryById) {
   return Math.min(...linked.map((c) => TREE_ORDER[c.state] ?? 3));
 }
 
+function insFormatSingleTreeFunction(lines, fn, summaryById) {
+  const linked = insLinkedContractsFor(fn, summaryById);
+  linked.sort((a, b) => (TREE_ORDER[a.state] ?? 3) - (TREE_ORDER[b.state] ?? 3));
+  const worst = linked.length === 0 ? '未定验收' : linked[0].state;
+  const sym = STATE_SYMBOLS[worst] || '○';
+  const subTag = Array.isArray(fn.subflows) && fn.subflows.length > 0 ? ` [L2子流×${fn.subflows.length}]` : '';
+  lines.push(`├─ ${fn.title || fn.id}${subTag}  ${sym} (${worst})`);
+  for (const lc of linked) {
+    const cSym = lc.cleared ? '⬤ 通关' : `${STATE_SYMBOLS[lc.state] || '○'} ${lc.state}`;
+    lines.push(`│   └─ ${lc.id}  ${cSym} (${lc.passTrusted}/${lc.passTotal} 算数)`);
+  }
+}
+
 function insAppendStatusTree(lines, st, summaryById) {
   lines.push('\n功能清单（最差的在最上面）');
-  const sortedFuncs = [...st.functions].sort((a, b) => insScoreFunctionForTree(a, summaryById) - insScoreFunctionForTree(b, summaryById));
-  for (const fn of sortedFuncs) {
-    const linked = insLinkedContractsFor(fn, summaryById);
-    linked.sort((a, b) => (TREE_ORDER[a.state] ?? 3) - (TREE_ORDER[b.state] ?? 3));
-    const worst = linked.length === 0 ? '未定验收' : linked[0].state;
-    const sym = STATE_SYMBOLS[worst] || '○';
-    lines.push(`├─ ${fn.title || fn.id}  ${sym} (${worst})`);
-    for (const lc of linked) {
-      const cSym = lc.cleared ? '⬤ 通关' : `${STATE_SYMBOLS[lc.state] || '○'} ${lc.state}`;
-      lines.push(`│   └─ ${lc.id}  ${cSym} (${lc.passTrusted}/${lc.passTotal} 算数)`);
-    }
+  const sortedFuncs = [...st.functions].sort((a, b) => {
+    const diff = insScoreFunctionForTree(a, summaryById) - insScoreFunctionForTree(b, summaryById);
+    return diff !== 0 ? diff : ((a.order ?? 999) - (b.order ?? 999));
+  });
+  for (const fn of sortedFuncs) insFormatSingleTreeFunction(lines, fn, summaryById);
+  if ((st.infraContracts || []).length > 0) {
+    lines.push(`├─ 🔧 底座支撑仓（role=infra，共 ${st.infraContracts.length} 个：${st.infraContracts.join('、')}）`);
   }
   if (st.orphanContracts.length > 0) {
     lines.push(`└─ ⚠ 未登记功能 ${st.orphanContracts.length} 个`);
@@ -185,9 +198,12 @@ function insAppendStatusTree(lines, st, summaryById) {
 function insAppendStatusFlow(lines, st, summaryById) {
   lines.push('\n流程图（人说 Agent 画，机器算状态）');
   lines.push('```mermaid\nflowchart LR');
-  for (const fn of st.functions) {
+  const ordered = [...st.functions].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  for (const fn of ordered) {
     const linked = insLinkedContractsFor(fn, summaryById);
-    const label = linked.length === 0 ? '声明了没做' : `${linked[0].passTrusted}/${linked[0].passTotal}`;
+    const passTrusted = linked.reduce((acc, x) => acc + x.passTrusted, 0);
+    const passTotal = linked.reduce((acc, x) => acc + x.passTotal, 0);
+    const label = linked.length === 0 ? '声明了没做' : `${passTrusted}/${passTotal}`;
     lines.push(`  ${fn.id}["${fn.title || fn.id}<br/>${label}"]`);
     for (const nextId of (Array.isArray(fn.after) ? fn.after : [])) {
       lines.push(`  ${fn.id} -->|after| ${nextId}`);

@@ -137,19 +137,36 @@ export function assembleDynamicBodyWithToc(staticPrefixLines, assets, target, bu
   return { fullLines: [...staticPrefixLines, ...tocHeader, ...tocRows, ...bodyLines, ...tailLines], tocEntries };
 }
 
+function hcapFormatTargetObligations(obligations) {
+  if (obligations.length === 0) return ['- **本卡验收判据**：（待补充）'];
+  return [
+    '- **本卡验收判据**：',
+    ...obligations.map((o) => `  - \`${o.id}\` (${o.kind})：${o.claim || ''} → \`${o.command || o.expect?.standard || ''}\``)
+  ];
+}
+
+function hcapAppendNeighborBlocks(rawPrefix, neighbors) {
+  if (neighbors.length === 0) { rawPrefix.push('（无 1-Hop 上下游直连节点，本卡为独立自治节点）'); return; }
+  for (const nb of neighbors) {
+    rawPrefix.push(`### [${nb.relation}] \`${nb.nodeId}\` — ${nb.title}${nb.why ? `（${nb.why}）` : ''}（存根：\`.donegate/stubs/${nb.nodeId}.stub.d.ts\`）`);
+    if (nb.sharedBoundaryClaims.length > 0) rawPrefix.push(...nb.sharedBoundaryClaims.map((c) => `- 联调判据：${c}`));
+    rawPrefix.push('```ts', nb.stubText.trimEnd(), '```');
+  }
+}
+
 export function hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNodeIds, warnings, microGateCommand) {
   const utilPct = Math.round(budget.targetUtilization * 100);
-  const hasTwoTierBarrel = target.stub.facadeMode === 'barrel' && target.stub.facadeFiles.some((f) => f.endsWith('/contract.mjs')) && target.stub.facadeFiles.some((f) => f.endsWith('/index.mjs'));
+  const files = target.stub.facadeFiles;
+  const hasTwoTierBarrel = target.stub.facadeMode === 'barrel' && files.some((f) => f.endsWith('/contract.mjs')) && files.some((f) => f.endsWith('/index.mjs'));
   const barrelNote = hasTwoTierBarrel ? '（双层桶防环：`contract.mjs` 仅放零跨卡环路纯叶导出，跨卡编排导出放 `index.mjs`）' : '';
   const warnBanner = warnings.length > 0 ? ['> ⚠️ 跨卡焦点路由提示', ...warnings.map((w) => `> - ${w}`), ''] : [];
-  const obLines = target.obligations.length > 0
-    ? ['- **本卡验收判据**：', ...target.obligations.map((o) => `  - \`${o.id}\` (${o.kind})：${o.claim || ''} → \`${o.command || o.expect?.standard || ''}\``)]
-    : ['- **本卡验收判据**：（待补充）'];
+  const obLines = hcapFormatTargetObligations(target.obligations);
   const rawPrefix = [
     `# DoneGate 密封施工胶囊：${target.id}（${target.title}）`, '', ...warnBanner,
     '## 1. 静态路由规则与阅后即焚收口指令',
     `- **五段配额**：子代理总预算 **${hcapFmtInt(budget.contextWindowTokens)} × ${utilPct}% = ${hcapFmtInt(budget.totalSessionBudgetTokens)} Tokens**（L0 路由 ${hcapFmtInt(budget.routerBudgetTokens)}t | 0-Hop 上限 ${hcapFmtInt(budget.zeroHopSourceBudgetTokens)}t | 1-Hop 存根上限 ${hcapFmtInt(budget.oneHopContractBudgetTokens)}t | 按需展开预留 ${hcapFmtInt(budget.onDemandExpandBudgetTokens)}t | 多轮思考与微门禁迭代预留 ${hcapFmtInt(budget.multiTurnReserveTokens)}t）`,
     `- **门面与隔离约束**：只准修改本节点 \`scope\`（含显式文件同名伴生子模块目录）与关联单测；跨节点调用必须经由 1-Hop 门面存根（直连邻居 ${neighbors.length} 个节点），2-Hop+ 节点物理屏蔽（共屏蔽 ${hiddenNodeIds.length} 个节点）。`,
+    `- **自举免转义编辑与总览同步**：局部改码优先调 \`node runner/donegate.mjs patch-edit --spec <json|->\`（支持单文件或 \`{patches:[...]}\` 多文件原子替换并自动跑 \`lint-edit\`）；改动公共导出或 CLI 帮助后跑 \`node skill/gen-feature-overview.mjs\`。`,
     `- **阅后即焚收口指令**：局部快检执行 \`${microGateCommand}\`；退出码为 0 后仅将结构化回执（上限 ${budget.receiptBudgetTokens} Tokens）交回总控，随即销毁当前子会话上下文。`, '',
     '## 2. 本卡契约声明（0-Hop Mandate）',
     `- **节点 ID**：\`${target.id}\``,
@@ -159,12 +176,7 @@ export function hcapBuildStaticPrefixLines(target, budget, neighbors, hiddenNode
     ...obLines, '',
     '## 3. 1-Hop 邻域冻结接口存根（只读契约签名 · 物理隐藏邻居内部实现）'
   ];
-  if (neighbors.length === 0) rawPrefix.push('（无 1-Hop 上下游直连节点，本卡为独立自治节点）');
-  for (const nb of neighbors) {
-    rawPrefix.push(`### [${nb.relation}] \`${nb.nodeId}\` — ${nb.title}${nb.why ? `（${nb.why}）` : ''}（存根：\`.donegate/stubs/${nb.nodeId}.stub.d.ts\`）`);
-    if (nb.sharedBoundaryClaims.length > 0) rawPrefix.push(...nb.sharedBoundaryClaims.map((c) => `- 联调判据：${c}`));
-    rawPrefix.push('```ts', nb.stubText.trimEnd(), '```');
-  }
+  hcapAppendNeighborBlocks(rawPrefix, neighbors);
   return rawPrefix.join('\n').split(/\r?\n/);
 }
 

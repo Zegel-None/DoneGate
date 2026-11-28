@@ -4,6 +4,21 @@ import { join } from 'node:path';
 import { SHARED_GOVERNANCE_GLOBS } from '../../core/index.mjs';
 
 const DGB_CAPSULE_BUDGET_TOK = 160000;
+const DGB_SELF_HOST_ARSENAL = Object.freeze({
+  locateAndSlice: 'node runner/donegate.mjs locate "<任务>" && node runner/donegate.mjs slice <契约ID> [--focus <路径>]',
+  atomicPatchEdit: 'node runner/donegate.mjs patch-edit --spec -  # stdin 传 {"file","oldText","newText"} 或 {"patches":[...]} 免转义原子替换并自动跑 lint-edit',
+  defaultFlows: 'node runner/donegate.mjs flow run <dg-on-edit|dg-pre-commit|dg-on-check|dg-deep-verify>',
+  jitMemoryDir: '.donegate/memory/*.md（YAML 头 category: architecture|pitfall|convention|recipe + scopes，读时自动验活 file:L起-L止）',
+  syncFeatureOverview: 'node skill/gen-feature-overview.mjs'
+});
+const DGB_CROSS_FILE_SYNC_INVARIANTS = Object.freeze([
+  '新增 tests/*.test.mjs 须加入 skill/build-public.mjs PUBLIC_PAYLOAD（或标 // @dg-private-only），访问私有目录 contracts/functions/参考/设计/decisions/tools 须加 existsSync 守卫',
+  '公开包目录（runner/、skill/）内 .mjs 顶部连续 // 注释禁含私有路径词，防触发公开包头注释泄漏检查',
+  '新建生产源码文件须先归入活跃 contracts/<id>/contract.json scope[]（或放入已登记文件的同名伴生目录 <stem>/*.mjs）',
+  '改动 CLI 帮助文本、契约列表或公共库导出符号后，须执行 node skill/gen-feature-overview.mjs 重生成 docs/功能总览.md',
+  '增删契约、判据、functions/*.json 或自检套件后，须同步 HANDOFF.md 净仓 status/gaps/--self-check 期望数字（H1/H3）',
+  '增删 参考/ 文件须同步 docs/dist-README.md 调研文件计数；缩减单测断言数须同批新增五段式 decisions/YYYY-MM-DD-NN-*.md（含 INTENT 与 CONSTRAINTS 12 位哈希）'
+]);
 
 function ckcCollectDomainPaths(node, out) {
   for (const m of node.modules || []) {
@@ -90,9 +105,10 @@ function ckcBuildZoomZeroGovernanceSection(idx, hasContracts) {
   }
   L.push(`- **公共路径、跨界验收与子包**：已存在公共治理白名单 \`SHARED_GOVERNANCE_GLOBS\` = ${activeGovGlobs.map((g) => `\`${g}\``).join(', ')}；有契约项目可用 \`check-node <契约ID> --allow-cross-scope --receipt\` 放行公共治理文件与根台账；画布子包：${subpackStr}。`);
   L.push(`- **外部工具扩展与共享池**：\`node skill/new-adapter.mjs <tool> --archetype <${archStr}> --card-json\` 生成薄适配器（委托 \`_shared.mjs\` \`runAdapter\`）与 \`bricks/<tool>/capabilities.json\`；共享池位于 \`workflows/.deps/_shared/\`（含 \`.bin/\`、\`dists/\`、\`npm-cells/<id>/\`）。`);
+  L.push(`- **自举免转义改码与默认治理流**：多行改码直接调 \`node runner/donegate.mjs patch-edit --spec -\`（传 \`{file,oldText,newText}\` 或 \`{patches:[...]}\` 零转义原子替换并自动联动 \`lint-edit\`）；常驻治理流执行 \`donegate flow run <dg-on-edit|dg-pre-commit|dg-deep-verify>\`；六条跨文件同步暗雷见 \`donegate zoom rules\` 的 \`crossFileSyncInvariants\`。`);
   L.push(hasContracts
-    ? `- **派工与合入闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`preflight --stamp-lease\` → \`impact <目标>\` → \`slice <契约ID> [--focus <路径|@subpack>]\` → 末步 \`zoom <文件:起-止> --source\` 精读源码 → 逐文件 \`lint-edit <file>\` → \`check-node <契约ID> [--allow-cross-scope] --receipt\`。`
-    : `- **零契约公开/轻量模式开发闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`impact <目标>\` → \`zoom <路径|符号>\` → 末步 \`zoom <文件:起-止> --source\` 精读源码 → 逐文件 \`lint-edit <file>\` → 全套自检 \`node skill/check-escapes.mjs --self-check\` + \`npm test\`。`);
+    ? `- **派工与合入闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`preflight --stamp-lease\` → \`impact <目标>\` → \`slice <契约ID> [--focus <路径|@subpack>]\` → \`patch-edit --spec -\` → \`check-node <契约ID> [--allow-cross-scope] --receipt\`。`
+    : `- **零契约公开/轻量模式开发闭环（${brWarn}）**：\`git worktree add <wtDir> -b <branch> main\` → \`impact <目标>\` → \`zoom <路径|符号> --source\` → \`patch-edit --spec -\` → 全套自检 \`node skill/check-escapes.mjs --self-check\` + \`npm test\`。`);
   return L;
 }
 
@@ -183,6 +199,7 @@ export function renderDoneGateRulesTopic(idx) {
     annotatedSubpacks: subpacks, newAdapterArchetypes: idx.liveMeta.archetypes,
     newAdapterUsage: idx.liveMeta.newAdapterHeader,
     sharedPoolLayout: idx.liveMeta.sharedPoolLayout, declarativeWorkflows: idx.liveMeta.workflows,
+    selfHostArsenal: DGB_SELF_HOST_ARSENAL, crossFileSyncInvariants: DGB_CROSS_FILE_SYNC_INVARIANTS,
     intent: ckrSplitNonEmptyLines(idx.intentText), constraints: ckrSplitNonEmptyLines(idx.constraintsText)
   }, null, 2);
 }

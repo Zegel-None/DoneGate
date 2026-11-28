@@ -32,7 +32,8 @@ function corLoadContracts(projectRoot) {
     if (j && j.id) {
       contracts.push({
         id: j.id,
-        retired: typeof j.retired === 'string' && j.retired.trim() !== ''
+        role: j.role === 'infra' ? 'infra' : 'product',
+        retired: (typeof j.retired === 'string' && j.retired.trim() !== '') || Boolean(j.retired && typeof j.retired === 'object')
       });
     }
   }
@@ -83,7 +84,7 @@ function auditOrphans(projectRoot) {
 
   // ① 孤儿契约（未登记功能）：没被任何 functions[].contracts 引用、且未退役
   const referenced = new Set(functions.flatMap((f) => f.contracts || []));
-  const orphanC = contracts.filter((c) => !referenced.has(c.id) && !c.retired);
+  const orphanC = contracts.filter((c) => !referenced.has(c.id) && !c.retired && c.role !== 'infra');
   rows['①契约无孤儿'] = orphanC.length === 0;
   if (orphanC.length) why['①契约无孤儿'] = '未登记功能：' + orphanC.map((c) => c.id).join('、');
 
@@ -145,6 +146,7 @@ function buildCase(dir, variant) {
     c('quchong');
     c('yuebao');
     c('tuoyi', { retired: '2026-11-19 被月报新流程替代' });
+    c('dizuo', { role: 'infra' });
     f('fenye', { contracts: ['quchong'] });
     f('yuebao-kuang', { contracts: ['yuebao'], source: src });
   }

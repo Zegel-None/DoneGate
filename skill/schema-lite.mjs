@@ -9,6 +9,7 @@ const isStr = (v, nonEmpty = false) => typeof v === 'string' && (!nonEmpty || v.
 const isStrArr = (v, nonEmpty = false) => Array.isArray(v) && (!nonEmpty || v.length > 0) && v.every((x) => isStr(x, true));
 const INPUT_CLASSES = new Set(['正常', '边界', '异常']);
 const TRACK_VALUES = new Set(['delivery', 'explore']);
+const ROLE_VALUES = new Set(['product', 'infra']);
 const SANDBOX_MODES = new Set(['worktree', 'host-local']);
 
 const isBool = (v) => typeof v === 'boolean';
@@ -98,6 +99,7 @@ function validateTopFields(doc, full, pushErr) {
     ['id', (v) => isStr(v, true), 'expected non-empty string'],
     ...topStrRules,
     ['track', (v) => TRACK_VALUES.has(v), 'expected delivery | explore'],
+    ['role', (v) => ROLE_VALUES.has(v), 'expected product | infra'],
     ['exploreMeta', isObj, 'expected object'],
     ['provisional', isBool, 'expected boolean'],
     ...topArrRules,

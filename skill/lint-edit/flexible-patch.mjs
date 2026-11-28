@@ -1,6 +1,7 @@
 // 四级去空白保缩进容错替换器与裸省略占位写前阻断原语（伴生子模块，继承 shared-primitives 归属，<= 210 行）
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { executeFlexiblePatchBatch } from './flexible-patch-batch.mjs';
 
 const MAX_WRAPPER_STRIP_PASSES = 2, MAX_UNESCAPE_PASSES = 2;
 const TOKEN_DELIMITERS = [...'():[]{}><=;,'], OMITTED_EXACT_SET = new Set(['rest of', 'omitted', 'omitted for brevity']);
@@ -167,6 +168,7 @@ function fpResolvePatchSpec(projectRoot, opts) {
   if (typeof opts.specFile !== 'string' || !opts.specFile.trim()) return opts;
   const raw = opts.specFile === '-' ? readFileSync(0, 'utf8') : readFileSync(resolve(projectRoot, opts.specFile), 'utf8');
   const spec = JSON.parse(raw);
+  if (Array.isArray(spec.patches)) return { ...opts, patches: spec.patches };
   return { ...opts, file: opts.file || spec.file, oldText: spec.oldText ?? spec.oldString ?? spec.old, newText: spec.newText ?? spec.newString ?? spec.new, allowMultiple: Boolean(opts.allowMultiple ?? spec.allowMultiple) };
 }
 export function executeFlexibleFilePatch(projectRoot, opts = {}) {
@@ -175,6 +177,9 @@ export function executeFlexibleFilePatch(projectRoot, opts = {}) {
     resolved = fpResolvePatchSpec(projectRoot, opts);
   } catch (e) {
     return { exitCode: 3, stderr: `patch-edit 读取 --spec 失败：${e.message}` };
+  }
+  if (Array.isArray(resolved.patches)) {
+    return executeFlexiblePatchBatch(projectRoot, resolved.patches, resolved, applyFlexibleReplacement);
   }
   const { file, oldText, newText, allowMultiple = false, dryRun = false, json = false, runLint = null } = resolved;
   if (!file || typeof oldText !== 'string' || typeof newText !== 'string') return { exitCode: 3, stderr: '用法：donegate patch-edit <file> --old <oldText> --new <newText> | --spec <patch.json|-> [--dry-run] [--json]' };

@@ -62,7 +62,7 @@ const HELP_TEXT = [
   '· slice [nodeId] [--focus <f1,f2|@subpack>] [--lexical <t1,t2>] [--router-only] [--freeze-stub] [--context-window <n>] [--utilization <r>] [--max-tokens <n>] [--json] [--out <path>]',
   '· check-node <nodeId> [--criterion <oid>] [--base <ref>] [--allow-dirty] [--allow-stub-change] [--allow-cross-scope] [--receipt] [--json]',
   '· lint-edit <file1> [file2...] [--json]         单文件编辑即时护栏（100ms 级校验语法、复杂度、C4g、术语与内联脚本漏挂）',
-  '· patch-edit <file> --old <oldText> --new <newText> [--dry-run] [--json]   四级去空白保缩进容错替换并联动 lint-edit 校验',
+  '· patch-edit [file] --old <oldText> --new <newText> | --spec <json|-> [--dry-run] [--json]   四级容错替换（支持 patches[] 原子批改）并联动 lint-edit',
   '· impact <file-or-anchor...> [--budget <n>] [--json]   跨文件 UI 锚点/路由/CBM 调用边波及面雷达（无截断多跳单测与 ADR 预警）',
   '· mcp [--root <项目根>] [--require-root] [--governance-only]   启动零依赖 stdio MCP 服务（含 dg_status / dg_slice / dg_lint_edit / dg_check_node）',
   '· flow <list|plan|inspect|diff|run|reset> [flowId] [--staged] [--json]   声明式治理流查看、预演与一键运行（支持 workflow 别名）',

@@ -32,8 +32,11 @@
 2. **场景 A · 直接开发或扩展本公开仓库（零契约轻量模式）**：
    本公开分发仓默认不含私有契约目录，修改本仓源码时**无需传入 `<nodeId>`**，直接按以下闭环施工：
    ```bash
-   # 每写完 1 个文件，100ms 内即时校验语法、认知复杂度、反压行、术语与内联脚本漏挂：
+   # 多行免转义四级容错编辑（支持单文件或 {"patches":[...]} 多文件原子替换，自动联动 lint-edit）：
+   node runner/donegate.mjs patch-edit --spec <patch.json|->
+   # 单文件 100ms 即时护栏与官方默认治理流：
    node runner/donegate.mjs lint-edit <文件路径>
+   node runner/donegate.mjs flow run dg-on-edit
    # 提交前跑全仓自检与单测（注：判定核运行时零第三方依赖；首次跑 Vitest 单测请先执行一次 npm install）：
    node skill/check-escapes.mjs --self-check
    npm test
